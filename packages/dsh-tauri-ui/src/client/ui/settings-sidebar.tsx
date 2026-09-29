@@ -6,7 +6,7 @@ import { SlotOutlet } from '@deepseek-ai/dsh-client-ui-renderer'
 import { clamp, cn, isEmpty, useEventListener, useStore } from 'dsh-tauri/client'
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../components/icon'
-import { ArrowLeft, Cubes3Overlap, Database, Gear, Ghost, PersonPencil, Puzzle, Server, Tray } from '../components/icons'
+import { ArrowLeft, Cubes3Overlap, Database, Gear, Ghost, LayoutSplitSideContentRight, PersonPencil, Puzzle, Server, Smartphone, Tray } from '../components/icons'
 import { Input } from '../components/official'
 import {
   RAIL_WIDTH_DEFAULT,
@@ -27,11 +27,13 @@ const Icons: Record<string, IconComponent | undefined> = {
   'account': PersonPencil,
   'general': Gear,
   'models': Database,
+  'dsh-bridge': Smartphone,
   'agent-presets': Cubes3Overlap,
   'dsh-tauri-archive': Tray,
   'plugins': Puzzle,
   'dsh-tauri-ssh': Server,
   'dsh-tauri-pet-settings': Ghost,
+  'better-sidebar': LayoutSplitSideContentRight
 }
 
 export function SettingsSidebar(_props: SettingsSidebarProps): ReactElement | null {

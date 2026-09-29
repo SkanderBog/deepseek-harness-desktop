@@ -74,6 +74,10 @@ export default c([
   c('[class*="collapsed"] [class$="logoRow"]', {
     justifyContent: 'flex-start !important',
   }),
+  c('[data-slot="settings.section"] > div', {
+    maxWidth: 'none !important',
+    paddingBottom: '24px'
+  }),
   c('[data-slot="conversation.chat.turnTail"]', [
     c('[class$="card"]', {
       borderRadius: '14px !important',
