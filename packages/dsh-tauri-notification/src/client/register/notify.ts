@@ -112,12 +112,15 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
         return
       const detail = pendingDetail(current)
       const fallback = kind === 'approval' ? locale.text('bodyApproval') : locale.text('bodyQuestion')
+      const label = kind === 'approval' ? locale.text('labelApproval') : locale.text('labelQuestion')
       const answerable = kind === 'approval' && current.answerable !== false && typeof current.answer === 'function'
       notify(
         sessionId,
         kind,
-        kind === 'approval' ? locale.text('titleApproval') : locale.text('titleQuestion'),
-        `${sessionTitle(sessionId)} · ${detail || fallback}`,
+        // 标题放会话 title、正文放「动作 · 摘要」：与会话列表、桌宠气泡一致，用户一眼能认出
+        // 是哪个会话、要做什么（系统通知的宽度只够一行摘要）。
+        sessionTitle(sessionId),
+        `${label} · ${detail || fallback}`,
         true,
         answerable ? [{ id: APPROVE_ACTION_ID, title: locale.text('approve') }] : undefined,
         answerable
@@ -143,7 +146,7 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
       const currentSessionId = adapter.sessionList()?.current
       if (!allowTurnNotification({ mode, hostHidden, sessionId, currentSessionId }))
         return
-      notify(sessionId, 'turn', locale.text('titleTurn'), sessionTitle(sessionId), false)
+      notify(sessionId, 'turn', sessionTitle(sessionId), locale.text('labelTurn'), false)
     })
   }
 

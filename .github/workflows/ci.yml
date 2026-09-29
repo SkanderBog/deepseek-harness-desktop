@@ -233,6 +233,16 @@ jobs:
         with:
           toolchain: stable
 
+      # tauri-plugin-notifications 的 macOS 后端用 Swift 6 的 typed throws
+      # （`throws(FFIResult)`），macos-14 镜像默认的 Xcode 15 / Swift 5.10 解析不了，
+      # 构建前必须切到镜像里自带的 Xcode 16。
+      - name: Select Xcode 16
+        if: runner.os == 'macOS'
+        run: |
+          XCODE_APP="$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$XCODE_APP"
+          swift --version
+
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:

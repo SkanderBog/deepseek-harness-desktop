@@ -1338,12 +1338,12 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
         )
         // Opener plugin
         .plugin(tauri_plugin_opener::init())
-        // Notification plugin（官方插件保留权限与兜底能力；壳层的原生通知不走它）
+        // Notification plugin（官方插件）：权限查询等通用通知能力。
         .plugin(tauri_plugin_notification::init())
-        // tauri-plugin-notifications（Choochmeque fork）：壳层用它的 JS API 发通知，
-        // 带交互按钮与点击/动作事件。`default-features = false` 关掉 notify-rust 这个
-        // 跨平台后端，换取 Windows/macOS 的原生实现（actions / hero images / scheduling）；
-        // Linux、FreeBSD 上 notify-rust 是唯一后端，插件仍会启用它。
+        // Notifications plugin（Choochmeque fork）：壳层发带交互按钮的通知，并通过
+        // `onNotificationClicked` / `onAction` 收点击与按钮动作——官方插件在桌面端 `show()`
+        // 之后即丢弃 handle，拿不到这两类事件。macOS 上它需要 Xcode 16+（Swift 6 typed
+        // throws），CI 见 .github/workflows/ci.yml 的 `Select Xcode 16`。
         .plugin(tauri_plugin_notifications::init())
         // FS plugin
         .plugin(tauri_plugin_fs::init())

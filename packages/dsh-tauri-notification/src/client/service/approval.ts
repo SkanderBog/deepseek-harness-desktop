@@ -1,4 +1,5 @@
 import type { PendingInteractionFace, SessionStatusFace, UiSessionFace } from '../types'
+import { boundText } from './decision'
 
 export interface DecideResult {
   ok: boolean
@@ -34,13 +35,29 @@ export function pendingIdentity(pending: PendingInteractionFace): string {
 /** 交互正文：授权取「工具名: 原因」，提问取首个问题。 */
 export function pendingDetail(pending: PendingInteractionFace): string {
   if (pending.kind === 'approval') {
-    const reason = resolvedReason(pending)
+    const reason = conciseReason(resolvedReason(pending))
     if (pending.toolName && reason)
       return `${pending.toolName}: ${reason}`
     return pending.toolName ?? reason
   }
   const first = pending.questions?.[0]
   return first?.question ?? first?.header ?? pending.toolName ?? ''
+}
+
+/** 授权原因只保留到第一个分句分隔符（中文/英文冒号、句号、换行）。 */
+const REASON_CLAUSE_DELIMITER = /[：:。\n]/
+/** 授权原因长度上限：正文里还要放动作标签与工具名，原因留一行即可。 */
+const MAX_REASON_CHARS = 60
+
+/**
+ * 授权原因只保留首个分句。
+ *
+ * `displayReason` 的后半段是给审计用的完整说明（例如「允许本次操作使用 x 权限：<沙箱拒绝
+ * 详情>」），整段塞进系统通知会把真正有信息量的部分挤掉；界面里的授权卡片仍然显示全文。
+ */
+function conciseReason(reason: string): string {
+  const clause = reason.split(REASON_CLAUSE_DELIMITER)[0]?.trim() ?? ''
+  return boundText(clause || reason, MAX_REASON_CHARS)
 }
 
 function resolvedReason(pending: PendingInteractionFace): string {

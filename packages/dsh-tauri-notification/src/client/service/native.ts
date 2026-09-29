@@ -24,9 +24,9 @@ interface ShimNotification {
  * 弹一条原生通知，并接住它的点击与按钮回调。
  *
  * 不直接 `invoke` Tauri 命令，而是走宿主窗口注入的 `window.Notification` 补丁：
- * 补丁把构造参数 postMessage 给 Rust 侧 `show_native_notification`，等原生通知被
- * 点击（`onclick`）或按下按钮（`onaction`）时再回调本对象——这是当前唯一能拿到
- * 按钮 action 的通路。
+ * 补丁把构造参数 postMessage 给宿主窗口（`dsh://native-notification`），宿主再调
+ * `tauri-plugin-notifications` 发原生通知；等通知被点击（`onclick`）或按下按钮
+ * （`onaction`）时，宿主通过 `dsh://notification-clicked` 回灌并回调本对象。
  */
 export function showNativeNotification(input: NativeNotificationInput): void {
   if (typeof Notification === 'undefined')

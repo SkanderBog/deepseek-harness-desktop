@@ -9,6 +9,7 @@ import {
 import { CircleExclamation } from '@gravity-ui/icons'
 import { useEventListener } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
@@ -190,6 +191,9 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   function handleNativeNotification(data: IframeBridgeMessage) {
     const actions = Array.isArray(data.actions) ? data.actions : []
     const primary = actions[0]
+    const title = data.title ?? ''
+    const body = data.body ?? ''
+
     void (async () => {
       try {
         // 后端只在 `actionTypeId` 已注册时才往通知里写按钮，所以必须先注册再发送；
@@ -202,12 +206,12 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
         }
         await sendNotification({
           id: notificationIdFor(data.tag),
-          title: data.title ?? '',
-          body: data.body ?? '',
+          title,
+          body,
           actionTypeId: primary ? NOTIFICATION_ACTION_TYPE : undefined,
           extra: {
             sessionId: data.sessionId ?? '',
-            title: data.title ?? '',
+            title,
             tag: data.tag ?? '',
           },
         })
@@ -262,8 +266,24 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       .catch(error => console.error('[frame-log] log_frontend failed:', error))
   }
 
-  /** 把通知结果回灌给 iframe：聚焦对应会话，并触发帧内的 onclick / onaction。 */
-  function applyNotificationResult(payload: NotificationClickedPayload) {
+  /**
+   * 把通知结果回灌给 iframe：先把窗口拉回前台，再让帧内聚焦会话 / 触发 onclick、onaction。
+   *
+   * 窗口这一步是必需的：点通知时窗口多半在后台（最小化 / 被别的窗口盖住），
+   * 只回灌 iframe 消息的话用户看不到任何变化。失败只记录日志——窗口 API 报错不该
+   * 阻断帧内的会话切换与按钮回调。
+   */
+  async function applyNotificationResult(payload: NotificationClickedPayload) {
+    try {
+      const appWindow = getCurrentWindow()
+      if (await appWindow.isMinimized())
+        await appWindow.unminimize()
+      await appWindow.show()
+      await appWindow.setFocus()
+    }
+    catch (error) {
+      console.error('[notification] focus window failed:', error)
+    }
     post({
       type: 'dsh://focus-session',
       sessionId: payload.sessionId || undefined,
@@ -282,9 +302,14 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   /** `onAction`：点通知本体（`actionId === 'tap'`）交给 `onNotificationClicked`，这里只管按钮。 */
   function handleNotificationAction(event: NotificationActionEvent) {
     const { actionId, notification } = event
+    // 事件有没有真的到达壳层只有日志能回答：Windows 的 toast 激活依赖插件侧回调。
+    // eslint 只允许 console.warn/error，而 console 会被 utils/logger 劫持写进前台日志
+    // （desktop.frontdesk.log），所以开发态用 warn 留痕、打包态不打扰。
+    if (import.meta.env.DEV)
+      console.warn('[notification] action event:', actionId)
     if (typeof actionId !== 'string' || actionId === '' || actionId === 'tap')
       return
-    applyNotificationResult({
+    void applyNotificationResult({
       sessionId: notification?.extra?.sessionId ?? null,
       title: notification?.extra?.title,
       tag: notification?.extra?.tag,
@@ -295,7 +320,10 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   /** `onNotificationClicked`：点通知本体（前台与冷启动两条路径都会走到这里）。 */
   function handleNotificationClick(event: NotificationClickEvent) {
     const { data } = event
-    applyNotificationResult({
+    if (import.meta.env.DEV)
+      console.warn('[notification] click event:', JSON.stringify(data ?? null))
+
+    void applyNotificationResult({
       sessionId: data?.sessionId ?? null,
       title: data?.title,
       tag: data?.tag,

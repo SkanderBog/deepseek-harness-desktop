@@ -47,6 +47,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # tauri-plugin-notifications 的 macOS 后端需要 Swift 6（typed throws），切到 Xcode 16。
+      - name: Select Xcode 16
+        run: |
+          XCODE_APP="$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$XCODE_APP"
+          swift --version
+
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
 
