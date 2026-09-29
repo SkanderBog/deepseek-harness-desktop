@@ -219,6 +219,23 @@ fn is_duplicate_loader_exit(exit_code: u32, stderr: &str) -> bool {
 
 /// 启动 Harness 服务进程
 pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
+    // 启动分段计时（issue #766）：只写日志，不改控制流。每段一行 `STARTUP_PHASE`，
+    // `ms` 是本段耗时、`total` 是本次 launch 的累计耗时。启动慢的归因过去只能靠
+    // 时间戳猜测（同一进程内 auto_start 与前端 invoke 并发交错），埋点后可直接
+    // 从 desktop.log 读出「哪一段慢、慢多少」。
+    let startup_started = std::time::Instant::now();
+    let mut phase_started = startup_started;
+    // 段末打点：`ms` 为上一段耗时，`total` 为 launch 累计。closure 只服务本函数，
+    // 因此就地定义而不抽成独立模块/工具。
+    let mark_phase = |name: &str, phase_started: &mut std::time::Instant| {
+        let now = std::time::Instant::now();
+        log::info!(
+            "STARTUP_PHASE: name={name} ms={} total={}",
+            now.duration_since(*phase_started).as_millis(),
+            now.duration_since(startup_started).as_millis()
+        );
+        *phase_started = now;
+    };
     let mut setting = config::get_store_dat_setting(&app_handle);
     let node_binary_path = config::get_node_binary_path(&app_handle);
     let _transition_guard = super::process::acquire_core_transition().await?;
@@ -234,6 +251,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         log::error!("Harness not installed");
         return Err("HARNESS_NOT_FOUND: Harness not installed".to_string());
     }
+    mark_phase("resolve", &mut phase_started);
 
     // 从这里开始持有与核心切换共用的互斥锁：最终状态检查、启动守卫、残留清扫
     // 及新进程登记必须处于同一临界区，避免切换在检查后插入。
@@ -304,6 +322,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         setting.port = available_port;
         config::set_store_dat_setting(&app_handle, setting.clone());
     }
+    mark_phase("stale_sweep_and_port", &mut phase_started);
 
     // 构造环境变量：隔离的 $DSH_HOME + 隐私默认（关闭遥测）
     //
@@ -353,6 +372,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::service::plugin::purge_user_plugins_in_safe_profile(&app_handle) {
         log::warn!("safe mode user plugin purge failed: {e}");
     }
+    mark_phase("profile_prepare", &mut phase_started);
 
     // Linux 起步前探测 inotify 监视上限：harness 服务（dsh web）用 chokidar 递归
     // 监视 profile 目录，上限过低会在启动一瞬间抛 ENOSPC 直接退出（issue #116）。
@@ -420,6 +440,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::service::patch::workspace_view::apply(&app_handle) {
         log::warn!("workspace view state patch failed: {e}");
     }
+    mark_phase("core_patches", &mut phase_started);
     // 预防性处理：pnpm 在无 TTY 环境（dsh-market 等子进程）下重装/更新插件时，
     // 清理/重建 node_modules 会触发交互确认并因无 TTY 直接中止
     // （ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY），表现为插件更新失败。
@@ -434,6 +455,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::service::plugin::uninstall_deprecated_plugins(&app_handle).await {
         log::warn!("uninstall deprecated plugins failed: {e}");
     }
+    mark_phase("deprecated_plugins", &mut phase_started);
     // 内置插件自愈：随包分发的内置插件（dsh-tauri 等）必须在服务进程加载插件
     // 前就绪——核对「已安装 + 安装路径指向当前捆绑目录」，未安装、路径不正确
     // 或用户卸载后重启，一律强制重装（见 service::plugin::internal）。最佳
@@ -441,6 +463,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::service::plugin::ensure_internal_plugins(&app_handle).await {
         log::warn!("ensure internal plugins failed: {e}");
     }
+    mark_phase("ensure_internal_plugins", &mut phase_started);
     // 预装插件完整性自检：清单引用的预装插件若在 node_modules 缺失产物，服务
     // 启动时 loader 会对每个缺失插件抛 ERR_MODULE_NOT_FOUND 而整体失败（issue
     // #90，日志特征 `Cannot find package`）。用 `pnpm install` 以现有 manifest +
@@ -449,6 +472,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::service::plugin::ensure_preset_plugins(&app_handle).await {
         log::warn!("ensure preset plugins failed: {e}");
     }
+    mark_phase("ensure_preset_plugins", &mut phase_started);
     // 预打包核心运行时自愈：把 app 内置插件与 profile 插件入口链接进活动核心的
     // node_modules（dsh 的 loader 以核心根为裸包解析根），并核验/修复 sharp/koffi
     // 原生可选依赖。只作用于 CoreSource::App，本地核心由用户自行管理。dsh 在缺失
@@ -458,6 +482,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         log::error!("prepare active core runtime failed: {e}");
         return Err(e);
     }
+    mark_phase("prepare_active_runtime", &mut phase_started);
     // prepare 可能因核心原生模块的 ABI 与本地 node 不匹配而改用捆绑运行时
     // （issue #441），此时必须重新解析：下面的 DSH_NODE 注入与 PATH 前置都以
     // 这里的结果为准，否则子进程仍会用那个加载不了原生模块的本地 node。
@@ -576,6 +601,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         log::error!("patch layer entry preflight failed: {e}");
         return Err(e);
     }
+    mark_phase("patch_entry_preflight", &mut phase_started);
 
     let node_options = std::env::var("NODE_OPTIONS").ok();
     let heap_mb = super::heap::resolve_heap_limit_mb(
@@ -612,6 +638,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
             .map(std::path::Path::to_path_buf)
             .unwrap_or(app_core_dir)
     };
+    mark_phase("pre_spawn_setup", &mut phase_started);
     let spawn_result: SpawnResult = {
         #[cfg(windows)]
         {
@@ -799,12 +826,15 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         }
     };
 
+    mark_phase("spawn_and_probe", &mut phase_started);
+
     match spawn_result {
         Ok((stdout, stderr, pid)) => {
             log::info!(
                 "Harness process started successfully: pid={pid}, port={}",
                 setting.port
             );
+            mark_phase("registered", &mut phase_started);
             // 记录 PID+端口供下次启动清扫崩溃残留的孤儿实例（见 sweep_orphan_harness）
             persist_harness_pid(&app_handle, pid, setting.port);
             spawn_output_readers(stdout, stderr, log_path);

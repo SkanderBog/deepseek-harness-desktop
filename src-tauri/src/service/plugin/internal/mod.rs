@@ -70,6 +70,27 @@ const ENSURE_ABSOLUTE_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 const ENSURE_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const ENSURE_OWNER_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const ENSURE_OWNER_DRAIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+/// 复用「刚刚成功过」的核对结论的时间窗（issue #766）。
+///
+/// 一次启动里两路调用的间隔是秒级，30s 足够覆盖；超过窗口一律重新核对，避免长
+/// 时间缓存掩盖窗口外的磁盘变化（例如手工删掉某个内置插件的 node_modules）。
+const ENSURE_REUSE_WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 最近一次成功核对的输入指纹与完成时刻（issue #766）。
+///
+/// 一次启动里 `ensure` 会被调用两次：Rust 侧 auto_start（`workflow::start` →
+/// `launch`）与前端 boot 的 `ensure_internal_plugins` 命令，两者间隔只有几百
+/// 毫秒～几秒，输入（档案清单 + 核心版本 + 内置插件集合）完全一致，第二路必然
+/// 整轮 no-op，却仍要重跑清单解析、失效链接清理、可写性预检与 loader 状态修复。
+/// 记下成功结论后，第二路直接复用。
+///
+/// 只记成功：失败/取消绝不入缓存——两路中任何一路失败，另一路仍会完整重跑并把
+/// 真实错误暴露给前端。指纹含档案清单内容，安装/卸载/去重都会让它自然失效。
+#[derive(Clone)]
+struct EnsureReceipt {
+    fingerprint: u64,
+    completed_at: std::time::Instant,
+}
 
 #[derive(Clone)]
 struct EnsureFlight {
@@ -97,9 +118,25 @@ enum EnsureSubscription {
 struct EnsureCoordinator {
     next_id: u64,
     active: Option<EnsureFlight>,
+    receipt: Option<EnsureReceipt>,
 }
 
 impl EnsureCoordinator {
+    /// 输入未变、且上次成功核对仍在窗口内：本次调用无需再做任何事。
+    fn reuse(&self, fingerprint: u64) -> bool {
+        self.receipt.as_ref().is_some_and(|receipt| {
+            receipt.fingerprint == fingerprint
+                && receipt.completed_at.elapsed() <= ENSURE_REUSE_WINDOW
+        })
+    }
+
+    fn record(&mut self, fingerprint: u64) {
+        self.receipt = Some(EnsureReceipt {
+            fingerprint,
+            completed_at: std::time::Instant::now(),
+        });
+    }
+
     fn subscribe(&self) -> Option<EnsureSubscription> {
         self.active.as_ref().map(|flight| match &flight.state {
             EnsureFlightState::Running => EnsureSubscription::Running(flight.result.clone()),
@@ -237,6 +274,36 @@ pub(crate) fn repair_loader_state(app_handle: &AppHandle) -> Result<(), String> 
     Ok(())
 }
 
+/// 核对输入指纹：档案路径 + 档案清单内容 + 核心版本 + 内置插件的安装规格。
+///
+/// 只用于判断「这次调用与上次成功的那次是不是同一份输入」，因此取的都是廉价且必然
+/// 随状态变化而变化的量：清单内容一变（安装/卸载/去重/失效链接清理写回）指纹就变，
+/// 缓存随即失效。内置插件按元组排序后整体喂入，避免清单条目顺序抖动造成假失效。
+fn ensure_fingerprint(app_handle: &AppHandle, internal: &[PreinstallPluginInfo]) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let profile = profile_dir(app_handle);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    profile.to_string_lossy().as_ref().hash(&mut hasher);
+    std::fs::read(profile.join("package.json"))
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    crate::service::core::active_version(app_handle).hash(&mut hasher);
+    let mut specs: Vec<(&str, &str, &str)> = internal
+        .iter()
+        .map(|preset| {
+            (
+                preset.id.as_str(),
+                preset.spec.as_str(),
+                installed_name(preset),
+            )
+        })
+        .collect();
+    specs.sort_unstable();
+    specs.hash(&mut hasher);
+    hasher.finish()
+}
+
 pub(crate) async fn ensure(app_handle: &AppHandle) -> Result<(), String> {
     let presets = load_presets(app_handle);
     // 被核心吸收的内置插件（当前核心已超出其声明的全部核心版本区间）自愈不再装回，
@@ -246,6 +313,20 @@ pub(crate) async fn ensure(app_handle: &AppHandle) -> Result<(), String> {
         .into_iter()
         .filter(|p| p.internal && !p.unsupported_on(core_version.as_deref()))
         .collect();
+    // 同一次启动的两路调用：后到的一路输入未变、且前一路刚成功，直接复用结论，
+    // 连下面的失效链接清理、可写性预检与 loader 状态修复一起跳过（issue #766）。
+    let fingerprint = ensure_fingerprint(app_handle, &internal);
+    let reused = if internal.is_empty() {
+        false
+    } else {
+        ensure_lock().lock().await.reuse(fingerprint)
+    };
+    if reused {
+        log::debug!(
+            "Internal plugin check already succeeded for the current profile state, skipping"
+        );
+        return Ok(());
+    }
     prune_dangling_link_deps(app_handle, &internal);
     if internal.is_empty() {
         return Ok(());
@@ -266,7 +347,17 @@ pub(crate) async fn ensure(app_handle: &AppHandle) -> Result<(), String> {
     )?;
 
     repair_loader_state(app_handle)?;
-    receive_current_or_next_flight(|| subscribe_or_start(app_handle, &internal)).await
+    let outcome =
+        receive_current_or_next_flight(|| subscribe_or_start(app_handle, &internal)).await;
+    if outcome.is_ok() {
+        // 记「完成后的」指纹：本轮自己写回的状态（去重/修复/安装）就是已被核对过的
+        // 状态，后到的那一路按同一状态算指纹即可命中，不会白跑第二轮。
+        ensure_lock()
+            .lock()
+            .await
+            .record(ensure_fingerprint(app_handle, &internal));
+    }
+    outcome
 }
 
 /// 卸载「本地链接目标已不存在」的失效依赖（含已被删除的内置包），在服务启动前调用。
@@ -948,25 +1039,37 @@ fn remove_legacy_profile_module_fallback_best_effort(profile: &Path) {
 }
 
 /// 清理旧版 profile-local fallback，避免 pnpm 管理跨目录 junction。
+///
+/// 先判回退目录是否存在，不存在即返回：要删的 junction 全部指向该目录
+/// （[`is_legacy_profile_fallback_target`]），本函数又是仓库内唯一的删除方——删除
+/// 之前必先扫过链接，遍历失败则提前返回、不删目录。所以「目录已不存在、却仍有指向
+/// 它的链接」只可能来自仓库外的删除（用户手工删掉该目录，或旧版核心自行清理）；那
+/// 属于残缺状态，后续插件安装与自愈会重新解析，不值得为它让每次启动都付全树遍历的
+/// 代价。
+///
+/// 该遍历（本机 2273 项 / 207 目录 ≈ 480ms）在健康档案下是纯开销，而它位于每次
+/// 启动都要走的核对路径上，必须跳过。
 fn remove_legacy_profile_module_fallback(profile: &Path) -> Result<(), String> {
+    let fallback = profile.join(".dsh-module-fallback");
+    if !fallback.is_dir() {
+        return Ok(());
+    }
+
     let node_modules = profile.join("node_modules");
     if node_modules.is_dir() {
         remove_legacy_fallback_links(&node_modules)?;
     }
 
-    let fallback = profile.join(".dsh-module-fallback");
-    if fallback.is_dir() {
-        std::fs::remove_dir_all(&fallback).map_err(|e| {
-            format!(
-                "INTERNAL_PLUGIN_FALLBACK_REMOVE_FAILED: {}: {e}",
-                fallback.display()
-            )
-        })?;
-        log::info!(
-            "Removed legacy profile-local module fallback: {}",
+    std::fs::remove_dir_all(&fallback).map_err(|e| {
+        format!(
+            "INTERNAL_PLUGIN_FALLBACK_REMOVE_FAILED: {}: {e}",
             fallback.display()
-        );
-    }
+        )
+    })?;
+    log::info!(
+        "Removed legacy profile-local module fallback: {}",
+        fallback.display()
+    );
     Ok(())
 }
 
