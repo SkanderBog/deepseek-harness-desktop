@@ -17,13 +17,13 @@ import type { AddressInfo } from 'node:net'
  *
  * 驱动方式与生产同路径：`apply(ctx)` 经 `defineRoutes` 把 node 处理器注册到宿主
  * webServer（本文件用最小替身捕获），再挂到真实 `node:http` server 上，用 fetch 读
- * 真 SSE 字节流——因此帧格式（`data: …` / `: keepalive` / `retry`）与断连清理都在
+ * 真 SSE 字节流——因此帧格式（`data: …` / `: keepalive` / `: state-lost` / `retry`）与断连清理都在
  * 本文件里被真实覆盖，而不是对着手写 response 打桩。
  */
 import { createServer } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply, SESSION_STREAM_PATH } from '../../index'
-import { SSE_KEEPALIVE_MS, SSE_RETRY_MS } from '../../shared/constants'
+import { SSE_KEEPALIVE_MS, SSE_RETRY_MS, SSE_STATE_LOST_COMMENT } from '../../shared/constants'
 
 /** 一帧数据载荷（`data:` 行反序列化后的形状）。 */
 interface SsePayload {
@@ -344,6 +344,30 @@ describe('pet host apply()', () => {
     await host.connect()
     host.emitEvent(session, chunk(2))
     expect(host.titleLookups()).toBe(2)
+  })
+
+  it('接入前已无其他消费者才宣告 state-lost；仍有消费者在流上时不得宣告（状态仍有效且不会重放）', async () => {
+    const host = createHost()
+    apply(host.ctx)
+    const stateLost = `: ${SSE_STATE_LOST_COMMENT}`
+
+    // 首个消费者：宿主累计态从零开始，上一轮气泡作废。
+    const first = await host.connect()
+    await first.waitFor(() => first.frames.find(frame => frame === stateLost), '首个消费者收到 state-lost')
+
+    // 第二个消费者：宿主状态被 first 托着没有丢，因此绝不能再宣告作废，否则会误杀活气泡。
+    const second = await host.connect()
+    host.emitEvent({ id: 's1' }, chunk(0))
+    await second.waitFor(() => second.payloads[0], '第二连接的数据帧')
+    expect(second.frames).not.toContain(stateLost)
+
+    // 全部断开后累计态被丢弃：下次接入必须重新宣告。
+    await first.disconnect()
+    await second.disconnect()
+    await waitUntil(() => host.listenerCount('session/event') === 0, '全部断开后注销监听')
+
+    const third = await host.connect()
+    await third.waitFor(() => third.frames.find(frame => frame === stateLost), '重新接入再次收到 state-lost')
   })
 
   it('后续标题变化仍由 session/title 事件增量转发到 SSE', async () => {

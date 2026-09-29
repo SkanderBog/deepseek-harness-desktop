@@ -16,3 +16,13 @@ export const SSE_RETRY_MS = 1000
 
 /** SSE 心跳注释帧间隔（毫秒）：防止代理/空闲断连。 */
 export const SSE_KEEPALIVE_MS = 15_000
+
+/**
+ * 「宿主累计态已丢弃」注释帧文本。
+ *
+ * 宿主侧逐会话状态只在**最后一个**消费者断开时丢弃。新消费者接入时若已无其他消费者，
+ * 宿主状态必然是从零重建的，任何已展示的气泡都作废；此时下发这一帧（注释帧，不是
+ * `data:` 帧，避免污染数据语义），消费端据此清空桌宠气泡。Rust 侧同名常量见
+ * `src-tauri/src/bridge/pet.rs`。
+ */
+export const SSE_STATE_LOST_COMMENT = 'state-lost'

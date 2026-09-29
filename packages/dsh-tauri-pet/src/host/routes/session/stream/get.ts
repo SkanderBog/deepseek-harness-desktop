@@ -1,6 +1,6 @@
 import type { SessionStreamSink } from '../../../types'
 import { defineEventHandler, EventStream } from 'dsh-tauri'
-import { SSE_KEEPALIVE_MS, SSE_RETRY_MS } from '../../../../shared/constants'
+import { SSE_KEEPALIVE_MS, SSE_RETRY_MS, SSE_STATE_LOST_COMMENT } from '../../../../shared/constants'
 import { sessionStream } from '../../../service/session-stream'
 
 const SSE_KEEPALIVE_COMMENT = 'keepalive'
@@ -11,6 +11,8 @@ const SSE_KEEPALIVE_COMMENT = 'keepalive'
  * 帧格式与 Rust 消费端（`src-tauri/src/bridge/pet.rs`）逐字对齐：
  *   - 数据帧 `data: {"action":…,"payload":…}\n\n`；
  *   - 心跳注释帧 `: keepalive\n\n`（每 `SSE_KEEPALIVE_MS`）；
+ *   - 状态作废注释帧 `: state-lost\n\n`：仅当接入时已无其他消费者（宿主累计态从零重建）
+ *     才随首帧下发，消费端据此清空遗留气泡；
  *   - 重连提示 `retry: 1000` 只随**首帧**数据发出：h3 的 `EventStream` 不产生「只有字段、
  *     没有 data」的帧，而 Rust 端把空 `data:` 行也当作一帧 JSON 解析（失败即断流重连）。
  *
@@ -53,7 +55,13 @@ export default defineEventHandler((event) => {
   }
 
   // 有消费者才开始监听会话总线（桌宠关闭时 Rust 不会连上来）。
-  detach = sessionStream.start(sink)
+  const { detach: release, stateLost } = sessionStream.start(sink)
+  detach = release
+  // 接入前已无其他消费者：宿主累计态是从零重建的，消费端手里的气泡全部作废。此刻用
+  // 注释帧宣告（不能发 data: 帧——心跳之间不得出现数据帧，且注释帧对所有 SSE 客户端
+  // 无害）。仍有其他消费者时宿主状态留存且不会重放，绝不能清。
+  if (stateLost)
+    void stream.pushComment(SSE_STATE_LOST_COMMENT)
   // 心跳注释帧，防止代理/空闲断连。
   keepalive = setInterval(() => {
     void stream.pushComment(SSE_KEEPALIVE_COMMENT)
