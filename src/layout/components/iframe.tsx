@@ -1,15 +1,15 @@
 /* eslint-disable react/dom-no-unsafe-iframe-sandbox */
 import type { CSSProperties, RefObject } from 'react'
+import type { NotificationActionEvent } from '@/hooks/use-notification-action'
+import type { NotificationClickEvent } from '@/hooks/use-notification-clicked'
 import {
-  onAction,
-  onNotificationClicked,
   registerActionTypes,
   sendNotification,
 } from '@choochmeque/tauri-plugin-notifications-api'
 import { CircleExclamation } from '@gravity-ui/icons'
 import { useEventListener } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
@@ -19,6 +19,8 @@ import { useDshStyle } from '@/hooks/use-dsh-style'
 import { useIframeMessage } from '@/hooks/use-iframe-message'
 import { useIframePost } from '@/hooks/use-iframe-post'
 import { useInvokeIframe } from '@/hooks/use-invoke-iframe'
+import { useNotificationAction } from '@/hooks/use-notification-action'
+import { useNotificationClicked } from '@/hooks/use-notification-clicked'
 import { useSyncVisibility } from '@/hooks/use-sync-visibility'
 import { useZoomFactor } from '@/hooks/use-zoom-factor'
 import { store } from '@/store'
@@ -82,25 +84,6 @@ export interface NotificationClickedPayload {
  */
 const NOTIFICATION_ACTION_TYPE = 'dsh-notification-approval'
 
-/** `tauri-plugin-notifications` 回传的会话标识（发送时写进 `extra`，点击时原样带回）。 */
-interface NotificationExtra {
-  sessionId?: string
-  title?: string
-  tag?: string
-}
-
-/** `onAction` 的事件体：`actionId` 为 `tap` 表示点了通知本体，否则是按钮 action id。 */
-interface NotificationActionEvent {
-  actionId?: string
-  notification?: { extra?: NotificationExtra } | null
-}
-
-/** `onNotificationClicked` 的事件体：`data` 就是发送时写进 `extra` 的对象。 */
-interface NotificationClickEvent {
-  id?: number
-  data?: NotificationExtra
-}
-
 /**
  * 通知 id 必须是 32 位整数，这里取 tag 的稳定哈希：同一会话的同一条通知反复发送时
  * 复用同一个 id（就地更新），而不是每次多堆一条。
@@ -142,43 +125,10 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   useEventListener('keydown', handleZoomKeyDown, { capture: true })
 
   // 系统通知的点击 / 按钮动作 → 让 iframe 聚焦对应会话并回灌 onaction。
-  //
-  // 订阅 `onNotificationClicked` 不只是为了拿 payload：Windows 后端只有在它内部
-  // 调用 `set_click_listener_active(true)` 之后才会挂上 toast 的 Activated 回调，
-  // 否则按钮点击不会派发任何事件（见插件 src/windows.rs 的 show()）。
-  //
-  // 只订阅一次：`post` 每次渲染都是新函数，但它闭包里的 `iframeRef` 是稳定引用、
-  // 发送时实时读 `current`，因此首渲染捕获的实例一直有效。
-  useEffect(() => {
-    let disposed = false
-    const listeners: Array<{ unregister: () => Promise<void> }> = []
-    void (async () => {
-      try {
-        const actionListener = await onAction((event) => {
-          handleNotificationAction(event)
-        })
-        const clickListener = await onNotificationClicked((event) => {
-          handleNotificationClick(event)
-        })
-        if (disposed) {
-          void actionListener.unregister()
-          void clickListener.unregister()
-          return
-        }
-        listeners.push(actionListener, clickListener)
-      }
-      catch (error) {
-        console.error('[notification] failed to subscribe plugin events:', error)
-      }
-    })()
-    return () => {
-      disposed = true
-      for (const listener of listeners)
-        void listener.unregister()
-    }
-    // 依赖数组有意保持为空：两个回调每次渲染都是新函数，但订阅只做一次（见上）。
-    // eslint-disable-next-line react/exhaustive-deps -- 只在挂载时订阅一次
-  }, [])
+  // 订阅细节（含「必须先订阅 onNotificationClicked，Windows 才会派发点击 / 按钮事件」）
+  // 收在 hooks 里，与 `useListen` 同一套 latest-ref + 卸载注销语义。
+  useNotificationAction(handleNotificationAction)
+  useNotificationClicked(handleNotificationClick)
 
   // iframe → 宿主：iframe 自身的桥共用一个监听器，按 `data.type` 分发
   useIframeMessage<IframeBridgeMessage>(iframeRef, (data) => {
@@ -330,8 +280,8 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   }
 
   /** `onAction`：点通知本体（`actionId === 'tap'`）交给 `onNotificationClicked`，这里只管按钮。 */
-  function handleNotificationAction(event: unknown) {
-    const { actionId, notification } = (event ?? {}) as NotificationActionEvent
+  function handleNotificationAction(event: NotificationActionEvent) {
+    const { actionId, notification } = event
     if (typeof actionId !== 'string' || actionId === '' || actionId === 'tap')
       return
     applyNotificationResult({
@@ -343,8 +293,8 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   }
 
   /** `onNotificationClicked`：点通知本体（前台与冷启动两条路径都会走到这里）。 */
-  function handleNotificationClick(event: unknown) {
-    const { data } = (event ?? {}) as NotificationClickEvent
+  function handleNotificationClick(event: NotificationClickEvent) {
+    const { data } = event
     applyNotificationResult({
       sessionId: data?.sessionId ?? null,
       title: data?.title,
