@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 
 const MANIFEST_MAX_BYTES = 64 * 1024
@@ -208,8 +208,26 @@ function main() {
     return
   }
 
-  const assetPath = resolve(directory, relativePath)
-  if (!assetPath.startsWith(resolve(directory) + sep)) {
+  let root
+  try {
+    root = realpathSync(directory)
+  }
+  catch (error) {
+    fail(`PET_ASSET_READ_FAILED: failed to resolve ${directory}: ${error.message}`)
+    report()
+    return
+  }
+
+  let assetPath
+  try {
+    assetPath = realpathSync(resolve(directory, relativePath))
+  }
+  catch (error) {
+    fail(`PET_ASSET_READ_FAILED: failed to resolve asset: ${error.message}`)
+    report()
+    return
+  }
+  if (!assetPath.startsWith(root + sep)) {
     fail('PET_PATH_INVALID: spritesheetPath escapes the pet directory')
     report()
     return
