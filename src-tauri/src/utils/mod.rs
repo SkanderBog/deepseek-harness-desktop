@@ -20,7 +20,7 @@ pub enum PatchOutcome {
 ///
 /// 与 [`crate::service::core::active_dsh_binary`] 的取舍一致——本地核心解析在调用
 /// 瞬间失效时回退预打包目录，绝不让补丁打到永不加载的预打包文件上。
-fn active_core_install_dir(app_handle: &tauri::AppHandle) -> PathBuf {
+pub(crate) fn active_core_install_dir(app_handle: &tauri::AppHandle) -> PathBuf {
     match active_source(app_handle) {
         CoreSource::Local => local_core_package_dir(app_handle)
             .unwrap_or_else(|| config::get_dsh_install_path(app_handle)),

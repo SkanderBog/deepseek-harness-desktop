@@ -85,18 +85,54 @@ describe('frontend legacy syntax patch', () => {
     expect(LEGACY_PATCH).toContain('pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String>')
   })
 
-  it('targets exactly the browser bundles that contain class static blocks', () => {
-    // 首屏入口 + 按需加载的终端 / PDF 大 chunk（三个文件共 22 处静态块）。
-    expect(LEGACY_PATCH).toContain(
-      '"node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/index-Dy0OhsZ5.js"',
-    )
+  it('targets the stable chunk filenames that contain class static blocks', () => {
+    // 按需加载的终端 / PDF 大 chunk（共 20 处静态块）文件名稳定，直接列路径。
     expect(LEGACY_PATCH).toContain(
       '"node_modules/@deepseek-ai/dsh-client-ui-sidebar-terminal/lib/client.terminal.js"',
     )
     expect(LEGACY_PATCH).toContain(
       '"node_modules/@deepseek-ai/dsh-client-ui-sidebar-documentpreview/lib/client.pdf.js"',
     )
-    expect(LEGACY_PATCH).toContain('const TARGETS: [&str; 3] = [')
+    expect(LEGACY_PATCH).toContain('const CHUNK_TARGETS: [&str; 2] = [')
+  })
+
+  it('resolves the hashed entry bundle instead of hard-coding one core version', () => {
+    // 入口名带内容 hash，四个核心版本各不相同（index-Dy0OhsZ5.js / index-Q6zc2uHV.js /
+    // index-DuF6ti6g.js / index-BKQ_L1z6.js）。写死文件名会在核心升级后失配，而
+    // patch_core_file 对缺失目标只记 info 并返回 Ok —— 白屏会静默复发。
+    expect(LEGACY_PATCH).toContain('fn resolve_entry_rel_path(core_dir: &Path) -> Option<String>')
+    expect(LEGACY_PATCH).toContain('const WEB_FRONTEND_ASSETS_DIR')
+    expect(LEGACY_PATCH).toContain('fn entry_asset_from_index_html(html: &str) -> Option<String>')
+    expect(LEGACY_PATCH).toContain('if let Some(asset) = entry_asset_from_index_html(&html)')
+    expect(LEGACY_PATCH).not.toContain('dist/assets/index-Dy0OhsZ5.js')
+  })
+
+  it('warns when no entry bundle can be located', () => {
+    expect(LEGACY_PATCH).toContain('dsh frontend entry bundle not found under {}, skip legacy syntax patch: {}')
+  })
+
+  it('fails closed instead of writing a corrupted bundle', () => {
+    // 改写前与改写后都校验整份产物的花括号收支；不平衡即放弃，宁可继续白屏。
+    expect(LEGACY_PATCH).toContain('fn braces_balanced(source: &[u8]) -> bool')
+    expect(LEGACY_PATCH).toContain('if !braces_balanced(source.as_bytes()) {')
+    expect(LEGACY_PATCH).toContain('if !braces_balanced(text.as_bytes()) {')
+    expect(LEGACY_PATCH).toContain('fn patch_fails_closed_when_braces_do_not_balance()')
+  })
+
+  it('treats a regex after `return` / `typeof` as a literal, not a division', () => {
+    // `return` 的末字节是 `n`，按字节判定会把 `/}/` 当除法，正则里的 `}`
+    // 随即被误判成静态块收尾，改写结果语法损坏（Unexpected token ')'）。
+    expect(LEGACY_PATCH).toContain('const REGEX_KEYWORDS: [&str; 14] = [')
+    expect(LEGACY_PATCH).toContain('REGEX_KEYWORDS.contains(&self.previous_word.as_str())')
+    expect(LEGACY_PATCH).toContain('fn keeps_a_regex_after_return_inside_a_static_block()')
+    expect(LEGACY_PATCH).toContain('fn keeps_a_regex_after_typeof_inside_a_static_block()')
+  })
+
+  it('scans JavaScript inside template `${}` interpolations', () => {
+    // 模板插值里的 class expression 静态块同样要降级，否则该块仍会在旧 WebKit 上炸。
+    expect(LEGACY_PATCH).toContain('templates: Vec<Option<i32>>')
+    expect(LEGACY_PATCH).toContain('fn lowers_a_static_block_inside_template_interpolation()')
+    expect(LEGACY_PATCH).toContain('fn ignores_static_text_inside_a_template()')
   })
 
   it('lowers to a static field initializer that keeps the class as `this`', () => {
