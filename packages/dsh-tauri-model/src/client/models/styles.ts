@@ -658,6 +658,10 @@ select.zGbnIq_input {
   border-radius: var(--dsw-radius-md);
 }
 
+.zGbnIq_candidateActive {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
 .zGbnIq_candidateLabel {
   display: flex;
   align-items: center;
@@ -782,6 +786,7 @@ export const modelStyles: Record<string, string> = {
   addPanel: 'zGbnIq_addPanel',
   advancedHint: 'zGbnIq_advancedHint',
   candidate: 'zGbnIq_candidate',
+  candidateActive: 'zGbnIq_candidateActive',
   candidateEmpty: 'zGbnIq_candidateEmpty',
   candidateId: 'zGbnIq_candidateId',
   candidateLabel: 'zGbnIq_candidateLabel',

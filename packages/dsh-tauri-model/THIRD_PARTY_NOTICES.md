@@ -22,6 +22,12 @@ Derived (upstream `packages/client/ui-settings-models/` → this package `src/`)
 - `src/client/OnboardingModal.tsx`, `WelcomeNotice.tsx` → `client/models/` (same names)
 - `src/client/apiKey.ts`, `protocol-label.ts`, `operations.ts`, `schema-operations.ts`, `slot-contract.ts`, `store.ts`, `welcome-store.ts`, `locales.ts` → `client/models/` (same names)
 
+Synced `0.2.0-rc.1` → `0.2.0-rc.2`:
+
+- `ui-settings-models/` — this package's derived source — carries no code change across the range; only its `package.json` version string moves.
+- The release's third-party model-catalog and compatibility refresh (`pi-ai` 0.87.1) needs nothing here: no `pi-ai` compat field is named in this package (`deferredToolsMode`, `supportsToolReferences`, `supportsMidConvo*`, `sessionAffinityFormat`, `mistral-conversations` are all absent), `model-compat.ts` keeps writing `thinkingFormat` / `chatTemplateKwargs` / `supportsDeveloperRole`, and the preset catalog is sourced from the live LiteLLM index instead of `pi-ai`'s bundled model ids.
+- `ModelListEditor.tsx`: the fetched-model picker takes the release's model-picker search posture. `rankByName` from `@deepseek-ai/dsh-client-ui-primitives` replaces the substring filter, and the search field gains ArrowUp / ArrowDown (wrapping), Home / End, Enter to toggle the active row, and Escape to close, with the active row scrolled into view and highlighted.
+
 Synced `0.1.7-alpha.1` → `0.1.7-rc.2`:
 
 - `store.ts`: the account route (`deepseek-account`) is joined out of the credential space — no `apiKeyEnv`, no credential read, availability from `session/modelCatalog()`; hidden while signed out; `providerUsable` answers through `accountAvailable`.

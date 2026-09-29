@@ -1,11 +1,11 @@
-import type { ReactNode } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 import type { LlmDiscoveredModel } from '../types/remotes.ts'
 import type { DeepSeekModelDraft } from './DeepSeekModelsEditor.tsx'
 import type { en } from './locales.ts'
 import type { ModelsOperations } from './operations.ts'
-import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Modal, rankByName } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Plus } from 'dsh-tauri-ui/client'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { TEMPLATE_COMPAT_PROTOCOL } from '../service/model-compat'
 import { AutoConfigAllButton, ModelCompatFields, modelExtrasTranslate, ModelFetchConfigButton } from '../ui/model-extras'
 import { formatCapacity, parseCapacity } from './DeepSeekModelsEditor.tsx'
@@ -99,6 +99,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   const [candidates, setCandidates] = useState<readonly LlmDiscoveredModel[] | undefined>(undefined)
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
   const [candidateQuery, setCandidateQuery] = useState('')
+  const [activeCandidate, setActiveCandidate] = useState(0)
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
 
   const [editing, setEditing] = useState<ReadonlyMap<string, string>>(new Map())
@@ -213,11 +214,16 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   }
 
   const activeCandidates = candidates ?? []
-  const normalizedCandidateQuery = candidateQuery.trim().toLowerCase()
-  const visibleCandidates = normalizedCandidateQuery.length === 0
-    ? activeCandidates
-    : activeCandidates.filter(candidate => candidate.id.toLowerCase().includes(normalizedCandidateQuery)
-      || candidate.name?.toLowerCase().includes(normalizedCandidateQuery) === true)
+  const visibleCandidates = rankByName(
+    activeCandidates.map(candidate => ({
+      name: candidate.id,
+      ...candidate.name === undefined ? {} : { label: candidate.name },
+      candidate,
+    })),
+    candidateQuery.trim(),
+  ).map(ranked => ranked.candidate)
+  const activeCandidateIndex = Math.min(activeCandidate, Math.max(visibleCandidates.length - 1, 0))
+  const candidateRowsRef = useRef(new Map<string, HTMLLIElement>())
   const allVisibleCandidatesPicked = visibleCandidates.length > 0
     && visibleCandidates.every(candidate => picked.has(candidate.id))
 
@@ -230,6 +236,42 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
       for (const candidate of visibleCandidates) next.add(candidate.id)
       return next
     })
+  }
+
+  const revealCandidate = (id: string | undefined): void => {
+    if (id === undefined)
+      return
+    candidateRowsRef.current.get(id)?.scrollIntoView({ block: 'nearest' })
+  }
+
+  const moveCandidate = (event: KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closePicker()
+      return
+    }
+    const last = visibleCandidates.length - 1
+    if (last < 0)
+      return
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const step = event.key === 'ArrowDown' ? 1 : -1
+      const next = (activeCandidateIndex + step + visibleCandidates.length) % visibleCandidates.length
+      setActiveCandidate(next)
+      revealCandidate(visibleCandidates[next]?.id)
+      return
+    }
+    if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      const next = event.key === 'Home' ? 0 : last
+      setActiveCandidate(next)
+      revealCandidate(visibleCandidates[next]?.id)
+      return
+    }
+    if (event.key === 'Enter' && visibleCandidates[activeCandidateIndex] !== undefined) {
+      event.preventDefault()
+      toggle(visibleCandidates[activeCandidateIndex].id)
+    }
   }
 
   const askable = probe.provider !== undefined || (probe.baseURL !== undefined && probe.baseURL.length > 0)
@@ -381,7 +423,11 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
             value={candidateQuery}
             placeholder={t('fetchSearch')}
             aria-label={t('fetchSearch')}
-            onChange={(event) => { setCandidateQuery(event.target.value) }}
+            onChange={(event) => {
+              setCandidateQuery(event.target.value)
+              setActiveCandidate(0)
+            }}
+            onKeyDown={moveCandidate}
           />
           <Button
             variant="ghost"
@@ -396,8 +442,19 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
           ? <p className={styles.candidateEmpty} role="status">{t('fetchNoMatches')}</p>
           : (
               <ul className={styles.candidateList}>
-                {visibleCandidates.map(candidate => (
-                  <li key={candidate.id} className={styles.candidate}>
+                {visibleCandidates.map((candidate, index) => (
+                  <li
+                    key={candidate.id}
+                    className={index === activeCandidateIndex
+                      ? `${styles.candidate} ${styles.candidateActive}`
+                      : styles.candidate}
+                    ref={(node) => {
+                      if (node === null)
+                        candidateRowsRef.current.delete(candidate.id)
+                      else
+                        candidateRowsRef.current.set(candidate.id, node)
+                    }}
+                  >
                     <label className={styles.candidateLabel}>
                       <input
                         type="checkbox"
