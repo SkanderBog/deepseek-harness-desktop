@@ -11,13 +11,18 @@ export interface NotificationExtra {
 
 /**
  * `onAction` 的事件体：`actionId` 为 `'tap'` 表示点了通知本体，否则是按钮的 action id。
- * `notification` 只在应用内（热）激活时存在；带输入框的按钮另外把用户输入放在
- * `inputValue`（vender 补丁让按钮的 arguments 携带 JSON，冷启动也能带回 `extra`）。
+ * 带输入框的按钮另外把用户输入放在 `inputValue`（vender 补丁让按钮的 arguments 携带
+ * JSON，冷启动也能带回 `extra`）。
+ *
+ * `extra` 才是定位会话的唯一可靠来源：`notification` 只是应用内（热）激活时的通知快照，
+ * 进程外 COM 激活（点通知栏里的历史通知）拿到的事件里它是 `null`。
  */
 export interface NotificationActionEvent {
   actionId?: string
   /** 带输入框的按钮：用户在系统通知文本框里填的内容。 */
   inputValue?: string | null
+  /** 会话标识：与发送时写进通知 `extra` 的内容一致，两条激活通路都会带回。 */
+  extra?: NotificationExtra | null
   notification?: { extra?: NotificationExtra } | null
 }
 

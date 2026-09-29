@@ -10,7 +10,7 @@ import { CircleExclamation } from '@gravity-ui/icons'
 import { useEventListener } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
@@ -91,6 +91,15 @@ const registeredActionTypes = new Map<string, ActionTypeRegistration>()
 const ACTION_TYPE_LIMIT = 16
 
 /**
+ * 合并同一次按钮点击的重复投递的窗口（毫秒）。
+ *
+ * 一次点击会同时走「应用内 `Activated` 事件」与「进程外 COM 激活回调」两条通路，两条都
+ * 带着同一份 `arguments`，但用户输入文本往往只有其中一条有；两条到达间隔在 1ms 量级，
+ * 250ms 足够把它们并成一次投递（见 `handleNotificationAction`）。
+ */
+const ACTION_COALESCE_MS = 250
+
+/**
  * 一组按钮对应一个 action type id，由动作 id 拼出来；同一组按钮永远映射到同一个 id。
  *
  * 插件的 `registerActionTypes` 是「按 id 覆盖」的（Windows 存一张 id → 动作表，macOS 的
@@ -143,6 +152,9 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   const remoteLoading = remoteMode && loadedUrl !== srcOverride
 
   const post = useIframePost(iframeRef)
+
+  /** 待合并的按钮动作，按「tag + actionId」索引（见 `handleNotificationAction`）。 */
+  const pendingActionsRef = useRef(new Map<string, { payload: NotificationClickedPayload, timer: ReturnType<typeof setTimeout> }>())
 
   const [, setDshStyle] = useDshStyle()
 
@@ -355,21 +367,57 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
 
   /** `onAction`：点通知本体（`actionId === 'tap'`）交给 `onNotificationClicked`，这里只管按钮。 */
   function handleNotificationAction(event: NotificationActionEvent) {
-    const { actionId, inputValue, notification } = event
-    // 事件有没有真的到达壳层只有日志能回答：Windows 的 toast 激活依赖插件侧回调。
-    // eslint 只允许 console.warn/error，而 console 会被 utils/logger 劫持写进前台日志
-    // （desktop.frontdesk.log），所以开发态用 warn 留痕、打包态不打扰。
-    if (import.meta.env.DEV)
-      console.warn('[notification] action event:', actionId)
+    const { actionId, inputValue, notification, extra: payloadExtra } = event
     if (typeof actionId !== 'string' || actionId === '' || actionId === 'tap')
       return
-    void applyNotificationResult({
-      sessionId: notification?.extra?.sessionId ?? null,
-      title: notification?.extra?.title,
-      tag: notification?.extra?.tag,
+
+    // 会话标识只能从 `extra` 取：进程外 COM 激活（点通知中心里的历史通知）拿到的
+    // `notification` 恒为 `null`，而 `extra` 是发送时写进按钮 arguments 的那份数据
+    // 原样带回来的。缺了 tag，帧内 `pendingOnClicks` 找不到实例，事件会被静默丢弃。
+    const extra = payloadExtra ?? notification?.extra
+    const payload: NotificationClickedPayload = {
+      sessionId: extra?.sessionId ?? null,
+      title: extra?.title,
+      tag: extra?.tag,
       action: actionId,
       inputValue: typeof inputValue === 'string' ? inputValue : null,
-    })
+    }
+
+    // 同一次点击会从两条激活通路各投一次，用户输入文本往往只挂在其中一条上：
+    // 先到的先压住，250ms 内的第二条与它合并（优先保留带输入文本的那一份），
+    // 只向帧内投递一次，避免回复内容被空的那份顶掉。
+    const key = `${payload.tag ?? ''}|${actionId}`
+    const queued = pendingActionsRef.current.get(key)
+    if (queued) {
+      clearTimeout(queued.timer)
+      pendingActionsRef.current.delete(key)
+      dispatchNotificationAction({
+        ...queued.payload,
+        ...payload,
+        inputValue: payload.inputValue || queued.payload.inputValue,
+      })
+      return
+    }
+
+    const timer = setTimeout(() => {
+      pendingActionsRef.current.delete(key)
+      dispatchNotificationAction(payload)
+    }, ACTION_COALESCE_MS)
+    pendingActionsRef.current.set(key, { payload, timer })
+  }
+
+  function dispatchNotificationAction(payload: NotificationClickedPayload) {
+    // 事件有没有真的到达壳层、有没有带上会话标识只有日志能回答：Windows 的 toast 激活
+    // 依赖插件侧回调。eslint 只允许 console.warn/error，而 console 会被 utils/logger
+    // 劫持写进前台日志（desktop.frontdesk.log），所以开发态用 warn 留痕、打包态不打扰。
+    if (import.meta.env.DEV) {
+      console.warn('[notification] action event:', payload.action, {
+        tag: payload.tag ?? null,
+        sessionId: payload.sessionId ?? null,
+        inputLength: payload.inputValue?.length ?? 0,
+      })
+    }
+    void applyNotificationResult(payload)
   }
 
   /** `onNotificationClicked`：点通知本体（前台与冷启动两条路径都会走到这里）。 */
