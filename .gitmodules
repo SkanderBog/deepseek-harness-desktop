@@ -25,3 +25,15 @@
 [submodule "source/zcode"]
 	path = source/zcode
 	url = https://github.com/zai-org/ZCode.git
+[submodule "source/dsh-session-notification"]
+	path = source/dsh-session-notification
+	url = https://github.com/dingyi222666/dsh-session-notification
+[submodule "source/dsh-notifications"]
+	path = source/dsh-notifications
+	url = https://github.com/AlonDan/dsh-notifications
+[submodule "source/dsh-notification"]
+	path = source/dsh-notification
+	url = https://github.com/omdsh-dev/dsh-notification
+[submodule "source/tauri-plugin-notifications"]
+	path = source/tauri-plugin-notifications
+	url = https://github.com/Choochmeque/tauri-plugin-notifications
