@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { detectMobileDevice, isMobileDevice } from './settings.utils'
 
-const MOBILE_QUERIES = ['(hover: none)', '(any-pointer: coarse)']
+const MOBILE_QUERIES = ['(hover: none)', '(any-pointer: coarse)', '(any-hover: none)']
 
 /** 只记查询串、按给定的答案表作答：被测函数不碰真实浏览器。 */
 function matcher(answers: Record<string, boolean>) {
@@ -27,7 +27,11 @@ afterEach(() => {
 
 describe('isMobileDevice', () => {
   it('treats a touch device with a coarse pointer as mobile', () => {
-    const probe = matcher({ '(hover: none)': true, '(any-pointer: coarse)': true })
+    const probe = matcher({
+      '(hover: none)': true,
+      '(any-pointer: coarse)': true,
+      '(any-hover: none)': true,
+    })
 
     expect(isMobileDevice(probe.matches)).toBe(true)
     expect(probe.queries).toEqual(MOBILE_QUERIES)
@@ -42,6 +46,18 @@ describe('isMobileDevice', () => {
     expect(isMobileDevice(mouseDesktop.matches)).toBe(false)
     expect(isMobileDevice(touchscreenLaptop.matches)).toBe(false)
     expect(isMobileDevice(hoverTouch.matches)).toBe(false)
+  })
+
+  /** 触屏为主、另接鼠标的设备（`any-hover: hover`）有鼠标可用，仍按桌面端处理。 */
+  it('keeps a touchscreen with a secondary mouse on the desktop branch', () => {
+    const tabletWithMouse = matcher({
+      '(hover: none)': true,
+      '(any-pointer: coarse)': true,
+      '(any-hover: hover)': true,
+    })
+
+    expect(isMobileDevice(tabletWithMouse.matches)).toBe(false)
+    expect(tabletWithMouse.queries).toEqual(MOBILE_QUERIES)
   })
 
   /** 判据只看设备能力：窄窗口但带鼠标仍是桌面端，横竖屏切换不会翻案。 */
@@ -59,7 +75,11 @@ describe('isMobileDevice', () => {
 
 describe('detectMobileDevice', () => {
   it('probes the device capabilities through the kernel matchMedia', () => {
-    const probe = matcher({ '(hover: none)': true, '(any-pointer: coarse)': true })
+    const probe = matcher({
+      '(hover: none)': true,
+      '(any-pointer: coarse)': true,
+      '(any-hover: none)': true,
+    })
     stubWindow(probe.matchMedia)
 
     expect(detectMobileDevice()).toBe(true)
