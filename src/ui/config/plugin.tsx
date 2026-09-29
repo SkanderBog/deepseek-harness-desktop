@@ -63,7 +63,8 @@ export function ConfigPlugin() {
   const [showInternal, toggleShowInternal] = useToggle()
   /** 高级选项：默认关闭，快照（创建/还原/删除）属于低频维护操作，不常驻每行 */
   const [advanced, toggleAdvanced] = useToggle()
-  const [busy, setBusy] = useState<{ id: string, action: 'update' | 'remove' | 'disable' | 'enable' | 'snapshot' | 'restore' | 'delete-snapshot' } | null>(null)
+  /** 行内动作标记 `<id>:<action>`：按行独立，某行的动作不阻塞其他行继续入队 */
+  const [busy, setBusy] = useState<string[]>([])
   /** 安装输入的原始文本：支持逗号/空白分隔的多个 spec */
   const [installRef, setInstallRef] = useState('')
   const [installing, setInstalling] = useState(false)
@@ -112,12 +113,29 @@ export function ConfigPlugin() {
 
   /**
    * 管理器动作只等待组结算：授权等待期间的横幅与结果 Toast 都由管理器弹出，
-   * 面板仅负责行内 busy 与「同一次点击不重复派发」。
+   * 面板仅负责行内 busy 与「同一行不重复派发」。不同行的动作互不禁用，
+   * 后续点击会作为新组进入管理器队列。
    */
+  function busyWith(id: string, action: string): boolean {
+    return busy.includes(`${id}:${action}`)
+  }
+
+  function rowBusy(id: string): boolean {
+    return busy.some(item => item.startsWith(`${id}:`))
+  }
+
+  function markBusy(id: string, action: string): void {
+    setBusy(current => [...current, `${id}:${action}`])
+  }
+
+  function clearBusy(id: string, action: string): void {
+    setBusy(current => current.filter(item => item !== `${id}:${action}`))
+  }
+
   async function runAction(id: string, action: 'update' | 'remove' | 'disable' | 'enable', run: () => Promise<unknown>) {
-    if (busy)
+    if (rowBusy(id))
       return
-    setBusy({ id, action })
+    markBusy(id, action)
     try {
       await run()
     }
@@ -125,7 +143,7 @@ export function ConfigPlugin() {
       silence(e, 'plugin action: error already reported by the manager')
     }
     finally {
-      setBusy(null)
+      clearBusy(id, action)
     }
   }
 
@@ -134,7 +152,7 @@ export function ConfigPlugin() {
   }
 
   async function onRemove(id: string, name: string) {
-    if (busy)
+    if (rowBusy(id))
       return
     try {
       await openDialog({
@@ -189,7 +207,7 @@ export function ConfigPlugin() {
   }
 
   async function onEnable(id: string, clearConfigOverride = false) {
-    if (busy)
+    if (rowBusy(id))
       return
     if (clearConfigOverride) {
       const name = plugins.find(p => p.id === id)?.name ?? id
@@ -214,7 +232,7 @@ export function ConfigPlugin() {
   }
 
   async function onSnapshot(id: string, name: string, hasSnapshot: boolean) {
-    if (busy)
+    if (rowBusy(id))
       return
     if (hasSnapshot) {
       try {
@@ -234,7 +252,7 @@ export function ConfigPlugin() {
         return
       }
     }
-    setBusy({ id, action: 'snapshot' })
+    markBusy(id, 'snapshot')
     try {
       await snapshot.mutateAsync(id)
     }
@@ -242,12 +260,12 @@ export function ConfigPlugin() {
       silence(e, 'plugin snapshot: error already shown by mutation onError')
     }
     finally {
-      setBusy(null)
+      clearBusy(id, 'snapshot')
     }
   }
 
   async function onRestore(id: string, name: string) {
-    if (busy)
+    if (rowBusy(id))
       return
     try {
       await openDialog({
@@ -265,7 +283,7 @@ export function ConfigPlugin() {
       silence(e, 'plugin restore: dialog cancelled')
       return
     }
-    setBusy({ id, action: 'restore' })
+    markBusy(id, 'restore')
     try {
       await restore.mutateAsync(id)
       // 还原期间后端已停止服务：复用 ui/config/backup 的「重启服务」toast 交互
@@ -285,12 +303,12 @@ export function ConfigPlugin() {
       silence(e, 'plugin restore: error already shown by mutation onError')
     }
     finally {
-      setBusy(null)
+      clearBusy(id, 'restore')
     }
   }
 
   async function onDeleteSnapshot(id: string, name: string) {
-    if (busy)
+    if (rowBusy(id))
       return
     try {
       await openDialog({
@@ -308,7 +326,7 @@ export function ConfigPlugin() {
       silence(e, 'plugin delete-snapshot: dialog cancelled')
       return
     }
-    setBusy({ id, action: 'delete-snapshot' })
+    markBusy(id, 'delete-snapshot')
     try {
       await deleteSnapshot.mutateAsync(id)
     }
@@ -316,7 +334,7 @@ export function ConfigPlugin() {
       silence(e, 'plugin delete-snapshot: error already shown by mutation onError')
     }
     finally {
-      setBusy(null)
+      clearBusy(id, 'delete-snapshot')
     }
   }
 
@@ -394,14 +412,14 @@ export function ConfigPlugin() {
             {/* 升级入口仅在确有更新（updateAvailable）或插件异常（error，修复入口）时显示 */}
             <If cond={plugin.updateAvailable || plugin.error != null}>
               <Chip
-                className={actionChip({ busy: !!busy })}
+                className={actionChip({ busy: rowBusy(plugin.id) })}
                 variant="primary"
                 color="accent"
                 size="sm"
                 onClick={() => onUpgrade(plugin.id)}
               >
                 <span className="flex items-center gap-1">
-                  <If cond={busy?.id === plugin.id && busy.action === 'update'} then={<Spinner size="sm" color="current" />} />
+                  <If cond={busyWith(plugin.id, 'update')} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.upgrade')}
                   <If cond={plugin.latest != null && plugin.error == null}>
                     <span className="font-mono text-[10px] opacity-80 max-w-[80px] truncate">
@@ -415,26 +433,26 @@ export function ConfigPlugin() {
                 配置覆盖禁用时点击会先弹确认框，确认后管理器透传 clearConfigOverride */}
             <If cond={plugin.patchDisabled || (!plugin.internal && plugin.disabled)}>
               <Chip
-                className={actionChip({ busy: !!busy })}
+                className={actionChip({ busy: rowBusy(plugin.id) })}
                 variant="primary"
                 color="accent"
                 size="sm"
                 onClick={() => onEnable(plugin.id, plugin.patchDisabled)}
               >
                 <span className="flex items-center gap-1">
-                  <If cond={busy?.id === plugin.id && busy.action === 'enable'} then={<Spinner size="sm" color="current" />} />
+                  <If cond={busyWith(plugin.id, 'enable')} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.enable')}
                 </span>
               </Chip>
             </If>
             <If cond={!plugin.internal && !plugin.patchDisabled && !plugin.disabled}>
               <Chip
-                className={actionChip({ busy: !!busy })}
+                className={actionChip({ busy: rowBusy(plugin.id) })}
                 size="sm"
                 onClick={() => onDisable(plugin.id)}
               >
                 <span className="flex items-center gap-1">
-                  <If cond={busy?.id === plugin.id && busy.action === 'disable'} then={<Spinner size="sm" color="current" />} />
+                  <If cond={busyWith(plugin.id, 'disable')} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.disable')}
                 </span>
               </Chip>
@@ -444,51 +462,51 @@ export function ConfigPlugin() {
                 {/* 单插件快照：快照始终可用（已存在时覆盖确认）；还原/删除快照仅在
                     存在快照时显示。还原会停服务，还原后 toast 提示重启（issue #303） */}
                 <Chip
-                  className={actionChip({ busy: !!busy })}
+                  className={actionChip({ busy: rowBusy(plugin.id) })}
                   variant="primary"
                   color="accent"
                   size="sm"
                   onClick={() => onSnapshot(plugin.id, plugin.name, plugin.hasSnapshot)}
                 >
                   <span className="flex items-center gap-1">
-                    <If cond={busy?.id === plugin.id && busy.action === 'snapshot'} then={<Spinner size="sm" color="current" />} />
+                    <If cond={busyWith(plugin.id, 'snapshot')} then={<Spinner size="sm" color="current" />} />
                     {t('plugins.snapshot')}
                   </span>
                 </Chip>
                 <If cond={plugin.hasSnapshot}>
                   <Chip
-                    className={actionChip({ busy: !!busy })}
+                    className={actionChip({ busy: rowBusy(plugin.id) })}
                     variant="primary"
                     color="accent"
                     size="sm"
                     onClick={() => onRestore(plugin.id, plugin.name)}
                   >
                     <span className="flex items-center gap-1">
-                      <If cond={busy?.id === plugin.id && busy.action === 'restore'} then={<Spinner size="sm" color="current" />} />
+                      <If cond={busyWith(plugin.id, 'restore')} then={<Spinner size="sm" color="current" />} />
                       {t('plugins.restore')}
                     </span>
                   </Chip>
                   <Chip
-                    className={actionChip({ busy: !!busy })}
+                    className={actionChip({ busy: rowBusy(plugin.id) })}
                     size="sm"
                     onClick={() => onDeleteSnapshot(plugin.id, plugin.name)}
                   >
                     <span className="flex items-center gap-1">
-                      <If cond={busy?.id === plugin.id && busy.action === 'delete-snapshot'} then={<Spinner size="sm" color="current" />} />
+                      <If cond={busyWith(plugin.id, 'delete-snapshot')} then={<Spinner size="sm" color="current" />} />
                       {t('plugins.delete_snapshot')}
                     </span>
                   </Chip>
                 </If>
               </If>
               <Chip
-                className={actionChip({ busy: !!busy })}
+                className={actionChip({ busy: rowBusy(plugin.id) })}
                 variant="primary"
                 color="danger"
                 size="sm"
                 onClick={() => onRemove(plugin.id, plugin.name)}
               >
                 <span className="flex items-center gap-1">
-                  <If cond={busy?.id === plugin.id && busy.action === 'remove'} then={<Spinner size="sm" color="current" />} />
+                  <If cond={busyWith(plugin.id, 'remove')} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.uninstall')}
                 </span>
               </Chip>

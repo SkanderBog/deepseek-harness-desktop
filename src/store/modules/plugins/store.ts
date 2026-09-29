@@ -117,6 +117,8 @@ export const plugins = defineStore({
     presenterCount: 0,
     installedSource: [],
     installedLoaded: false,
+    progressKey: null,
+    progressDetail: '',
   }),
   getters: {
     installed(): Plugin[] {
@@ -148,6 +150,7 @@ export const plugins = defineStore({
 
     detachPresenter(): void {
       this.presenterCount = Math.max(0, this.presenterCount - 1)
+      this.syncProgress()
     },
 
     on<K extends PluginsManagerEvent>(
@@ -192,6 +195,7 @@ export const plugins = defineStore({
       this.processes = [...this.processes, ...created]
       this.groups = [...this.groups, group]
       this.pushLog('info', i18next.t('plugins.log_enqueued', { count: created.length }), groupId)
+      this.syncProgress()
       void this.drain()
       return done
     },
@@ -214,8 +218,7 @@ export const plugins = defineStore({
     },
 
     async runGroup(group: PluginGroup): Promise<void> {
-      const presenter = group.options.toast && this.presenterCount > 0
-      let progressKey: string | null = presenter ? this.openProgress(group) : null
+      this.syncProgress()
       while (group.pending.length > 0) {
         const targets = group.pending
           .map(id => this.processes.find(process => process.id === id))
@@ -223,16 +226,12 @@ export const plugins = defineStore({
         if (this.cancelling)
           break
         if (targets.length === 0) {
-          if (progressKey !== null) {
-            toast.close(progressKey)
-            progressKey = null
-          }
+          this.hideProgress()
           await new Promise<void>((resolve) => {
             group.resume = resolve
           })
           group.resume = undefined
-          if (presenter)
-            progressKey = this.openProgress(group)
+          this.syncProgress()
           continue
         }
         if (group.attempt >= MAX_ATTEMPTS) {
@@ -269,22 +268,16 @@ export const plugins = defineStore({
         })
         const blocked = await this.submit(group, runnable)
         if (blocked.length > 0) {
-          if (progressKey !== null) {
-            toast.close(progressKey)
-            progressKey = null
-          }
+          this.hideProgress()
           await new Promise<void>((resolve) => {
             group.resume = resolve
           })
           group.resume = undefined
-          if (presenter)
-            progressKey = this.openProgress(group)
+          this.syncProgress()
           continue
         }
         runnable.forEach(process => this.detach(process.id))
       }
-      if (progressKey !== null)
-        toast.close(progressKey)
       this.settle(group)
     },
 
@@ -432,6 +425,7 @@ export const plugins = defineStore({
       group.status = 'settled'
       this.groups = this.groups.filter(item => item.id !== group.id)
       group.processIds.forEach(id => this.detach(id))
+      this.syncProgress()
       group.resolveDone(results)
       triggerPluginsManagerEvent('completed', results)
       if (failed.length > 0)
@@ -443,20 +437,60 @@ export const plugins = defineStore({
         triggerPluginsManagerEvent('allcompleted', results)
     },
 
-    openProgress(group: PluginGroup): string {
-      const count = group.processIds.length
-      const first = this.processes.find(process => process.id === group.processIds[0])
-      const title
-        = count >= 2
-          ? i18next.t(PROGRESS_MANY[group.type], { count })
-          : i18next.t(PROGRESS_ONE[group.type], { name: first?.name ?? '' })
-      const key = toast(title, { timeout: 0 })
-      group.processIds.forEach((id) => {
-        const process = this.processes.find(item => item.id === id)
-        if (process)
-          process.progressKey = key
+    /** 全队列共享的加载气泡：标题按待处理进程总数聚合，因此后入队的组会立刻改变计数 */
+    progressTargets(): PluginProcess[] {
+      return this.processes.filter(process => process.status !== 'unauthorized')
+    },
+
+    progressTitle(processes: PluginProcess[]): string {
+      const first = processes[0]
+      if (processes.length >= 2) {
+        const types = new Set(processes.map(process => process.type))
+        return types.size === 1
+          ? i18next.t(PROGRESS_MANY[first.type], { count: processes.length })
+          : i18next.t('plugins.progress_many', { count: processes.length })
+      }
+      return i18next.t(PROGRESS_ONE[first.type], { name: first.name })
+    },
+
+    syncProgress(): void {
+      const processes = this.progressTargets()
+      const wanted = this.presenterCount > 0
+        && processes.length > 0
+        && this.groups.some(group => group.options.toast)
+      if (!wanted) {
+        this.hideProgress()
+        return
+      }
+      const title = this.progressTitle(processes)
+      const description = this.progressDetail === '' ? undefined : this.progressDetail
+      if (this.progressKey === null)
+        this.progressKey = toast(title, { timeout: 0, isLoading: true, description })
+      else
+        toast.update(this.progressKey, { title, isLoading: true, description })
+      const key = this.progressKey
+      processes.forEach((process) => {
+        process.progressKey = key ?? undefined
       })
-      return key
+    },
+
+    hideProgress(): void {
+      if (this.progressKey !== null) {
+        toast.close(this.progressKey)
+        this.progressKey = null
+      }
+      this.progressDetail = ''
+      this.processes.forEach((process) => {
+        process.progressKey = undefined
+      })
+    },
+
+    /** 安装日志的末行即加载气泡的副标题（HeroUI 默认气泡的 description 直接读条目 content） */
+    setProgressDetail(line: string): void {
+      if (this.progressKey === null)
+        return
+      this.progressDetail = line
+      toast.update(this.progressKey, { description: line })
     },
 
     presentResults(group: PluginGroup, results: PluginProcessResult[]): void {

@@ -14,6 +14,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { useStore } from 'valtio-define'
 import { queryKeys } from '@/config/query-keys'
+import { useListen } from '@/hooks/use-listen'
 import { plugins } from '@/store/modules/plugins'
 
 export interface UseDshPluginsManagerOptions {
@@ -89,6 +90,9 @@ export function useDshPluginsManager(options: UseDshPluginsManagerOptions = {}):
   })
   useUnmount(() => {
     plugins.detachPresenter()
+  })
+  useListen<{ line: string }>('preinstall-log', (event) => {
+    plugins.setProgressDetail(event.payload.line)
   })
 
   function on<K extends PluginsManagerEvent>(

@@ -309,6 +309,7 @@
   "plugins.rejected": "Cancelled: authorisation was declined",
   "plugins.cancelled": "Cancelled",
   "plugins.result_summary": "{{count}} plugin tasks failed",
+  "plugins.progress_many": "Processing {{count}} plugins...",
   "plugins.progress_install_one": "Installing {{name}}...",
   "plugins.progress_install_many": "Installing {{count}} plugins...",
   "plugins.progress_upgrade_one": "Upgrading {{name}}...",

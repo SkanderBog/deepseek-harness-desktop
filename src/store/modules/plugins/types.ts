@@ -109,6 +109,8 @@ export interface PluginsState {
   presenterCount: number
   installedSource: DshPlugin[]
   installedLoaded: boolean
+  progressKey: string | null
+  progressDetail: string
 }
 
 export type { DshPlugin }

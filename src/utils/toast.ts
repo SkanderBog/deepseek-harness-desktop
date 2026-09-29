@@ -11,6 +11,15 @@ export type ToastCloseReason = 'closed' | 'evicted' | 'dismissed'
 export type ToastOptions = Partial<ToastContentValue & { timeout?: number, onClose?: (reason: ToastCloseReason) => void }> & { placement?: Placement }
 export type ToastUpdateOptions = Partial<ToastContentValue>
 
+/**
+ * react-stately 队列的内部形态：`updateVisibleToasts` 是 TS private 但运行时存在，
+ * 只重建 visibleToasts 并通知订阅者，不改动条目，因此改 content 后必须自己调它。
+ */
+interface StatelyQueue {
+  queue: Array<{ key: string, content?: ToastContentValue }>
+  updateVisibleToasts: (action: string) => void
+}
+
 export type Placement = NonNullable<ToastVariants['placement']>
 export const placements = [
   'top start',
@@ -94,8 +103,9 @@ function takeCloseReason(key: string, autoClose: boolean): ToastCloseReason {
 
 /**
  * 统一 toast API：直接调用创建，toast.update/close/clear 通过 key 管理。
- * update 触发 `hooks['toast.updated']` 事件（见 config/hooks），由 ToastProvider 消费后
- * 原地更新对应 queue 的 content（HeroUI ToastQueue 没有 update 方法）。
+ * HeroUI 默认气泡直接读队列条目的 content，而 HeroUI ToastQueue 没有 update 方法：
+ * 这里原地改写条目 content 并通知 react-stately 队列重渲染，同时触发
+ * `hooks['toast.updated']`（见 config/hooks）供桌宠窗口的自定义气泡消费。
  */
 export const toast = Object.assign(
   (message: string | ReactNode, options?: ToastOptions) => {
@@ -131,9 +141,16 @@ export const toast = Object.assign(
   },
   {
     update(key: string, options: ToastUpdateOptions): void {
-      if (!placementsKeys.has(key))
+      const placement = placementsKeys.get(key)
+      if (placement === undefined)
         return
       toastContents.set(key, { ...(toastContents.get(key) ?? {}), ...options })
+      const queue = activeQueues[placement].getQueue() as unknown as StatelyQueue
+      const entry = queue.queue.find(item => item.key === key)
+      if (entry !== undefined) {
+        entry.content = { ...entry.content, ...options }
+        queue.updateVisibleToasts('update')
+      }
       void hooks['toast.updated'].trigger({ key, options })
     },
 

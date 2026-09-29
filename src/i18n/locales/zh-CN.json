@@ -309,6 +309,7 @@
   "plugins.rejected": "已取消：用户拒绝授权",
   "plugins.cancelled": "已取消",
   "plugins.result_summary": "{{count}} 个插件任务失败",
+  "plugins.progress_many": "正在处理 {{count}} 个插件...",
   "plugins.progress_install_one": "正在安装 {{name}}...",
   "plugins.progress_install_many": "正在安装 {{count}} 个插件...",
   "plugins.progress_upgrade_one": "正在升级 {{name}}...",
