@@ -139,6 +139,43 @@ function notificationIdFor(tag: string | undefined): number {
   return (Math.abs(hash) % 0x7FFFFFFF) || 1
 }
 
+/** 内置提示音：壳层 `public/` 下的资源，名字与插件侧的 `BuiltinNotificationSound` 对齐。 */
+const NOTIFICATION_SOUND_FILES: ReadonlyArray<readonly [string, string]> = [
+  ['default', '/notification.wav'],
+  ['classic', '/classic.wav'],
+]
+
+/** 已读到的内置提示音（data URL）；插件在 iframe 里取不到壳层同源文件，只能这样送过去。 */
+let notificationSoundAssets: Record<string, string> | undefined
+
+function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string')
+        resolve(reader.result)
+      else
+        reject(new Error('FileReader returned a non-string result'))
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+/** 读取内置提示音并转成 data URL（读一次缓存住，除非其中任何一个读取失败）。 */
+async function loadNotificationSounds(): Promise<Record<string, string>> {
+  if (notificationSoundAssets)
+    return notificationSoundAssets
+  const entries = await Promise.all(NOTIFICATION_SOUND_FILES.map(async ([name, url]) => {
+    const response = await fetch(url)
+    if (!response.ok)
+      throw new Error(`${url}: HTTP ${response.status}`)
+    return [name, await readBlobAsDataUrl(await response.blob())] as const
+  }))
+  notificationSoundAssets = Object.fromEntries(entries)
+  return notificationSoundAssets
+}
+
 export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: IframeProps) {
   const { t } = useTranslation()
   const harness = useStore(store.harness)
@@ -218,6 +255,10 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       case 'dsh://style':
         setDshStyle(data)
         break
+      // 内置提示音：插件客户端在 iframe 里取不到壳层 `public/` 的同源文件，读成 data URL 送过去
+      case 'dsh://notification-sounds:request':
+        pushNotificationSounds()
+        break
       // 帧内日志：iframe 跨源、帧内 console.* 没有宿主侧通路，由注入脚本转回来后
       // 直写 desktop.frontdesk.log，随「复制运行日志」的前台日志一并提供
       case 'dsh://frame-log':
@@ -232,6 +273,19 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       return
     event.preventDefault()
     setting.zoom(action)
+  }
+
+  /**
+   * 把内置提示音（`public/*.wav`）读成 data URL 交给 iframe。
+   *
+   * 插件客户端跑在 iframe 里，与壳层 `public/` 不同源，直接 `new Audio('/notification.wav')`
+   * 只会 404；帧内已有用户激活且 iframe 显式 `allow="autoplay"`，播放留在帧内最稳。
+   * 读取失败只记日志：帧内会退回合成音，通知本身不受影响。
+   */
+  function pushNotificationSounds() {
+    void loadNotificationSounds()
+      .then(sounds => post({ type: 'dsh://notification-sounds', sounds }))
+      .catch(error => console.error('[notification] failed to load notification sounds:', error))
   }
 
   function handleNativeNotification(data: IframeBridgeMessage) {
@@ -332,13 +386,13 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   }
 
   /**
-   * 把通知结果回灌给 iframe：先把窗口拉回前台，再让帧内聚焦会话 / 触发 onclick、onaction。
+   * 点通知本体：先把窗口拉回前台，再让帧内聚焦对应会话。
    *
    * 窗口这一步是必需的：点通知时窗口多半在后台（最小化 / 被别的窗口盖住），
    * 只回灌 iframe 消息的话用户看不到任何变化。失败只记录日志——窗口 API 报错不该
    * 阻断帧内的会话切换与按钮回调。
    */
-  async function applyNotificationResult(payload: NotificationClickedPayload) {
+  async function activateApplication(payload: NotificationClickedPayload) {
     try {
       const appWindow = getCurrentWindow()
       if (await appWindow.isMinimized())
@@ -355,8 +409,16 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       title: payload.title || undefined,
       tag: payload.tag || undefined,
     })
-    // 点击 / 按钮动作回灌给帧内的 Notification 实例：插件注册的
-    // onclick、onaction 回调只存在于 iframe 里，壳层只负责转发。
+  }
+
+  /**
+   * 点击 / 按钮动作回灌给帧内的 Notification 实例：插件注册的
+   * onclick、onaction 回调只存在于 iframe 里，壳层只负责转发。
+   *
+   * 点按钮只走这里，不碰窗口也不切会话：在通知里点「批准 / 拒绝 / 回复」时用户的
+   * 视线通常还在别处，把窗口拽到前台会打断手上的事；要看结果自己点通知本体。
+   */
+  function deliverNotificationResult(payload: NotificationClickedPayload) {
     post({
       type: 'dsh://notification-clicked',
       tag: payload.tag || undefined,
@@ -417,7 +479,7 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
         inputLength: payload.inputValue?.length ?? 0,
       })
     }
-    void applyNotificationResult(payload)
+    void deliverNotificationResult(payload)
   }
 
   /** `onNotificationClicked`：点通知本体（前台与冷启动两条路径都会走到这里）。 */
@@ -426,11 +488,12 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     if (import.meta.env.DEV)
       console.warn('[notification] click event:', JSON.stringify(data ?? null))
 
-    void applyNotificationResult({
+    const payload: NotificationClickedPayload = {
       sessionId: data?.sessionId ?? null,
       title: data?.title,
       tag: data?.tag,
-    })
+    }
+    void activateApplication(payload).then(() => deliverNotificationResult(payload))
   }
 
   return (

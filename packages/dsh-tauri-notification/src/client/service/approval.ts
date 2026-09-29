@@ -1,4 +1,4 @@
-import type { ApprovalDecision, PendingInteractionFace, SessionStatusFace, UiSessionFace } from '../types'
+import type { ApprovalDecision, PendingInteractionFace, QuestionAnswerFace, SessionStatusFace, UiSessionFace } from '../types'
 import { boundText } from './decision'
 
 export interface DecideResult {
@@ -107,28 +107,24 @@ async function decideApproval(uiSession: UiSessionFace | undefined, sessionId: s
   }
 }
 
-/**
- * 通知里那个输入框能回答的问题 id；**恰好一个问题**时才有值。
- *
- * 通知只有一个文本框，而官方契约要求每个问题各带一条答案：多问题批次从这里只答第一个，
- * 会让宿主把整批当成已答完。所以这类批次不提供回复按钮（交给会话界面），此函数也是
- * 「要不要给回复按钮」的唯一判据。
- */
-export function answerableQuestionId(pending: PendingInteractionFace): string | undefined {
+/** 答案的题号必须与当前挂起的题目一一对应：数量和 id 都要对得上。 */
+function answersMatchQuestions(pending: PendingInteractionFace, answers: readonly QuestionAnswerFace[]): boolean {
   const questions = pending.questions ?? []
-  if (questions.length !== 1)
-    return undefined
-  const id = questions[0]?.id
-  return typeof id === 'string' && id.length > 0 ? id : undefined
+  if (questions.length !== answers.length)
+    return false
+  const ids = new Set(questions.map(question => question.id))
+  return answers.every(answer => ids.has(answer.id))
 }
 
 /**
- * 通过官方待处理交互回答提问——通知里的输入框文本走这里。
+ * 通过官方待处理交互提交一整批答案——通知里的输入框文本走这里。
  *
- * 系统通知渲染不了选项列表，所以把用户输入的自由文本当作官方的 `custom`（「其他」）
- * 答案回传，`selected` 留空。
+ * 系统通知渲染不了选项列表，所以把用户输入的自由文本当作官方的 `custom`（「其他」）答案回传，
+ * `selected` 留空。宿主对回答的校验是「每道题各一条、按 id 对齐、缺一条就 BAD_ANSWER」
+ * （见 `dsh-user-questions` 的 `answer()`），**只收完整批次**：一题一题地交会被拒收，
+ * 多问题批次由 `question-wizard.ts` 在本地攒齐后再一次交过来。
  */
-export async function answerQuestion(uiSession: UiSessionFace | undefined, sessionId: string, text: string, expectedIdentity?: string): Promise<DecideResult> {
+export async function answerQuestionBatch(uiSession: UiSessionFace | undefined, sessionId: string, answers: readonly QuestionAnswerFace[], expectedIdentity?: string): Promise<DecideResult> {
   const pending = readPendingInteraction(uiSession, sessionId)
   if (!pending || (pending.kind !== 'question' && pending.kind !== 'plan-review'))
     return { ok: false, error: 'QUESTION_UNAVAILABLE' }
@@ -136,16 +132,12 @@ export async function answerQuestion(uiSession: UiSessionFace | undefined, sessi
     return { ok: false, error: 'QUESTION_STALE' }
   if (pending.answerable === false || typeof pending.answer !== 'function')
     return { ok: false, error: 'QUESTION_NOT_ANSWERABLE' }
-  if ((pending.questions ?? []).length !== 1)
-    return { ok: false, error: 'QUESTION_NOT_SINGLE' }
-  const custom = text.trim()
-  if (!custom)
+  if (answers.length === 0 || answers.every(answer => answer.selected.length === 0 && !(answer.custom ?? '').trim()))
     return { ok: false, error: 'QUESTION_EMPTY' }
-  const id = answerableQuestionId(pending)
-  if (!id)
-    return { ok: false, error: 'QUESTION_ID_MISSING' }
+  if (!answersMatchQuestions(pending, answers))
+    return { ok: false, error: 'QUESTION_STALE' }
   try {
-    await pending.answer({ answers: [{ id, selected: [], custom }] })
+    await pending.answer({ answers: [...answers] })
     return { ok: true }
   }
   catch (error) {

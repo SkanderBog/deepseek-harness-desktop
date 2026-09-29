@@ -139,6 +139,9 @@ export type TurnCompleteMode = 'never' | 'background' | 'always'
 /** 设置项：通知提示音。 */
 export type NotificationSound = 'default' | 'classic' | 'none' | 'custom'
 
+/** 内置提示音（壳层 `public/` 里的资源，由壳层转成 data URL 送进 iframe）。 */
+export type BuiltinNotificationSound = 'default' | 'classic'
+
 /** 持久化设置。 */
 export interface NotificationSettings {
   turnComplete: TurnCompleteMode

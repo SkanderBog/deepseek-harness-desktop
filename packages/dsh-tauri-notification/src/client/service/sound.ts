@@ -1,5 +1,6 @@
 import type { NotificationSound } from '../types'
 import { PLUGIN_ID } from '../../shared/constants'
+import { builtinSound, requestBuiltinSounds } from './sound-assets'
 
 export interface SoundPlayer {
   /** 播放提示音；`custom` 且无自定义音频时不发声（由设置层保证退回默认）。 */
@@ -7,15 +8,19 @@ export interface SoundPlayer {
   dispose: () => void
 }
 
-/** 内置提示音：默认（两段上行）与经典（两段下行），仅用振荡器合成，不需要任何资源文件。 */
+/**
+ * 合成音兜底：内置音用的是壳层 `public/*.wav`，只有壳层还没把资源送进来时才会响。
+ * 保留它而不是静默，是因为「通知响了」比「音色对不对」重要。
+ */
 const DEFAULT_NOTES: readonly (readonly [number, number])[] = [[1318.51, 0.09], [1760, 0.12]]
 const CLASSIC_NOTES: readonly (readonly [number, number])[] = [[880, 0.12], [587.33, 0.2]]
 
 /**
  * 提示音播放器。
  *
- * 内置音用 WebAudio 合成（无资源文件、无网络请求）；自定义音用 `<audio>` 播放
- * data URL。整个播放器在插件卸载时随 register 控制器一起释放。
+ * 内置音用壳层送进来的 data URL（`public/notification.wav`、`public/classic.wav`），
+ * 自定义音用用户选的文件，两者都走 `<audio>`；资源没到位时内置音退回 WebAudio 合成。
+ * 整个播放器在插件卸载时随 register 控制器一起释放。
  */
 export function createSoundPlayer(): SoundPlayer {
   let context: AudioContext | undefined
@@ -83,6 +88,13 @@ export function createSoundPlayer(): SoundPlayer {
           playFile(customSound)
         return
       }
+      const asset = builtinSound(sound)
+      if (asset) {
+        playFile(asset)
+        return
+      }
+      // 首响时资源可能还在路上：先放着合成音，同时催一次壳层。
+      requestBuiltinSounds()
       playNotes(sound === 'classic' ? CLASSIC_NOTES : DEFAULT_NOTES)
     },
     dispose() {

@@ -22,6 +22,10 @@ export interface TurnGateInput {
  *
  * `background` 的语义与 ChatGPT 面板一致：窗口不在前台，**或**用户已切到别的会话，
  * 都算「未聚焦」。
+ *
+ * 当前会话读不到时（会话投影缺席 / 还没打开任何会话）按「未聚焦」处理：参考实现
+ * `source/dsh-notification/src/client/notifier.ts` 的 `shouldShow` 也只在能确定
+ * 「用户就停在这个会话上」时才抑制，宁可多提醒一次也不能漏掉一次。
  */
 export function allowTurnNotification(input: TurnGateInput): boolean {
   if (input.mode === 'never')
@@ -30,7 +34,7 @@ export function allowTurnNotification(input: TurnGateInput): boolean {
     return true
   if (input.hostHidden)
     return true
-  return input.currentSessionId !== undefined && input.currentSessionId !== input.sessionId
+  return input.currentSessionId !== input.sessionId
 }
 
 /** 权限 / 提问通知各自的开关。 */

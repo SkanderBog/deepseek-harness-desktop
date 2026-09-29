@@ -1,9 +1,12 @@
 import type { ChangeEvent, ReactElement, ReactNode } from 'react'
+import type { SoundPlayer } from '../service/sound'
 import type { NotificationSound, TurnCompleteMode } from '../types'
 import { Button, Checkbox, Select } from 'dsh-tauri-ui/client'
 import { useStore } from 'dsh-tauri/client'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { locale } from '../locales'
+import { createSoundPlayer } from '../service/sound'
+import { requestBuiltinSounds } from '../service/sound-assets'
 import { readSoundFile } from '../service/sound-file'
 import { notificationSettings } from '../store'
 
@@ -30,6 +33,46 @@ export function NotificationSettingsSection(): ReactElement {
   const { turnComplete, approval, question, sound, customSound } = useStore(notificationSettings)
   const [notice, setNotice] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const playerRef = useRef<SoundPlayer | null>(null)
+
+  useEffect(() => {
+    // 试听要在设置页里立刻出声：先向壳层索要内置音资源（data URL），再建播放器。
+    requestBuiltinSounds()
+    const player = createSoundPlayer()
+    playerRef.current = player
+    return () => {
+      playerRef.current = null
+      player.dispose()
+    }
+  }, [])
+
+  /** 试听一次当前选择；`none` 与「还没选文件的自定义」不发声。 */
+  function preview(next: NotificationSound, custom: string | null): void {
+    if (next === 'none' || (next === 'custom' && !custom))
+      return
+    playerRef.current?.play(next, custom)
+  }
+
+  function pickSoundOption(next: NotificationSound): void {
+    notificationSettings.setSound(next)
+    preview(next, notificationSettings.$state.customSound)
+  }
+
+  async function pickSound(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file)
+      return
+    const result = await readSoundFile(file)
+    if (result.ok) {
+      notificationSettings.setCustomSound(result.dataUrl)
+      setNotice(null)
+      // 选完文件直接试听，用户不用等下一次通知才知道选对了没有。
+      preview('custom', result.dataUrl)
+      return
+    }
+    setNotice(locale.text(result.error === 'too-large' ? 'soundCustomLarge' : 'soundCustomUnreadable'))
+  }
 
   const turnOptions = [
     { value: 'never', label: locale.text('modeNever') },
@@ -42,20 +85,6 @@ export function NotificationSettingsSection(): ReactElement {
     { value: 'none', label: locale.text('soundNone') },
     { value: 'custom', label: locale.text('soundCustom') },
   ]
-
-  async function pickSound(event: ChangeEvent<HTMLInputElement>): Promise<void> {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file)
-      return
-    const result = await readSoundFile(file)
-    if (result.ok) {
-      notificationSettings.setCustomSound(result.dataUrl)
-      setNotice(null)
-      return
-    }
-    setNotice(locale.text(result.error === 'too-large' ? 'soundCustomLarge' : 'soundCustomUnreadable'))
-  }
 
   return (
     <div className="flex flex-col gap-[8px]">
@@ -85,7 +114,7 @@ export function NotificationSettingsSection(): ReactElement {
           <Select
             options={soundOptions}
             value={sound}
-            onChange={next => notificationSettings.setSound(next as NotificationSound)}
+            onChange={next => pickSoundOption(next as NotificationSound)}
           />
           {sound === 'custom'
             ? (

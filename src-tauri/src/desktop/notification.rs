@@ -82,7 +82,10 @@ pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
     });
   })();
 
-  window.addEventListener('blur', function () { setHostHidden(true); });
+  // 宿主状态只认壳层推送（`dsh://visibility-state`）与「帧内拿到焦点」这一条正向证据。
+  // 以前这里还有 `blur → 隐藏`，但帧失焦 ≠ 窗口隐藏：点壳层标题栏、设置面板都会让
+  // 帧 blur，而窗口仍在前台；那条误判会让「仅在未聚焦时」在用户正盯着会话时弹通知。
+  // 帧拿到焦点则窗口必然在前台（最小化的窗口给不了焦点），所以 focus 可以安全地纠正。
   window.addEventListener('focus', function () { setHostHidden(false); });
 
   // 查找并聚焦对应的 Session

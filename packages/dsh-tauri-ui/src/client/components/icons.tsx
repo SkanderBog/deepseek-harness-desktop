@@ -6,6 +6,7 @@ export { default as ArrowRightFromSquare } from '@gravity-ui/icons/ArrowRightFro
 export { default as ArrowRotateRight } from '@gravity-ui/icons/ArrowRotateRight'
 export { default as ArrowUpRight } from '@gravity-ui/icons/ArrowUpRight'
 export { default as ArrowUturnCcwLeft } from '@gravity-ui/icons/ArrowUturnCcwLeft'
+export { default as Bell } from '@gravity-ui/icons/Bell'
 export { default as Calendar } from '@gravity-ui/icons/Calendar'
 export { default as Check } from '@gravity-ui/icons/Check'
 export { default as ChevronDown } from '@gravity-ui/icons/ChevronDown'

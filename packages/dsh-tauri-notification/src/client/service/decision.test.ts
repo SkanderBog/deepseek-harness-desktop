@@ -38,8 +38,10 @@ describe('allowTurnNotification', () => {
     expect(allowTurnNotification(base)).toBe(false)
   })
 
-  it('background 在无可信当前会话焦点时不提醒，避免误报', () => {
-    expect(allowTurnNotification({ ...base, currentSessionId: undefined })).toBe(false)
+  it('background 在拿不到当前会话时仍提醒：只有确知「就停在这个会话上」才抑制', () => {
+    // 与参考实现 `source/dsh-notification` 的 shouldShow 一致：读不到当前会话（会话投影
+    // 缺席、或界面还没打开任何会话）时无法证明用户正盯着它，宁可多提醒一次。
+    expect(allowTurnNotification({ ...base, currentSessionId: undefined })).toBe(true)
   })
 })
 

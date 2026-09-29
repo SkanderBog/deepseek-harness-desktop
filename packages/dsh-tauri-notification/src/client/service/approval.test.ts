@@ -1,6 +1,7 @@
 import type { PendingInteractionFace, SessionStatusFace, UiSessionFace } from '../types'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  answerQuestionBatch,
   approveInteraction,
   pendingDetail,
   pendingIdentity,
@@ -136,5 +137,63 @@ describe('approveInteraction', () => {
       pendingInteraction: pending({ kind: 'approval', key: 'k', answerable: true, answer: async () => { throw new Error('已过期') } }),
     })
     expect(await approveInteraction(ui, 's1')).toEqual({ ok: false, error: '已过期' })
+  })
+})
+
+describe('answerQuestionBatch', () => {
+  const questions = [{ id: 'q1' }, { id: 'q2' }]
+
+  it('没有提问挂起时不越权回答', async () => {
+    expect(await answerQuestionBatch(undefined, 's1', [{ id: 'q1', selected: [], custom: 'x' }]))
+      .toEqual({ ok: false, error: 'QUESTION_UNAVAILABLE' })
+    const approval = fakeUiSession({ pendingInteraction: pending({ kind: 'approval', key: 'k', answer: async () => {} }) })
+    expect(await answerQuestionBatch(approval, 's1', [{ id: 'q1', selected: [], custom: 'x' }]))
+      .toEqual({ ok: false, error: 'QUESTION_UNAVAILABLE' })
+  })
+
+  it('身份对不上时返回 QUESTION_STALE，避免替新的挂起作答', async () => {
+    const ui = fakeUiSession({ pendingInteraction: pending({ kind: 'question', key: 'k', answerable: true, questions, answer: async () => {} }) })
+    expect(await answerQuestionBatch(ui, 's1', [{ id: 'q1', selected: [], custom: '一' }, { id: 'q2', selected: [], custom: '二' }], 'question:old'))
+      .toEqual({ ok: false, error: 'QUESTION_STALE' })
+  })
+
+  it('交互已不可回答时返回 QUESTION_NOT_ANSWERABLE', async () => {
+    const ui = fakeUiSession({ pendingInteraction: pending({ kind: 'question', key: 'k', answerable: false, questions, answer: async () => {} }) })
+    expect(await answerQuestionBatch(ui, 's1', [{ id: 'q1', selected: [], custom: '一' }]))
+      .toEqual({ ok: false, error: 'QUESTION_NOT_ANSWERABLE' })
+  })
+
+  it('空答案不提交', async () => {
+    const ui = fakeUiSession({ pendingInteraction: pending({ kind: 'question', key: 'k', answerable: true, questions, answer: async () => {} }) })
+    expect(await answerQuestionBatch(ui, 's1', [])).toEqual({ ok: false, error: 'QUESTION_EMPTY' })
+    expect(await answerQuestionBatch(ui, 's1', [{ id: 'q1', selected: [], custom: '  ' }]))
+      .toEqual({ ok: false, error: 'QUESTION_EMPTY' })
+  })
+
+  it('答案与挂起的题目对不齐时返回 QUESTION_STALE，不交给宿主去拒收', async () => {
+    const answer = vi.fn(async () => {})
+    const ui = fakeUiSession({ pendingInteraction: pending({ kind: 'question', key: 'k', answerable: true, questions, answer }) })
+    expect(await answerQuestionBatch(ui, 's1', [{ id: 'q1', selected: [], custom: '一' }]))
+      .toEqual({ ok: false, error: 'QUESTION_STALE' })
+    expect(await answerQuestionBatch(ui, 's1', [{ id: 'q1', selected: [], custom: '一' }, { id: 'qX', selected: [], custom: '二' }]))
+      .toEqual({ ok: false, error: 'QUESTION_STALE' })
+    expect(answer).not.toHaveBeenCalled()
+  })
+
+  it('整批一次提交，自由文本走 custom', async () => {
+    const answer = vi.fn(async () => {})
+    const ui = fakeUiSession({ pendingInteraction: pending({ kind: 'question', key: 'k', answerable: true, questions, answer }) })
+    expect(await answerQuestionBatch(ui, 's1', [{ id: 'q1', selected: [], custom: '一' }, { id: 'q2', selected: [], custom: '二' }], 'question:k'))
+      .toEqual({ ok: true })
+    expect(answer).toHaveBeenCalledTimes(1)
+    expect(answer).toHaveBeenCalledWith({ answers: [{ id: 'q1', selected: [], custom: '一' }, { id: 'q2', selected: [], custom: '二' }] })
+  })
+
+  it('宿主拒收时把错误信息回传而不是抛出', async () => {
+    const ui = fakeUiSession({
+      pendingInteraction: pending({ kind: 'question', key: 'k', answerable: true, questions: [{ id: 'q1' }], answer: async () => { throw new Error('BAD_ANSWER') } }),
+    })
+    expect(await answerQuestionBatch(ui, 's1', [{ id: 'q1', selected: [], custom: '一' }]))
+      .toEqual({ ok: false, error: 'BAD_ANSWER' })
   })
 })
