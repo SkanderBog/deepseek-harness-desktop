@@ -245,6 +245,8 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   }
 
   const moveCandidate = (event: KeyboardEvent<HTMLInputElement>): void => {
+    if (event.nativeEvent.isComposing)
+      return
     if (event.key === 'Escape') {
       event.preventDefault()
       closePicker()
