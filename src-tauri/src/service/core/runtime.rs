@@ -1976,7 +1976,8 @@ mod tests {
     /// 按「版本错配」误删，否则会直接弄坏插件。
     #[test]
     fn shared_framework_libraries_and_third_party_plugins_are_kept() {
-        let root = std::env::temp_dir().join(format!("dsh-stale-core-scope-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("dsh-stale-core-scope-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let profile_modules = root.join("profiles/tauri/node_modules");
         let anchor_modules = root.join("dependencies/dsh/node_modules");
