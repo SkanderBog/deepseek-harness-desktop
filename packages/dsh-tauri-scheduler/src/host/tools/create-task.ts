@@ -1,6 +1,5 @@
-import { SCHEDULE_KINDS } from '../../shared/constants'
 import { task } from '../service/task'
-import { textBlock } from '../utils/tool'
+import { scheduleParameters, textBlock } from '../utils/tool'
 
 const outputSchema = {
   type: 'object',
@@ -26,22 +25,7 @@ export function createTaskTool(): any {
       properties: {
         name: { type: 'string', description: 'Task name, e.g. "Daily report".' },
         prompt: { type: 'string', description: 'The task instruction run in the scheduled session.' },
-        schedule: {
-          type: 'object',
-          description: 'Schedule spec: once/hourly/daily/interval/workdays/weekly/monthly/custom.',
-          properties: {
-            kind: { type: 'string', enum: [...SCHEDULE_KINDS] },
-            time: { type: 'string', description: '"HH:mm" for daily/workdays/weekly.' },
-            everyMinutes: { type: 'number', description: 'Interval minutes for kind=interval.' },
-            everyDays: { type: 'number', description: 'Interval days for kind=custom.' },
-            anchor: { type: 'string', description: 'ISO anchor for fixed interval/custom recurrence.' },
-            at: { type: 'string', description: 'ISO timestamp for kind=once.' },
-            minute: { type: 'number', description: 'Minute of hour for kind=hourly.' },
-            day: { type: 'number', description: 'Day of month for kind=monthly.' },
-            weekdays: { type: 'array', items: { type: 'string' }, description: '["MO","TU",...] for kind=weekly.' },
-          },
-          required: ['kind'],
-        },
+        schedule: scheduleParameters,
         workspaceId: { type: 'string', description: 'Optional target workspace id (cwd).' },
         permission: { type: 'string', enum: ['read-only', 'workspace-write', 'danger-full-access'], description: 'Permission boundary (read-only / workspace-write / danger-full-access). Default read-only.' },
         provider: { type: 'string', description: 'Optional pinned model provider id (pair with model).' },

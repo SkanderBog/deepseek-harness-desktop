@@ -281,6 +281,33 @@ git diff --check                                 # 无输出
 `summarizeCollectedRun`（2 例：增量带收尾原因时不再扫快照；增量缺收尾原因含「只剩正文」时回退快照且失败不被吞成成功）、
 `isPluginUnloadError`（1 例）、`executor.run` 插件卸载记 `cancelled`（1 例）。
 
+### 工具面精简（2026-09-29）
+
+本地注入给 agent 的工具由 5 个收敛为 4 个，与官方 `@deepseek-ai/dsh-schedule` 的
+`schedule_create` / `schedule_list` / `schedule_update` / `schedule_delete` 一一对应（官方集合无 update 之外的差异项）。
+
+- 新增 `src/host/tools/update-task.ts`（`scheduler_update`）：吸收原 `scheduler_toggle` 的启停语义
+  （`enabled` 本就是 `TaskInput` 的普通字段，走 `task.update` 同一条路径），并补齐原本缺失的
+  改名 / 改指令 / 改计划 / 改 workspace / permission / provider / model / reasoningEffort。
+  显式传入的字段才并入 patch，缺省字段由 `defaults({}, patch, current)` 保持原值。
+- `run_now` 开关保留原 `scheduler_run_now` 的立即运行能力；更新已落盘而运行失败时不回滚，
+  如实返回 `更新已保存，但立即运行失败：<原因>`。
+- 计划片段 schema 上移到 `src/host/utils/tool.ts` 的 `scheduleParameters`，create / update 共用。
+- 删除 `src/host/tools/toggle-task.ts`、`src/host/tools/run-task.ts`。
+- 宿主 HTTP 路由 `/tasks/toggle`、`/tasks/run` 与面板调用**有意保留**：本轮只收敛注入给 agent 的工具面。
+
+验证记录（2026-09-29）：
+
+```text
+pnpm --filter dsh-tauri-scheduler typecheck                 # tsc 通过（0 error）
+pnpm exec eslint src/host/apply.ts src/host/utils/tool.ts src/host/tools
+                                                            # 0 error / 0 warning
+npx vitest run --project unit packages/dsh-tauri-scheduler  # 9 test files, 74 tests passed
+```
+
+新增单测 `src/host/tools/update-task.test.ts`（8 例）：工具名、`task_id` 唯一必填与字段集、
+只并入显式字段、`enabled` 启停语义、`run_now` 触发时机、更新失败不触发、更新成功后触发失败如实回报。
+
 ## 待同步项
 
 无。`f1bc91a..ecfe1e6` 的全部提交已评估并由用户逐条裁决（见上），本地行为要求「等待中」已实施。

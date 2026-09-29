@@ -63,7 +63,7 @@ Official packages used:
 
 Official counterpart (official `@deepseek-ai/dsh-schedule` + `@deepseek-ai/dsh-client-ui-schedule` → this package):
 
-- Tools: official `schedule_create` / `schedule_list` / `schedule_delete` / `schedule_update` → `scheduler_create` / `scheduler_list` / `scheduler_toggle` / `scheduler_delete` / `scheduler_run_now` (`src/host/tools/`), five instead of four.
+- Tools: official `schedule_create` / `schedule_list` / `schedule_update` / `schedule_delete` → `scheduler_create` / `scheduler_list` / `scheduler_update` / `scheduler_delete` (`src/host/tools/`), four to four. `scheduler_update` additionally absorbs pausing/resuming (`enabled`, the official set has no toggle) and offers a `run_now` switch that also triggers an immediate manual run.
 - Delivery: official durable Host-wide reminders in the **original** Session → unattended runs, each starting a **fresh** Session (`workspaceId`, `permission`, `provider`, `model`, `reasoningEffort`).
 - Recurrence: official one-shot / fixed-rate / daily / weekly / cron (`createCronScheduleRecord`, `resolveCronOccurrence`, `canonicalizeCronExpression`) → `once` / `hourly` / `daily` / `interval` / `workdays` / `weekly` / `monthly` / `custom` (`SCHEDULE_KINDS` in `src/shared/constants.ts`), evaluated with the `cron-schedule` package or anchored arithmetic; no cron kind.
 - Missed occurrences: official keeps only the latest missed occurrence and restores a cold Session → anchored interval/custom arithmetic plus `runs/recover` reconciliation for interrupted runs.

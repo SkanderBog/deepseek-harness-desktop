@@ -7,8 +7,7 @@ import { scheduler } from './service/scheduler'
 import { createTaskTool } from './tools/create-task'
 import { deleteTaskTool } from './tools/delete-task'
 import { listTasksTool } from './tools/list-tasks'
-import { runTaskTool } from './tools/run-task'
-import { toggleTaskTool } from './tools/toggle-task'
+import { updateTaskTool } from './tools/update-task'
 
 const SCHEDULER_TICK_MS = 1_000
 
@@ -29,9 +28,8 @@ export function apply(ctx: HostContext, config: Config = {}): void {
 
   ctx.tools.register(createTaskTool())
   ctx.tools.register(listTasksTool())
-  ctx.tools.register(toggleTaskTool())
+  ctx.tools.register(updateTaskTool())
   ctx.tools.register(deleteTaskTool())
-  ctx.tools.register(runTaskTool())
 
   const tickMs = Number.isFinite(config?.tickMs) && (config.tickMs as number) > 0
     ? (config.tickMs as number)
