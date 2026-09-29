@@ -35,7 +35,7 @@ pub(crate) async fn terminate_active_install() -> bool {
 /// 退出前同步回收所有进行中的插件安装进程树（`RunEvent::Exit` 调用）。
 ///
 /// 安装子进程以独立进程组启动（`process_group(0)`），父进程退出**不会**连带结束
-/// 它们；而取消只由前端命令（`cancel_preinstall_plugins` / `cancel_internal_plugins`）
+/// 它们；而取消只由前端命令（`cancel_plugin_processes` / `cancel_internal_plugins`）
 /// 触发。用户在安装看起来毫无进展时关窗，留下的孤儿会继续占着档案与 pnpm store，
 /// 下一次启动的安装便排在它后面——表现为永久卡在「Loading internal plugins…」且
 /// 后端日志一行输出都没有。回收必须在退出路径上显式做。

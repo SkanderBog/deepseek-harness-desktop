@@ -43,13 +43,15 @@ pub async fn install_preinstall_plugins(
     // 先卸载取消勾选的已安装插件（走 dsh plugin remove，与安装对称）
     // 卸载在前：避免新装插件与待卸载插件冲突；remove 内部会先停服务再执行
     log::info!("[preinstall] uninstall_ids={uninstall_ids:?}, install_ids={install_ids:?}");
-    for id in &uninstall_ids {
-        log::info!("[preinstall] removing plugin {id} via dsh plugin remove");
-        if let Err(e) = plugin::remove(&app_handle, id).await {
-            log::error!("[preinstall] failed to remove plugin {id}: {e}");
-            return Err(e);
-        }
-        log::info!("[preinstall] successfully removed plugin {id}");
+    if !uninstall_ids.is_empty() {
+        log::info!("[preinstall] removing plugins {uninstall_ids:?} via dsh plugin remove");
+        plugin::remove_many(&app_handle, &uninstall_ids)
+            .await
+            .map_err(|e| {
+                log::error!("[preinstall] failed to remove plugins {uninstall_ids:?}: {e}");
+                e
+            })?;
+        log::info!("[preinstall] successfully removed plugins {uninstall_ids:?}");
     }
 
     // 再安装新勾选的插件（会走 dsh plugin add）
@@ -67,10 +69,33 @@ pub async fn install_preinstall_plugins(
     Ok(())
 }
 
-/// 取消正在进行的预装插件安装（网络抖动/限流卡住时用户点“取消”）。
+/// 取消正在进行的插件进程（安装/升级/卸载，网络抖动/限流卡住时用户点“取消”）。
 #[tauri::command]
-pub async fn cancel_preinstall_plugins(app_handle: AppHandle) {
+pub async fn cancel_plugin_processes(app_handle: AppHandle) {
     plugin::cancel(&app_handle).await;
+}
+
+/// 按原始 spec 安装插件（插件市场 / 手动输入 entry）：支持一次传入多个 spec，
+/// 合并为单次 `dsh plugin add` 执行，输出同样经 `preinstall-log` 事件推送。
+///
+/// 与 `install_preinstall_plugins` 的区别只在 spec 来源：此处不走预设清单，
+/// 因而没有捆绑目录与版本矩阵，spec 原样交给 pnpm 解析。
+#[tauri::command]
+pub async fn install_plugin_specs(app_handle: AppHandle, specs: Vec<String>) -> Result<(), String> {
+    plugin::install_specs(&app_handle, &specs).await?;
+    plugin::watch::force_emit(&app_handle);
+    Ok(())
+}
+
+/// 只读检查一组 spec 的兼容性（registry `latest` 上的 DSH 家族 peer 依赖），
+/// 不改动本地 profile；失败项收敛为结果里的 `problem`，不整体报错。
+#[tauri::command]
+pub async fn inspect_plugin_specs(
+    app_handle: AppHandle,
+    specs: Vec<String>,
+    dsh: Option<String>,
+) -> Result<Vec<plugin::compat::PluginInspect>, String> {
+    plugin::inspect_specs(&app_handle, &specs, dsh).await
 }
 
 /// 授予「插件版本豁免」：为被核心版本兼容性拒绝的精确 `包名@版本` 组合写授权。
@@ -169,20 +194,22 @@ pub async fn refresh_plugin_updates(
     plugin::update::refresh(&app_handle).await
 }
 
-/// 升级单个已安装插件：`dsh plugin --profile <当前档案> update <id>`，
-/// 进程输出通过 `preinstall-log` 事件实时推送。
+/// 批量升级已安装插件：`dsh plugin --profile <当前档案> update <ids...> --latest`，
+/// 合并为单次子进程执行，输出通过 `preinstall-log` 事件实时推送；升级前逐项
+/// 记录依赖指纹，命令返回后核验是否真实落盘（防 pnpm 假成功）。
 #[tauri::command]
-pub async fn update_dsh_plugin(app_handle: AppHandle, id: String) -> Result<(), String> {
-    plugin::update(&app_handle, &id).await?;
+pub async fn update_dsh_plugins(app_handle: AppHandle, ids: Vec<String>) -> Result<(), String> {
+    plugin::update_many(&app_handle, &ids).await?;
     plugin::watch::force_emit(&app_handle);
     Ok(())
 }
 
-/// 卸载单个已安装插件：`dsh plugin --profile <当前档案> remove <id>`，
-/// 进程输出通过 `preinstall-log` 事件实时推送。
+/// 批量卸载已安装插件：`dsh plugin --profile <当前档案> remove <ids...>`，
+/// 合并为单次子进程执行，输出通过 `preinstall-log` 事件实时推送；命令后逐项核验，
+/// 仍残留且可行动的插件回退离线精准卸载（不依赖网络）。
 #[tauri::command]
-pub async fn remove_dsh_plugin(app_handle: AppHandle, id: String) -> Result<(), String> {
-    plugin::remove(&app_handle, &id).await?;
+pub async fn remove_dsh_plugins(app_handle: AppHandle, ids: Vec<String>) -> Result<(), String> {
+    plugin::remove_many(&app_handle, &ids).await?;
     plugin::watch::force_emit(&app_handle);
     Ok(())
 }
@@ -228,7 +255,7 @@ pub fn detect_plugin_recovery(
 
 /// 修复模式卸载单个插件：直接改 profile 清单（离线、精准），成功后推送新插件列表。
 ///
-/// 与 `remove_dsh_plugin`（走 `dsh plugin remove`）不同，此命令不依赖网络，专用于
+/// 与 `remove_dsh_plugins`（走 `dsh plugin remove`）不同，此命令不依赖网络，专用于
 /// 「插件异常修复」场景；前端随后 `restart()` 重启并重新检测。
 #[tauri::command]
 pub fn recover_plugin(app_handle: AppHandle, id: String) -> Result<(), String> {

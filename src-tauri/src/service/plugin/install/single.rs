@@ -16,6 +16,7 @@ use crate::service::workflow;
 
 use super::artifact::{ensure_plugin_entry_built, installed_package_name};
 use super::build_plugin_envs;
+use super::harness_prefer_bundled_pnpm;
 use super::diagnose::{
     git_transport_hint, incompatible_versions, network_error_hint, pick_error_message,
     policy_blocked_versions, policy_verification_network_failure, store_mismatch_hint,
@@ -36,11 +37,34 @@ use super::{PreinstallLogPayload, PREINSTALL_LOG_EVENT};
 use crate::service::plugin::update::known_latest;
 use crate::service::profile::profile_release_age_excluded;
 
-pub async fn update(app_handle: &AppHandle, id: &str) -> Result<(), String> {
-    run_single_plugin_command(app_handle, id, "update", &update_pnpm_args(id)).await
+/// 批量升级：单次 `dsh plugin update <id> --latest ...` 驱动全部 id（`dsh plugin`
+/// 把动词之后的参数原样转发 pnpm，一次 pnpm 调用即可处理多个依赖），随后逐项核验
+/// 升级是否真的落地（见 [`verify_update_landed`]）。
+pub async fn update_many(app_handle: &AppHandle, ids: &[String]) -> Result<(), String> {
+    let before: Vec<(String, Option<String>)> = ids
+        .iter()
+        .map(|id| {
+            (
+                id.clone(),
+                dependency_fingerprint(&profile_dir(app_handle), id),
+            )
+        })
+        .collect();
+    run_plugin_command(app_handle, ids, "update", &update_pnpm_args(ids)).await?;
+    let mut failures = Vec::new();
+    for (id, fingerprint) in &before {
+        if let Err(e) = verify_update_landed(app_handle, id, fingerprint.as_deref()).await {
+            failures.push(e);
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
-/// 升级时转发给 pnpm 的参数：`<id> --latest`。
+/// 升级时转发给 pnpm 的参数：每个 id 后各跟一个 `--latest`。
 ///
 /// `update` 动词不写在这里：它由 [`single_plugin_args`] 作为动作统一放在参数最前，
 /// 重复一次会变成 `pnpm update update <id>`（见该函数的说明）。
@@ -52,15 +76,17 @@ pub async fn update(app_handle: &AppHandle, id: &str) -> Result<(), String> {
 /// 据此报「升级成功」而版本纹丝不动。加 `--latest` 才允许 pnpm 越过声明范围，并由
 /// pnpm 自己把 catalog 条目改写到新版本；git spec 不受影响（`--latest` 不会把
 /// `github:owner/repo` 退化成 semver 范围，实测原样保留）。
-fn update_pnpm_args(id: &str) -> Vec<String> {
-    vec![id.to_string(), "--latest".to_string()]
+fn update_pnpm_args(ids: &[String]) -> Vec<String> {
+    ids.iter()
+        .flat_map(|id| [id.clone(), "--latest".to_string()])
+        .collect()
 }
 
 /// 依赖的「解析指纹」：profile `pnpm-lock.yaml` 当前 importer（`importers["."]`）
 /// 中该直接依赖的 `specifier @ version`；该依赖不在 lock 里时回落到
 /// `node_modules/<id>/package.json` 的实际版本。
 ///
-/// 用途是核验升级是否真的落地（见 [`run_single_plugin_command`]）：pnpm 可能以 0
+/// 用途是核验升级是否真的落地（见 [`verify_update_landed`]）：pnpm 可能以 0
 /// 退出却什么都没装，而「什么都没装」在两种依赖上表现不同——registry 依赖是版本号
 /// 不变，git 依赖是版本号本来就可能不变（插件不 bump version）而只有 lock 里的
 /// codeload 提交变化。因此指纹取 lock 的解析结果，两种依赖都能识别。
@@ -104,45 +130,60 @@ fn installed_package_version(profile: &Path, id: &str) -> Option<String> {
     manifest.get("version")?.as_str().map(String::from)
 }
 
-/// 卸载单个插件：`dsh plugin --profile <当前档案> remove <id>`
-pub async fn remove(app_handle: &AppHandle, id: &str) -> Result<(), String> {
-    let command_result =
-        run_single_plugin_command(app_handle, id, "remove", &[id.to_string()]).await;
-    // `dsh plugin remove` 以子进程退出码为准，可能出现「命令成功但插件仍在」的
-    // 边界（如 bundle 层残留、pnpm 静默失败）；node_modules / lockfile 损坏时
-    // （典型：安装只写入了 profile 清单而产物缺失，见 issue #90）pnpm 甚至会
-    // 直接失败。两种情形统一核验 profile 清单：只要插件仍被引用就回落离线卸载
-    // （直接改清单 + 删目录 + 清 lockfile），确保插件真正移除
-    // （参考 dsh-market 的「卸载后核验」约定：确认插件离开 profile 才算成功）。
-    if is_installed(app_handle, id) {
-        // 第三方可卸载插件才允许离线兜底；核心/官方等受保护包即使残留也不强删
-        // （`uninstall_recovery` 对它们会拒绝）。
-        if is_actionable_plugin_ref(id) {
-            let outcome = match &command_result {
-                Ok(()) => "reported success".to_string(),
-                Err(e) => format!("failed: {e}"),
-            };
-            log::warn!(
-                "dsh plugin remove {outcome} but {id} is still referenced by profile manifest; forcing offline uninstall"
-            );
-            uninstall_recovery(app_handle, id)?;
-            // 离线兜底成功：插件已真正从 profile 移除，清除历史错误，避免前端
-            // 残留异常标记（best-effort）。
-            if let Err(e) = errors::clear(app_handle, id) {
-                log::warn!("failed to clear plugin error for {id}: {e}");
+/// 批量卸载：单次 `dsh plugin remove <id1> <id2> ...`，随后逐项核验 profile 清单，
+/// 仍被引用时走离线卸载兜底（第三方可卸载插件），最后级联清理各自的单插件快照。
+pub async fn remove_many(app_handle: &AppHandle, ids: &[String]) -> Result<(), String> {
+    let command_result = run_plugin_command(app_handle, ids, "remove", ids).await;
+    let mut failures = Vec::new();
+    for id in ids {
+        // `dsh plugin remove` 以子进程退出码为准，可能出现「命令成功但插件仍在」的
+        // 边界（如 bundle 层残留、pnpm 静默失败）；node_modules / lockfile 损坏时
+        // （典型：安装只写入了 profile 清单而产物缺失，见 issue #90）pnpm 甚至会
+        // 直接失败。两种情形统一核验 profile 清单：只要插件仍被引用就回落离线卸载
+        // （直接改清单 + 删目录 + 清 lockfile），确保插件真正移除
+        // （参考 dsh-market 的「卸载后核验」约定：确认插件离开 profile 才算成功）。
+        if is_installed(app_handle, id) {
+            // 第三方可卸载插件才允许离线兜底；核心/官方等受保护包即使残留也不强删
+            // （`uninstall_recovery` 对它们会拒绝）。
+            if is_actionable_plugin_ref(id) {
+                let outcome = match &command_result {
+                    Ok(()) => "reported success".to_string(),
+                    Err(e) => format!("failed: {e}"),
+                };
+                log::warn!(
+                    "dsh plugin remove {outcome} but {id} is still referenced by profile manifest; forcing offline uninstall"
+                );
+                match uninstall_recovery(app_handle, id) {
+                    Ok(()) => {
+                        // 离线兜底成功：插件已真正从 profile 移除，清除历史错误，避免
+                        // 前端残留异常标记（best-effort）。
+                        if let Err(e) = errors::clear(app_handle, id) {
+                            log::warn!("failed to clear plugin error for {id}: {e}");
+                        }
+                    }
+                    Err(e) => failures.push(format!("{id}: {e}")),
+                }
+            } else {
+                // 受保护包：命令失败则如实上报（不要把失败误报为成功），成功则仅告警。
+                if let Err(e) = &command_result {
+                    failures.push(format!("{id}: {e}"));
+                }
+                log::warn!(
+                    "dsh plugin remove reported success but protected package {id} is still referenced by profile manifest; skipping offline uninstall"
+                );
             }
-        } else {
-            // 受保护包：命令失败则如实上报（不要把失败误报为成功），成功则仅告警。
-            command_result?;
-            log::warn!(
-                "dsh plugin remove reported success but protected package {id} is still referenced by profile manifest; skipping offline uninstall"
-            );
         }
+        // 卸载级联清理单插件快照（best-effort）：插件已移除，快照随之失效
+        // （issue #303：卸载后删除快照，避免残留孤儿快照占用存储）。
+        super::super::snapshot::delete_best_effort(app_handle, id);
     }
-    // 卸载级联清理单插件快照（best-effort）：插件已移除，快照随之失效
-    // （issue #303：卸载后删除快照，避免残留孤儿快照占用存储）。
-    super::super::snapshot::delete_best_effort(app_handle, id);
-    Ok(())
+    // 与单插件卸载的原语义一致：以「条目是否真的离开 profile」为准。命令以非 0
+    // 退出但插件已被移走时不报错（卸载已达成），只有仍残留且兜底也失败才算失败。
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 /// 计算需要自动卸载的弃用插件已安装包名（纯函数，便于单测）。
@@ -261,15 +302,16 @@ pub(super) fn single_plugin_args(profile: &str, action: &str, sub_args: &[String
     args
 }
 
-/// 执行单个插件的升级/卸载：准备环境 → 停止服务 → 运行 `dsh plugin` →
-/// 失败记录错误、成功清除错误。
-async fn run_single_plugin_command(
+/// 批量执行插件的升级/卸载：准备环境 → 停止服务 → 运行**一次** `dsh plugin`
+/// （`dsh plugin` 把动词之后的参数原样转发 pnpm，一次调用即可处理多个依赖）→
+/// 失败逐项记录错误、成功逐项清除错误。
+async fn run_plugin_command(
     app_handle: &AppHandle,
-    id: &str,
+    ids: &[String],
     action: &str,
     sub_args: &[String],
 ) -> Result<(), String> {
-    if id.is_empty() {
+    if ids.is_empty() {
         return Err("PLUGIN_EMPTY_ID: plugin id is empty".to_string());
     }
     let window = app_handle
@@ -317,18 +359,12 @@ async fn run_single_plugin_command(
     // 仅在服务已确认停止后执行：服务运行期间插件目录可能被写入，先停服保证快照一致
     // （issue #303：自动快照失败不阻塞主流程；还原入口在插件面板）。
     if action == "update" && stopped {
-        super::super::snapshot::create_best_effort(app_handle, id);
+        for id in ids {
+            super::super::snapshot::create_best_effort(app_handle, id);
+        }
     }
 
     let envs = build_plugin_envs(app_handle, prefer_bundled_pnpm);
-
-    // 升级前的依赖解析指纹：升级命令以 0 退出后用它核验是否真的落地
-    // （见下方 `action == "update"` 分支的假成功核验）。非升级动作不需要。
-    let before_fingerprint = if action == "update" {
-        dependency_fingerprint(&profile_dir(app_handle), id)
-    } else {
-        None
-    };
 
     let mut args = vec![dsh_bin.as_os_str().to_os_string()];
     args.extend(single_plugin_args(
@@ -338,14 +374,14 @@ async fn run_single_plugin_command(
     ));
 
     let cwd = config::get_dsh_install_path(app_handle);
-    log::info!("Running dsh plugin {action} for {id}");
+    log::info!("Running dsh plugin {action} for {ids:?}");
     let (exit_code, output, last_attempt) = run_plugin_with_allow_build_retry(
         app_handle, &node, &args, &cwd, &envs, &window, action, None, owner,
     )
     .await?;
 
     if exit_code != 0 {
-        log::error!("dsh plugin {action} failed for {id} with exit code {exit_code}");
+        log::error!("dsh plugin {action} failed for {ids:?} with exit code {exit_code}");
         // 版本兼容性拒绝：dsh 在 pnpm 之前核对插件声明的 DSH peer 依赖，未授权精确版本
         // 即拒绝（不下载、不构建），升级同样会撞上（新版本声明了更高的核心 peer 依赖）。
         // 与批量安装路径一致地解析成精确三元组，交前端「授权后重跑」；不记插件错误——
@@ -392,8 +428,10 @@ async fn run_single_plugin_command(
         } else {
             pick_error_message(&output, hint)
         };
-        if let Err(e) = errors::record(app_handle, id, action, &message) {
-            log::warn!("failed to record plugin error for {id}: {e}");
+        for id in ids {
+            if let Err(e) = errors::record(app_handle, id, action, &message) {
+                log::warn!("failed to record plugin error for {id}: {e}");
+            }
         }
         if network_error {
             return Err("NETWORK_ERROR: plugin registry request failed; check network or proxy settings and retry.".to_string());
@@ -412,76 +450,91 @@ async fn run_single_plugin_command(
         ));
     }
 
-    // 成功：清除历史错误；卸载 win-terminal-inspector 时顺带清理 patch 挂载
-    if let Err(e) = errors::clear(app_handle, id) {
-        log::warn!("failed to clear plugin error for {id}: {e}");
-    }
-    // 升级路径与安装一致地核验构建产物：git 托管插件升级后同样可能停在
-    // 「prepare 未构建 → 声明入口缺失」坏态，若不拦截，下一次启动即崩溃
-    // （见 [`ensure_plugin_entry_built`]）。包名先解析（预设 package 覆盖 /
-    // 清单依赖 basename），解析不到时跳过核验（警告即可，不误杀成功更新）。
-    if action == "update" {
-        // 假成功核验：pnpm 以 0 退出、但该依赖的解析结果与升级前完全一致，说明这次
-        // 升级没有落地。两种已知成因都属于「按当前策略不该动」，而不是插件损坏：
-        // 1. 档案 spec 把版本钉死（`catalog:` 条目 / git 提交 / `link:` 本地目录），
-        //    `--latest` 也越不过声明范围；
-        // 2. pnpm 的 release-age 策略：新版本发布不足 `minimumReleaseAge`（pnpm 11
-        //    默认 1440 分钟 = 24 小时）时解析会回落到仍达标的最新版本，命令照旧以 0
-        //    退出且**不打印任何说明**——实测 bundled pnpm 11.7.0 在 `^2.10.15` 上
-        //    `update --latest` 静默停在 2.10.15，把 `minimumReleaseAge: 0` 写进档案
-        //    才取到 2.11.2。因此这条消息不能只归因于 catalog 钉死（会把人引偏）。
-        // 必须如实报「没升级」——报成功会让用户以为已在新版本上（与 [`remove`] 的
-        // 「卸载后核验」同理）；但**不**记进插件错误：插件没坏，记了会让列表挂上
-        // 「可能已损坏或与当前环境不兼容」的误导标记（安装/升级真失败各有记录点）。
-        if let Some(before) = before_fingerprint.as_deref() {
-            if dependency_fingerprint(&profile_dir(app_handle), id).as_deref() == Some(before) {
-                let detail = installed_package_version(&profile_dir(app_handle), id)
-                    .unwrap_or_else(|| before.to_string());
-                // 只有「新版本太新」这一种成因有出路（授权那个精确版本即可过闸），因此把
-                // 目标版本与「是否已在豁免清单里」一并带出去：已经授权过还是不动，说明成因
-                // 是档案把来源钉死，界面就别再给按钮——否则用户只会反复点一个没用的动作。
-                // 目标版本取自更新探测缓存（不新发网络请求）；git 托管插件的「最新」是提交
-                // SHA、不是 registry 版本，不能进发布时长豁免清单，按形状挡掉。
-                let latest = known_latest(id).filter(|latest| {
-                    latest != &detail
-                        && latest.contains('.')
-                        && latest.starts_with(|c: char| c.is_ascii_digit())
-                });
-                let retryable = latest.as_deref().is_some_and(|latest| {
-                    !profile_release_age_excluded(app_handle, &format!("{id}@{latest}"))
-                });
-                log::warn!(
-                    "dsh plugin update made no change for {id}, still at {detail}, newest {latest:?}, actionable {retryable}"
-                );
-                return Err(format!(
-                    "PLUGIN_UPDATE_NO_CHANGE: {}",
-                    serde_json::json!({
-                        "name": id,
-                        "version": detail,
-                        "latest": latest,
-                        "retryable": retryable,
-                    })
-                ));
-            }
-        }
-        let Some(name) = installed_package_name(app_handle, id) else {
-            log::warn!("plugin {id} not resolvable to a package name, skipping entry verify");
-            return Ok(());
-        };
-        let pkg_dir = profile_dir(app_handle).join("node_modules").join(name);
-        if let Err(e) = ensure_plugin_entry_built(app_handle, id, &pkg_dir, &envs, &window).await {
-            if let Err(err) = errors::record(app_handle, id, action, &e) {
-                log::warn!("failed to record plugin error for {id}: {err}");
-            }
-            return Err(e);
+    // 成功：逐项清除历史错误；卸载 win-terminal-inspector 时顺带清理 patch 挂载
+    for id in ids {
+        if let Err(e) = errors::clear(app_handle, id) {
+            log::warn!("failed to clear plugin error for {id}: {e}");
         }
     }
-    if action == "remove" && id == "dsh-win-terminal-inspector" {
+    if action == "remove" && ids.iter().any(|id| id == "dsh-win-terminal-inspector") {
         if let Err(e) = workflow::win_inspector::apply(app_handle) {
             log::warn!("win inspector patch prune failed after remove: {e}");
         }
     }
-    log::info!("dsh plugin {action} succeeded for {id}");
+    log::info!("dsh plugin {action} succeeded for {ids:?}");
+    Ok(())
+}
+
+/// 升级后逐项核验：确认升级真的落地，并补构建缺失的声明入口。
+///
+/// 假成功核验：pnpm 以 0 退出、但该依赖的解析结果与升级前完全一致，说明这次
+/// 升级没有落地。两种已知成因都属于「按当前策略不该动」，而不是插件损坏：
+/// 1. 档案 spec 把版本钉死（`catalog:` 条目 / git 提交 / `link:` 本地目录），
+///    `--latest` 也越不过声明范围；
+/// 2. pnpm 的 release-age 策略：新版本发布不足 `minimumReleaseAge`（pnpm 11
+///    默认 1440 分钟 = 24 小时）时解析会回落到仍达标的最新版本，命令照旧以 0
+///    退出且**不打印任何说明**——实测 bundled pnpm 11.7.0 在 `^2.10.15` 上
+///    `update --latest` 静默停在 2.10.15，把 `minimumReleaseAge: 0` 写进档案
+///    才取到 2.11.2。因此这条消息不能只归因于 catalog 钉死（会把人引偏）。
+/// 必须如实报「没升级」——报成功会让用户以为已在新版本上（与 [`remove_many`] 的
+/// 「卸载后核验」同理）；但**不**记进插件错误：插件没坏，记了会让列表挂上
+/// 「可能已损坏或与当前环境不兼容」的误导标记（安装/升级真失败各有记录点）。
+///
+/// 入口核验与安装一致：git 托管插件升级后同样可能停在「prepare 未构建 → 声明
+/// 入口缺失」坏态，若不拦截，下一次启动即崩溃（见 [`ensure_plugin_entry_built`]）。
+/// 包名先解析（预设 package 覆盖 / 清单依赖 basename），解析不到时跳过核验
+/// （警告即可，不误杀成功更新）。
+async fn verify_update_landed(
+    app_handle: &AppHandle,
+    id: &str,
+    before: Option<&str>,
+) -> Result<(), String> {
+    if let Some(before) = before {
+        if dependency_fingerprint(&profile_dir(app_handle), id).as_deref() == Some(before) {
+            let detail = installed_package_version(&profile_dir(app_handle), id)
+                .unwrap_or_else(|| before.to_string());
+            // 只有「新版本太新」这一种成因有出路（授权那个精确版本即可过闸），因此把
+            // 目标版本与「是否已在豁免清单里」一并带出去：已经授权过还是不动，说明成因
+            // 是档案把来源钉死，界面就别再给按钮——否则用户只会反复点一个没用的动作。
+            // 目标版本取自更新探测缓存（不新发网络请求）；git 托管插件的「最新」是提交
+            // SHA、不是 registry 版本，不能进发布时长豁免清单，按形状挡掉。
+            let latest = known_latest(id).filter(|latest| {
+                latest != &detail
+                    && latest.contains('.')
+                    && latest.starts_with(|c: char| c.is_ascii_digit())
+            });
+            let retryable = latest.as_deref().is_some_and(|latest| {
+                !profile_release_age_excluded(app_handle, &format!("{id}@{latest}"))
+            });
+            log::warn!(
+                "dsh plugin update made no change for {id}, still at {detail}, newest {latest:?}, actionable {retryable}"
+            );
+            return Err(format!(
+                "PLUGIN_UPDATE_NO_CHANGE: {}",
+                serde_json::json!({
+                    "name": id,
+                    "version": detail,
+                    "latest": latest,
+                    "retryable": retryable,
+                })
+            ));
+        }
+    }
+    let Some(name) = installed_package_name(app_handle, id) else {
+        log::warn!("plugin {id} not resolvable to a package name, skipping entry verify");
+        return Ok(());
+    };
+    let window = app_handle
+        .get_webview_window("main")
+        .ok_or("WINDOW_NOT_FOUND: main window missing")?;
+    let envs = build_plugin_envs(app_handle, harness_prefer_bundled_pnpm(app_handle));
+    let pkg_dir = profile_dir(app_handle).join("node_modules").join(name);
+    if let Err(e) = ensure_plugin_entry_built(app_handle, id, &pkg_dir, &envs, &window).await {
+        if let Err(err) = errors::record(app_handle, id, "update", &e) {
+            log::warn!("failed to record plugin error for {id}: {err}");
+        }
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -723,7 +776,7 @@ mod tests {
         // `catalog:` 条目上时（catalog `^0.18.1` 之于 0.19.0），升级会退化成
         // 「退出码 0 但什么都没装」的假成功——正是 sidebar 0.18.1→0.19.0 不生效的根因。
         assert_eq!(
-            update_pnpm_args("dsh-better-sidebar"),
+            update_pnpm_args(&["dsh-better-sidebar".to_string()]),
             vec!["dsh-better-sidebar", "--latest"]
         );
     }
@@ -739,7 +792,11 @@ mod tests {
             vec!["plugin", "--profile", "tauri", "remove", "dshmarket"]
         );
 
-        let update = single_plugin_args("tauri", "update", &update_pnpm_args("dsh-better-sidebar"));
+        let update = single_plugin_args(
+            "tauri",
+            "update",
+            &update_pnpm_args(&["dsh-better-sidebar".to_string()]),
+        );
         assert_eq!(
             update,
             vec![

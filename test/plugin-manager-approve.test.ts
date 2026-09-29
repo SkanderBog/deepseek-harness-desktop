@@ -1,0 +1,165 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+interface ToastCallOptions {
+  timeout?: number
+  onClose?: (reason: string) => void
+}
+
+const { invoke, restart, toast } = vi.hoisted(() => {
+  const toastFn = vi.fn((_message: string, _options?: ToastCallOptions) => 'toast-key')
+  return {
+    invoke: vi.fn(),
+    restart: vi.fn(),
+    toast: Object.assign(toastFn, { close: vi.fn(), update: vi.fn(), clear: vi.fn() }),
+  }
+})
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
+vi.mock('../src/store/modules/harness', () => ({ harness: { restart } }))
+vi.mock('@/utils/toast', () => ({ toast }))
+
+const { plugins } = await import('../src/store/modules/plugins')
+
+const RUNTIME = { toast: false, restartOnSettle: false }
+
+const BLOCKED = [{ name: 'b', version: '0.22.1', runtime_version: '0.2.0-rc.1' }]
+const POLICY = [{ name: 'b', version: '2.11.2' }]
+
+function approvalToast() {
+  return toast.mock.calls.find(call => call[1]?.onClose !== undefined)
+}
+
+beforeEach(() => {
+  invoke.mockReset()
+  toast.mockClear()
+  toast.close.mockClear()
+  restart.mockClear()
+  plugins.groups = []
+  plugins.processes = []
+  plugins.logs = []
+  plugins.activeGroupId = null
+  plugins.cancelling = false
+  plugins.presenterCount = 0
+  plugins.installedSource = []
+  plugins.installedLoaded = false
+})
+
+describe('plugins manager approval', () => {
+  it('attributes a refusal to the named process and returns the untouched ones to pending', async () => {
+    let installCalls = 0
+    invoke.mockImplementation(async (command: string) => {
+      if (command !== 'install_plugin_specs')
+        return undefined
+      installCalls += 1
+      if (installCalls === 1)
+        throw new Error(`PLUGIN_VERSION_INCOMPATIBLE: ${JSON.stringify(BLOCKED)}`)
+      return undefined
+    })
+
+    void plugins.enqueue('install', ['a', 'b'], RUNTIME)
+    await vi.waitFor(() => expect(plugins.pendingApprovals).toHaveLength(1))
+
+    const blocked = plugins.pendingApprovals[0]
+    expect(blocked.name).toBe('b')
+    expect(blocked.refusal?.kind).toBe('incompatible')
+    expect(plugins.processes.map(process => [process.name, process.status])).toEqual([
+      ['a', 'pending'],
+      ['b', 'unauthorized'],
+    ])
+
+    const results = await plugins.approve('b')
+
+    expect(invoke).toHaveBeenCalledWith('allow_plugin_versions', { versions: BLOCKED })
+    expect(invoke.mock.calls.filter(call => call[0] === 'install_plugin_specs')).toHaveLength(2)
+    expect(results.map(result => [result.process.name, result.ok])).toEqual([['a', true], ['b', true]])
+  })
+
+  it('re-submits only the processes that are still outstanding after a grant', async () => {
+    let secondAttempt = 0
+    invoke.mockImplementation(async (command: string, args: Record<string, unknown>) => {
+      if (command !== 'disable_dsh_plugin')
+        return undefined
+      if (args.id === 'a')
+        return undefined
+      secondAttempt += 1
+      if (secondAttempt === 1)
+        throw new Error(`PLUGIN_POLICY_BLOCKED: ${JSON.stringify(POLICY)}`)
+      return undefined
+    })
+
+    void plugins.enqueue('disable', ['a', 'b'], RUNTIME)
+    await vi.waitFor(() => expect(plugins.pendingApprovals).toHaveLength(1))
+
+    expect(plugins.processes).toHaveLength(1)
+    expect(plugins.processes[0].name).toBe('b')
+    expect(plugins.processes[0].refusal?.kind).toBe('policy')
+
+    const results = await plugins.approve('b')
+
+    expect(invoke).toHaveBeenCalledWith('allow_plugin_policy_versions', { versions: POLICY })
+    expect(invoke.mock.calls
+      .filter(call => call[0] === 'disable_dsh_plugin')
+      .map(call => (call[1] as { id: string }).id)).toEqual(['a', 'b', 'b'])
+    expect(results.map(result => [result.process.name, result.ok])).toEqual([['a', true], ['b', true]])
+  })
+
+  it('raises a persistent approval toast per blocked process', async () => {
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'install_plugin_specs')
+        throw new Error(`PLUGIN_VERSION_INCOMPATIBLE: ${JSON.stringify(BLOCKED)}`)
+      return undefined
+    })
+    plugins.attachPresenter()
+
+    const done = plugins.enqueue('install', ['b'], { toast: true, restartOnSettle: false })
+    await vi.waitFor(() => expect(plugins.pendingApprovals).toHaveLength(1))
+
+    const approval = approvalToast()
+    expect(approval?.[1]?.timeout).toBe(0)
+
+    await plugins.cancel()
+    await done
+    expect(plugins.pendingApprovals).toHaveLength(0)
+  })
+
+  it('keeps the process unauthorized when the toast is closed for any reason but dismissal', async () => {
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'install_plugin_specs')
+        throw new Error(`PLUGIN_VERSION_INCOMPATIBLE: ${JSON.stringify(BLOCKED)}`)
+      return undefined
+    })
+    plugins.attachPresenter()
+
+    const done = plugins.enqueue('install', ['b'], { toast: true, restartOnSettle: false })
+    await vi.waitFor(() => expect(plugins.pendingApprovals).toHaveLength(1))
+
+    approvalToast()?.[1]?.onClose?.('closed')
+    await Promise.resolve()
+    expect(plugins.pendingApprovals).toHaveLength(1)
+
+    await plugins.cancel()
+    const results = await done
+    expect(results.map(result => [result.ok, result.reason])).toEqual([[false, 'cancelled']])
+  })
+
+  it('rejects the process when the approval toast is dismissed by the user', async () => {
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'install_plugin_specs')
+        throw new Error(`PLUGIN_VERSION_INCOMPATIBLE: ${JSON.stringify(BLOCKED)}`)
+      return undefined
+    })
+    plugins.attachPresenter()
+
+    const done = plugins.enqueue('install', ['b'], { toast: true, restartOnSettle: false })
+    await vi.waitFor(() => expect(plugins.pendingApprovals).toHaveLength(1))
+
+    approvalToast()?.[1]?.onClose?.('dismissed')
+
+    const results = await done
+    expect(results.map(result => [result.process.name, result.ok, result.reason])).toEqual([
+      ['b', false, 'rejected'],
+    ])
+    expect(plugins.pendingApprovals).toHaveLength(0)
+    expect(toast.close).toHaveBeenCalled()
+  })
+})

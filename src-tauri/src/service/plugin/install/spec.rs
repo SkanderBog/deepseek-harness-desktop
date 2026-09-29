@@ -2,12 +2,66 @@
 //! 盘符绝对路径会按相对解析）、GitHub 简写规范化（绕开 pnpm 的 HTTPS→SSH 回退
 //! 缺陷）与 Windows 下含空格 spec 的引号化（dsh CLI 只在 win32 用 shell 拼接参数）。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 use super::bundled_dep_spec;
 use super::bundled_plugin_dir;
 use super::PreinstallPluginInfo;
+
+/// 从安装 spec 解析包名，供「产物核验」与「入口补构建」定位
+/// `node_modules/<name>`。
+///
+/// - `link:` / `file:` 本地依赖：读目标目录的 `package.json` 的 `name`（最准确），
+///   读不到时回落目录名（pnpm 落盘的目录名通常是包名，但 `link:` 目标目录名未必
+///   与包名一致，故以清单为准）；
+/// - npm 形态（含 scoped）：剥离末尾 `@版本/区间`，`@scope/name` 里的 `@` 不算分隔符；
+/// - git / URL / 其他含 `:` 或空白的形态：install 后的目录名无法静态得知，返回 `None`
+///   ——调用方跳过产物核验而不是把 `node_modules/<整条 spec>` 当成必然缺失。
+pub(super) fn package_name_of_spec(spec: &str) -> Option<String> {
+    for prefix in ["link:", "file:"] {
+        if let Some(path) = spec.strip_prefix(prefix) {
+            return local_package_name(Path::new(path.trim()));
+        }
+    }
+    if spec.contains(':') || spec.contains(char::is_whitespace) {
+        return None;
+    }
+    let name = package_name_of_npm_spec(spec);
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+/// `link:` / `file:` 目标目录的包名：优先读其 `package.json`，回落目录名。
+fn local_package_name(path: &Path) -> Option<String> {
+    if let Ok(content) = std::fs::read_to_string(path.join("package.json")) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(name) = value.get("name").and_then(|v| v.as_str()) {
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    path.file_name().map(|s| s.to_string_lossy().into_owned())
+}
+
+/// 剥离 `name@range` 的版本后缀：scoped 包只在 `@scope/` 的斜杠之后寻找 `@`，
+/// 否则 `@scope/name` 会被从首个 `@` 切开得到空包名。
+fn package_name_of_npm_spec(spec: &str) -> &str {
+    let search_from = if spec.starts_with('@') {
+        spec.find('/').map_or(spec.len(), |i| i + 1)
+    } else {
+        0
+    };
+    match spec[search_from..].find('@') {
+        Some(offset) => spec[..search_from + offset].trim_end_matches('@'),
+        None => spec,
+    }
+}
 
 /// 内置插件才需要解析捆绑目录（普通插件无此概念），避免无谓的资源探测
 pub(super) fn bundled_dir_of(

@@ -74,16 +74,23 @@ describe('configPlugin preset chip', () => {
   })
 })
 
-// ── Suite C — uninstall flow wires to remove_dsh_plugin + restart ────────────
+// ── Suite C — uninstall routes through the manager + settles with one restart ──
 describe('configPlugin uninstall flow', () => {
-  it('calls remove_dsh_plugin', () => {
-    const source = readFileSync(new URL('../src/ui/config/plugin.tsx', import.meta.url), 'utf8')
-    expect(source).toContain('remove_dsh_plugin')
+  it('routes uninstall through the manager batch command', () => {
+    const panel = readFileSync(new URL('../src/ui/config/plugin.tsx', import.meta.url), 'utf8')
+    const store = readFileSync(new URL('../src/store/modules/plugins/store.ts', import.meta.url), 'utf8')
+
+    expect(panel).toContain('manager.uninstall')
+    expect(panel).not.toContain('remove_dsh_plugin')
+    expect(store).toContain('remove_dsh_plugins')
   })
 
-  it('restarts the service after uninstall', () => {
-    const source = readFileSync(new URL('../src/ui/config/plugin.tsx', import.meta.url), 'utf8')
-    expect(source).toContain('store.harness.restart()')
+  it('restarts the service once when the group settles', () => {
+    const store = readFileSync(new URL('../src/store/modules/plugins/store.ts', import.meta.url), 'utf8')
+
+    // 重启权收口到组结算：面板不再为卸载单独重启
+    expect(store).toContain('group.options.restartOnSettle')
+    expect(store).toContain('harness.restart()')
   })
 
   it('shows a confirm dialog before uninstall', () => {

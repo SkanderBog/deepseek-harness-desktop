@@ -7,84 +7,15 @@ import { defineStore } from 'valtio-define'
 import { hooks } from '@/config/hooks'
 import { harness } from '../harness'
 import { harnessUpdater } from '../harness-updater'
+import { parseBlockedRefusal } from '../plugins/utils'
 
-/** 预装安装日志在界面上的保留行数 */
+/**
+ * 预装安装日志在界面上的保留行数
+ */
 const LOG_LIMIT = 200
 
-/**
- * 后端「拦截清单」的两套前缀：其后都是清单 JSON。
- *
- * dsh 的版本兼容性与 pnpm 的发布时长策略（`minimumReleaseAge`）是两套互不相干的拦截，
- * 但形状一致：后端把清单挂在错误串上（Tauri 命令的错误通道只有字符串），前端解出来
- * 交给用户逐项授权后重跑。
- */
-const INCOMPATIBLE_PREFIX = 'PLUGIN_VERSION_INCOMPATIBLE:'
-const POLICY_BLOCKED_PREFIX = 'PLUGIN_POLICY_BLOCKED:'
-const NO_CHANGE_PREFIX = 'PLUGIN_UPDATE_NO_CHANGE:'
-
-/** 被拦下的清单：核心版本兼容性拒绝、pnpm 发布时长策略拒绝，或「升级没落地」。 */
-export type BlockedRefusal
-  = | { kind: 'incompatible', versions: IncompatibleVersion[] }
-    | { kind: 'policy', versions: PolicyBlockedVersion[] }
-    | { kind: 'update-hold', versions: PolicyBlockedVersion[], retryable: boolean }
-
-/**
- * 解析后端拦截清单的错误载荷；识别不出来返回 null。
- *
- * 引导页与插件面板共用这一处解析：两边的错误通道都一样，规则必须一致。解析失败一律
- * 退回普通失败展示——绝不把读不出来的 JSON 当成可授权项（那会变成一次来路不明的授权）。
- */
-export function parseBlockedRefusal(error: string): BlockedRefusal | null {
-  const incompatible = parseVersions<IncompatibleVersion>(error, INCOMPATIBLE_PREFIX)
-  if (incompatible)
-    return { kind: 'incompatible', versions: incompatible }
-  const policy = parseVersions<PolicyBlockedVersion>(error, POLICY_BLOCKED_PREFIX)
-  if (policy)
-    return { kind: 'policy', versions: policy }
-  return parseUpdateHold(error)
-}
-
-/**
- * 「升级以 0 退出但版本没动」：只有「新版本还在发布保护期内」这一种成因有出路，后端因此
- * 连同目标版本（更新探测缓存里的 registry latest）与 `retryable` 一起给出。已经授权过还
- * 不动时 `retryable` 为 false——那是档案把来源钉死，界面就不要再给按钮。
- */
-function parseUpdateHold(error: string): BlockedRefusal | null {
-  if (!error.startsWith(NO_CHANGE_PREFIX))
-    return null
-  try {
-    const payload = JSON.parse(error.slice(NO_CHANGE_PREFIX.length)) as {
-      name?: unknown
-      latest?: unknown
-      retryable?: unknown
-    }
-    if (typeof payload.name !== 'string')
-      return null
-    const latest = typeof payload.latest === 'string' && payload.latest !== '' ? payload.latest : null
-    return {
-      kind: 'update-hold',
-      versions: latest ? [{ name: payload.name, version: latest }] : [],
-      retryable: payload.retryable === true && latest !== null,
-    }
-  }
-  catch (err) {
-    console.error(`[Harness] failed to parse ${NO_CHANGE_PREFIX} payload:`, err)
-    return null
-  }
-}
-
-function parseVersions<T>(error: string, prefix: string): T[] | null {
-  if (!error.startsWith(prefix))
-    return null
-  try {
-    const parsed = JSON.parse(error.slice(prefix.length)) as T[]
-    return parsed.length > 0 ? parsed : null
-  }
-  catch (err) {
-    console.error(`[Harness] failed to parse ${prefix} payload:`, err)
-    return null
-  }
-}
+export { parseBlockedRefusal }
+export type { BlockedRefusal } from '../plugins/types'
 
 /**
  * 预装插件引导模块：首次安装、老版本升级或资源清单 plugins 节内容变更后，
@@ -142,10 +73,15 @@ export const preinstall = defineStore({
       return this.plugins
     },
 
+    /** 追加一行 `dsh plugin` 进程输出（日志上限见 [`LOG_LIMIT`]） */
+    pushLog(line: string) {
+      this.logs = [...this.logs, line].slice(-LOG_LIMIT)
+    },
+
     /** 预装安装日志流：dsh plugin 进程输出逐行追加 */
     async listenLog(): Promise<UnlistenFn> {
       return listen<PreinstallLogPayload>('preinstall-log', (e) => {
-        this.logs = [...this.logs, e.payload.line].slice(-LOG_LIMIT)
+        this.pushLog(e.payload.line)
       })
     },
 
@@ -262,7 +198,7 @@ export const preinstall = defineStore({
           this.installing = false
           this.cancelling = false
         })
-        await invoke('cancel_preinstall_plugins')
+        await invoke('cancel_plugin_processes')
       }
       catch (err) {
         console.error('[Harness] cancel preinstall failed:', err)
@@ -277,12 +213,22 @@ export const preinstall = defineStore({
     async skip() {
       if (this.installing)
         return
+      await this.finish()
+    },
+
+    /**
+     * 引导收尾：标记引导完成（记录预设指纹）并继续启动服务。
+     *
+     * 安装由管理器执行（`install_plugin_specs`），不再经过 `install_preinstall_plugins`，
+     * 因此「标记完成」这一步要在这里补上，否则引导页每轮启动都会再次弹出。
+     */
+    async finish() {
       try {
         await invoke('skip_preinstall_plugins')
         await this.continueStartup()
       }
       catch (err) {
-        console.error('[Harness] skip preinstall failed:', err)
+        console.error('[Harness] finish preinstall failed:', err)
         this.error = String(err)
       }
     },

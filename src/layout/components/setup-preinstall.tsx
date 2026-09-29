@@ -1,4 +1,5 @@
-import type { IncompatibleVersion, PreinstallPlugin } from '@/store/modules/preinstall'
+import type { PluginProcess } from '@/store/modules/plugins'
+import type { PreinstallPlugin } from '@/store/modules/preinstall'
 import { ArrowUpRightFromSquare, Copy, PlugConnection, Xmark } from '@gravity-ui/icons'
 import { Button, Card, Checkbox, Chip, ScrollShadow, Spinner, Switch, Typography } from '@heroui/react'
 import { useMount } from '@reause/core'
@@ -10,12 +11,14 @@ import { useStore } from 'valtio-define'
 import { Ellipsis } from '@/components/ellipsis'
 import { Empty } from '@/components/empty'
 import { Logs } from '@/components/logs'
+import { useListen } from '@/hooks/use-listen'
+import { useDshPluginsManager } from '@/hooks/use-plugins-manager'
 import { store } from '@/store'
 import { writeClipboardText } from '@/utils/clipboard'
 
 /**
  * 预装插件引导页：首次安装（或老版本升级）后展示推荐插件列表，
- * 用户确认后调用 `dsh plugin` 安装（日志实时回流到控制台），
+ * 用户确认后交由插件管理器执行安装/卸载（日志实时回流到控制台），
  * 或跳过；两者都会标记完成并继续启动服务。
  */
 
@@ -165,23 +168,39 @@ function LogPanel({ logs }: { logs: readonly string[] }) {
   )
 }
 
+/** 被拒进程展示的精确版本清单：授权按精确 `包名@版本` 生效，因此原样展示 */
+function refusedVersions(process: PluginProcess): string {
+  return (process.refusal?.versions ?? []).map(item => `${item.name}@${item.version}`).join('、')
+}
+
 export function PreinstallSetup() {
   const { t } = useTranslation()
   const preinstall = useStore(store.preinstall)
+  // 引导页不自行提示（toast: false）也不自行重启（restartOnSettle: false）：
+  // 提示权在页面，重启由收尾的 continueStartup 统一做一次
+  const manager = useDshPluginsManager({ toast: false, restartOnSettle: false })
   // 用户手动调整后的选择（一旦交互即接管默认勾选）
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [touched, setTouched] = useState(false)
-  // 版本豁免的勾选集合：默认全不勾——「可能导致崩溃或数据丢失」的风险必须由用户
-  // 明确接受，不想装这些插件的人有「跳过」可走
+  // 授权勾选集合：被拒插件必须由用户明确接受风险，不想装的人可以「跳过」退出
   const [allowed, setAllowed] = useState<Set<string>>(() => new Set())
-  // 授权进行中：逐条起 dsh 进程写兼容性豁免，期间禁用按钮并显示加载态
+  // 授权进行中：写豁免期间禁用按钮并显示加载态
   const [granting, setGranting] = useState(false)
-  const blocked = preinstall.incompatible
-  const policyBlocked = preinstall.policyBlocked
+  // 本轮提交的失败明细（管理器以 ok:false 表达失败，不抛异常）
+  const [failures, setFailures] = useState<string[]>([])
+
+  const approvals = manager.pendingApprovals
+  const incompatibleApprovals = approvals.filter(process => process.refusal?.kind === 'incompatible')
+  const policyApprovals = approvals.filter(process => process.refusal?.kind !== 'incompatible')
 
   // 进入引导页时拉取插件列表（仅挂载一次，无需清理）
   useMount(() => {
     void store.preinstall.load()
+  })
+
+  // dsh plugin 进程输出经 `preinstall-log` 回流；卸载即注销，不残留监听
+  useListen<{ line: string }>('preinstall-log', (event) => {
+    store.preinstall.pushLog(event.payload.line)
   })
 
   // 默认勾选：已安装 + 未安装的推荐插件 +「修复」类项 + 无 chip 但标记默认勾选的项（如 dsh-notification）。
@@ -190,18 +209,6 @@ export function PreinstallSetup() {
   const effectiveSelected = !touched
     ? initialCheckedSet(preinstall.plugins, preinstall.isFirstTime)
     : selected
-
-  /**
-   * 拦截项在勾选集合里的键：必须带上运行时版本。
-   *
-   * 豁免是按「精确包名@版本 + 运行时版本」三元组生效的，解析结果也按三元组去重，因此
-   * `name@version` 相同、运行时不同的两条是两条不同的授权。只用 `name@version` 当键会让
-   * 勾选一行连带授权另一行（把别的运行时的豁免也一起写下去，dsh 只会拒绝它）。
-   * 展示给用户的标签仍是 `name@version`，键只在内部用。
-   */
-  function incompatibleKey(item: IncompatibleVersion) {
-    return JSON.stringify([item.name, item.version, item.runtime_version])
-  }
 
   function toggle(id: string, checked: boolean) {
     // 首次交互以「当前默认勾选」为起点：selected 初始为空，若直接在其上增删，
@@ -227,7 +234,14 @@ export function PreinstallSetup() {
     })
   }
 
-  function handleConfirm() {
+  /** 汇总一组进程结果里的失败明细，供错误面板展示 */
+  function collectFailures(results: Awaited<ReturnType<typeof manager.install>>): string[] {
+    return results
+      .filter(result => !result.ok)
+      .map(result => `${result.process.name}: ${result.error ?? ''}`)
+  }
+
+  async function handleConfirm() {
     // 基于 plugin.installed 推导操作：选中且未安装 → 安装；已安装且未选中 → 卸载
     const toInstall = preinstall.plugins
       .filter(p => effectiveSelected.has(p.id) && !p.installed)
@@ -235,46 +249,54 @@ export function PreinstallSetup() {
     const toUninstall = preinstall.plugins
       .filter(p => p.installed && !effectiveSelected.has(p.id) && !p.unsupported)
       .map(p => p.id)
-    void store.preinstall.confirm({ installIds: toInstall, uninstallIds: toUninstall })
+    setFailures([])
+    const failed: string[] = []
+    // 卸载在前：避免新装插件与待卸载插件冲突；两者各自成组，由队列保证先后
+    if (toUninstall.length > 0)
+      failed.push(...collectFailures(await manager.uninstall(toUninstall)))
+    if (toInstall.length > 0)
+      failed.push(...collectFailures(await manager.install(toInstall)))
+    if (failed.length > 0) {
+      setFailures(failed)
+      return
+    }
+    // 未产生任何变更时也要标记完成，否则引导页每轮启动都会再次弹出
+    await store.preinstall.finish()
   }
 
   function handleSkip() {
     void store.preinstall.skip()
   }
 
-  function toggleAllowed(key: string, checked: boolean) {
+  function toggleAllowed(id: string, checked: boolean) {
     setAllowed((prev) => {
       const next = new Set(prev)
       if (checked) {
-        next.add(key)
+        next.add(id)
       }
       else {
-        next.delete(key)
+        next.delete(id)
       }
       return next
     })
   }
+
   /**
-   * 授权勾选的精确版本后重跑安装。
+   * 授权勾选的风险项并续传。
    *
    * 豁免只对「精确的包名@版本（+ 运行时版本）」生效、且不随插件或核心升级继承，因此
-   * 必须真的重跑一次由 dsh 复核，不能假定授权即放行。
-   *
-   * 授权要逐条起进程（dsh 的 allow-version、或写档案豁免清单），期间用 granting 给出
-   * 按钮反馈：这段等待既没有安装日志也没有列表变化，否则点完像没反应。
+   * 必须真的重跑一次由 dsh 复核，不能假定授权即放行——`approve` 内部写豁免后会把
+   * 剩余集合重新提交，返回的 Promise 在整组结算后才 Resolve。
    */
-  async function handleGrant<T extends { name: string, version: string }>(
-    items: readonly T[],
-    keyOf: (item: T) => string,
-    grant: (selected: T[]) => Promise<boolean>,
-  ) {
-    const versions = items.filter(item => allowed.has(keyOf(item)))
-    if (granting || versions.length === 0)
+  async function handleGrant(targets: PluginProcess[]) {
+    const picked = targets.filter(process => allowed.has(process.id))
+    if (granting || picked.length === 0)
       return
     setGranting(true)
     try {
-      if (await grant(versions))
-        handleConfirm()
+      const failed = collectFailures(await manager.approve(picked.map(process => process.spec)))
+      if (failed.length > 0)
+        setFailures(failed)
     }
     finally {
       setGranting(false)
@@ -285,7 +307,10 @@ export function PreinstallSetup() {
   const toInstallCount = preinstall.plugins.filter(p => effectiveSelected.has(p.id) && !p.installed).length
   const toUninstallCount = preinstall.plugins.filter(p => p.installed && !effectiveSelected.has(p.id) && !p.unsupported).length
   const hasChanges = toInstallCount > 0 || toUninstallCount > 0
-  const installing = preinstall.installing
+  // 有进程在排队/执行中即视为安装中；被拒（unauthorized）时转为授权视图
+  const installing = manager.processes.some(process => process.status !== 'unauthorized')
+  const blocked = approvals.length > 0
+  const failing = failures.length > 0
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-canvas">
@@ -301,7 +326,7 @@ export function PreinstallSetup() {
             // 被核心版本拦截、被 pnpm 发布时长策略拦截（都可逐项授权）或安装失败时
             // 不叠加插件列表，只展示原因 + 日志 + 操作
             <If
-              cond={blocked.length > 0 || policyBlocked.length > 0 || preinstall.error !== ''}
+              cond={blocked || failing}
               else={(
                 <>
                   {/* 卡片网格限定高度滚动，上下溢出由 ScrollShadow 渐隐提示 */}
@@ -356,7 +381,7 @@ export function PreinstallSetup() {
                   </ScrollShadow>
 
                   {/* 可取消勾选提示：让用户知道预设插件可减选，取消后不会安装 */}
-                  <If cond={preinstall.plugins.length > 0 && !installing && preinstall.error === ''}>
+                  <If cond={preinstall.plugins.length > 0 && !installing && !failing}>
                     <p className="text-center text-xs text-muted">{t('preinstall.can_uncheck_hint')}</p>
                   </If>
 
@@ -396,109 +421,50 @@ export function PreinstallSetup() {
                 </>
               )}
             >
-              {/* 安装失败：错误信息 + 日志 + 操作 */}
               <If
-                cond={blocked.length > 0}
+                cond={blocked}
                 else={(
-                  // 发布时长策略拦截：档案已声明太新的版本，pnpm 的 minimumReleaseAge
-                  // 不放行，不授权则每次插件操作都失败；同样逐项授权后重跑
-                  <If
-                    cond={policyBlocked.length > 0}
-                    else={(
-                      <div className="flex flex-col gap-2.5">
-                        <div className="flex flex-col gap-2 rounded-md border border-danger/30 bg-danger/5 p-3">
-                          <p className="text-xs font-medium text-danger">{t('preinstall.failed')}</p>
-                          <p className="max-h-[120px] overflow-y-auto break-all font-mono text-[11px] leading-relaxed text-muted">
-                            {preinstall.error}
-                          </p>
-                        </div>
-                        <LogPanel logs={preinstall.logs} />
-                        <div className="flex items-center justify-end gap-2">
-                          <Button className="h-8 rounded-md" size="sm" variant="tertiary" onPress={handleSkip} isDisabled={installing}>
-                            {t('preinstall.skip')}
-                          </Button>
-                          <Button
-                            className="h-8 rounded-md"
-                            size="sm"
-                            variant="primary"
-                            onPress={handleConfirm}
-                            isDisabled={installing || !hasChanges}
-                          >
-                            {t('app.retry')}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  >
-                    <div className="flex flex-col gap-2.5">
-                      <div className="flex flex-col gap-2 rounded-md border border-warning/30 bg-warning/5 p-3">
-                        <p className="text-xs font-medium text-warning">{t('preinstall.policy_title')}</p>
-                        <p className="text-[11px] leading-relaxed text-muted">{t('preinstall.policy_desc')}</p>
-                        <div className="mt-0.5 flex flex-col gap-1.5">
-                          {policyBlocked.map((item) => {
-                            const key = `${item.name}@${item.version}`
-                            return (
-                              <label key={key} className="flex cursor-pointer items-center gap-2">
-                                <Checkbox
-                                  className="shrink-0"
-                                  isSelected={allowed.has(key)}
-                                  onChange={(value: boolean) => toggleAllowed(key, value)}
-                                  aria-label={key}
-                                >
-                                  <Checkbox.Content>
-                                    <Checkbox.Control>
-                                      <Checkbox.Indicator />
-                                    </Checkbox.Control>
-                                  </Checkbox.Content>
-                                </Checkbox>
-                                <span className="font-mono text-[11px] text-ink">{key}</span>
-                              </label>
-                            )
-                          })}
-                        </div>
-                      </div>
-                      <LogPanel logs={preinstall.logs} />
-                      <div className="flex items-center justify-end gap-2">
-                        <Button className="h-8 rounded-md" size="sm" variant="tertiary" onPress={handleSkip} isDisabled={installing || granting}>
-                          {t('preinstall.skip')}
-                        </Button>
-                        <Button
-                          className="h-8 rounded-md"
-                          size="sm"
-                          variant="primary"
-                          onPress={() => void handleGrant(policyBlocked, item => `${item.name}@${item.version}`, versions => store.preinstall.allowPolicyVersions(versions))}
-                          isDisabled={installing || granting || allowed.size === 0}
-                        >
-                          <If cond={granting}>
-                            <Spinner size="sm" color="current" />
-                            <span>{t('preinstall.granting')}</span>
-                          </If>
-                          <If cond={!granting}>
-                            <span>{t('preinstall.confirm')}</span>
-                          </If>
-                        </Button>
-                      </div>
+                  // 安装失败：错误信息 + 日志 + 操作
+                  <div className="flex flex-col gap-2.5">
+                    <div className="flex flex-col gap-2 rounded-md border border-danger/30 bg-danger/5 p-3">
+                      <p className="text-xs font-medium text-danger">{t('preinstall.failed')}</p>
+                      <p className="max-h-[120px] overflow-y-auto break-all font-mono text-[11px] leading-relaxed text-muted">
+                        {failures.join('\n')}
+                      </p>
                     </div>
-                  </If>
+                    <LogPanel logs={preinstall.logs} />
+                    <div className="flex items-center justify-end gap-2">
+                      <Button className="h-8 rounded-md" size="sm" variant="tertiary" onPress={handleSkip} isDisabled={installing}>
+                        {t('preinstall.skip')}
+                      </Button>
+                      <Button
+                        className="h-8 rounded-md"
+                        size="sm"
+                        variant="primary"
+                        onPress={handleConfirm}
+                        isDisabled={installing || !hasChanges}
+                      >
+                        {t('app.retry')}
+                      </Button>
+                    </div>
+                  </div>
                 )}
               >
-                {/* 版本兼容性拒绝：核心在 pnpm 之前拦下整批安装，插件与当前核心的
-                    DSH peer 依赖不匹配；逐项授权精确版本（风险由用户明确承担）后重试 */}
                 <div className="flex flex-col gap-2.5">
-                  <div className="flex flex-col gap-2 rounded-md border border-danger/30 bg-danger/5 p-3">
-                    <p className="text-xs font-medium text-danger">{t('preinstall.incompatible_title')}</p>
-                    <p className="text-[11px] leading-relaxed text-muted">{t('preinstall.incompatible_desc')}</p>
-                    <div className="mt-0.5 flex flex-col gap-1.5">
-                      {blocked.map((item) => {
-                        const label = `${item.name}@${item.version}`
-                        const key = incompatibleKey(item)
-                        return (
-                          <label key={key} className="flex cursor-pointer items-center gap-2">
+                  {/* 版本兼容性拒绝：核心在 pnpm 之前拦下整批安装，插件与当前核心的
+                      DSH peer 依赖不匹配；逐项授权精确版本（风险由用户明确承担）后重试 */}
+                  <If cond={incompatibleApprovals.length > 0}>
+                    <div className="flex flex-col gap-2 rounded-md border border-danger/30 bg-danger/5 p-3">
+                      <p className="text-xs font-medium text-danger">{t('preinstall.incompatible_title')}</p>
+                      <p className="text-[11px] leading-relaxed text-muted">{t('preinstall.incompatible_desc')}</p>
+                      <div className="mt-0.5 flex flex-col gap-1.5">
+                        {incompatibleApprovals.map(process => (
+                          <label key={process.id} className="flex cursor-pointer items-center gap-2">
                             <Checkbox
                               className="shrink-0"
-                              isSelected={allowed.has(key)}
-                              onChange={(value: boolean) => toggleAllowed(key, value)}
-                              aria-label={label}
+                              isSelected={allowed.has(process.id)}
+                              onChange={(value: boolean) => toggleAllowed(process.id, value)}
+                              aria-label={process.name}
                             >
                               <Checkbox.Content>
                                 <Checkbox.Control>
@@ -506,23 +472,52 @@ export function PreinstallSetup() {
                                 </Checkbox.Control>
                               </Checkbox.Content>
                             </Checkbox>
-                            <span className="font-mono text-[11px] text-ink">{label}</span>
+                            <span className="font-mono text-[11px] text-ink">{refusedVersions(process)}</span>
                           </label>
-                        )
-                      })}
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  </If>
+
+                  {/* 发布时长策略 / 升级保留拦截：档案已声明太新的版本时每次插件操作都失败，
+                      同样逐项授权后重跑 */}
+                  <If cond={policyApprovals.length > 0}>
+                    <div className="flex flex-col gap-2 rounded-md border border-warning/30 bg-warning/5 p-3">
+                      <p className="text-xs font-medium text-warning">{t('preinstall.policy_title')}</p>
+                      <p className="text-[11px] leading-relaxed text-muted">{t('preinstall.policy_desc')}</p>
+                      <div className="mt-0.5 flex flex-col gap-1.5">
+                        {policyApprovals.map(process => (
+                          <label key={process.id} className="flex cursor-pointer items-center gap-2">
+                            <Checkbox
+                              className="shrink-0"
+                              isSelected={allowed.has(process.id)}
+                              onChange={(value: boolean) => toggleAllowed(process.id, value)}
+                              aria-label={process.name}
+                            >
+                              <Checkbox.Content>
+                                <Checkbox.Control>
+                                  <Checkbox.Indicator />
+                                </Checkbox.Control>
+                              </Checkbox.Content>
+                            </Checkbox>
+                            <span className="font-mono text-[11px] text-ink">{refusedVersions(process) || process.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </If>
+
                   <LogPanel logs={preinstall.logs} />
                   <div className="flex items-center justify-end gap-2">
-                    <Button className="h-8 rounded-md" size="sm" variant="tertiary" onPress={handleSkip} isDisabled={installing || granting}>
+                    <Button className="h-8 rounded-md" size="sm" variant="tertiary" onPress={handleSkip} isDisabled={granting}>
                       {t('preinstall.skip')}
                     </Button>
                     <Button
                       className="h-8 rounded-md"
                       size="sm"
                       variant="primary"
-                      onPress={() => void handleGrant(blocked, incompatibleKey, versions => store.preinstall.allowIncompatible(versions))}
-                      isDisabled={installing || granting || allowed.size === 0}
+                      onPress={() => void handleGrant(approvals)}
+                      isDisabled={granting || allowed.size === 0}
                     >
                       <If cond={granting}>
                         <Spinner size="sm" color="current" />
@@ -551,11 +546,11 @@ export function PreinstallSetup() {
                 className="h-8 rounded-md"
                 size="sm"
                 variant="tertiary"
-                onPress={store.preinstall.cancel}
-                isDisabled={preinstall.cancelling}
+                onPress={() => void manager.cancel()}
+                isDisabled={manager.cancelling || manager.processes.length === 0}
               >
                 <Xmark className="size-3.5" />
-                {preinstall.cancelling ? t('preinstall.cancelling') : t('preinstall.cancel')}
+                {manager.cancelling ? t('preinstall.cancelling') : t('preinstall.cancel')}
               </Button>
             </div>
           </div>

@@ -427,7 +427,10 @@ fn is_upgrade(installed: &str, latest: &str) -> bool {
 }
 
 /// 把 npm 包名编码为 registry 路径（`@scope/name` → `@scope%2Fname`）。
-fn encode_registry_name(name: &str) -> String {
+///
+/// `pub(crate)`：插件 spec 兼容性检查（`install::inspect`）需要读同一个 registry，
+/// 复用这里的编码与请求形状，避免两处 URL 拼装漂移。
+pub(crate) fn encode_registry_name(name: &str) -> String {
     name.replace('@', "%40").replace('/', "%2F")
 }
 
@@ -435,7 +438,8 @@ fn encode_registry_name(name: &str) -> String {
 // 网络判定
 // ---------------------------------------------------------------------------
 
-async fn fetch_json(client: &reqwest::Client, url: &str) -> Option<Value> {
+/// registry/API 的 JSON GET（非 2xx 与网络错误统一返回 `None`）。
+pub(crate) async fn fetch_json(client: &reqwest::Client, url: &str) -> Option<Value> {
     let res = client
         .get(url)
         .header("accept", "application/json")

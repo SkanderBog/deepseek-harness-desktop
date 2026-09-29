@@ -1,32 +1,26 @@
-import type { BlockedRefusal } from '@/store/modules/preinstall'
-import type { DshPlugin } from '@/types'
+import type { Plugin, PluginSearchProblem, PluginSearchResult } from '@/store/modules/plugins'
 import { ChevronRight, CircleExclamation } from '@gravity-ui/icons'
-import { Button, Chip, Label, Spinner, Switch, Tooltip } from '@heroui/react'
+import { Button, Chip, Input, Label, Spinner, Switch, Tooltip } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
-import { useMount, useToggle } from '@reause/core'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useToggle } from '@reause/core'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { tv } from 'tailwind-variants'
-import { useStore } from 'valtio-define'
 import { Ellipsis as TextEllipsis } from '@/components/ellipsis'
 import { Empty } from '@/components/empty'
 import { Item } from '@/components/item'
 import { Modal } from '@/components/modal'
 import { Panel } from '@/components/panel'
 import { queryKeys } from '@/config/query-keys'
-import { useListen } from '@/hooks/use-listen'
+import { useDshPluginsManager } from '@/hooks/use-plugins-manager'
 import { store } from '@/store'
-import { parseBlockedRefusal } from '@/store/modules/preinstall'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
 
-/**
- * 操作 chip 的样式变体：busy 时禁止点击并降低透明度，否则可点击。
- * 统一各操作 chip 的 busy 样式，避免内联三元重复。
- */
+/** 操作 chip 的样式变体：busy 时禁止点击并降低透明度，否则可点击。 */
 const actionChip = tv({
   base: 'rounded-md',
   variants: {
@@ -40,200 +34,44 @@ const actionChip = tv({
   },
 })
 
+/** 兼容性检查的问题码 → i18n key：管理器把宿主返回的 problem 原样透传给调用方 */
+const searchProblemKeys: Record<PluginSearchProblem, string> = {
+  'invalid-spec': 'plugins.search_invalid_spec',
+  'not-found': 'plugins.search_not_found',
+  'network': 'plugins.search_network',
+  'unsupported': 'plugins.search_unsupported',
+  'unknown': 'plugins.search_unknown',
+}
+
 /**
- * 「插件」面板：展示已安装插件，作为「插件出问题时」的卸载/升级入口。
+ * 「插件」面板：已安装插件的安装/升级/卸载/禁用/启用全部经 `useDshPluginsManager` 收口
+ * （队列、授权、Toast、组结算重启由管理器统一负责），面板只保留确认对话框与行内 busy。
  *
- * - 列表来自 `get_dsh_plugins` 查询；后端（`service/plugin/watch`）秒级监控 profile
- *   插件文件，变化时经 `dsh-plugins-updated` 推送完整列表，由根布局统一写入该查询
- *   缓存（面板 / 配置对话框角标 / 导航栏共用同一份缓存，无需重新拉取）。
- * - 升级 `update_dsh_plugin` / 卸载 `remove_dsh_plugin` 已接入后端
- *   （`dsh plugin --profile <当前档案> update|remove <id>`，进程输出经
- *   `preinstall-log` 事件实时推送）。
- * - 「异常」标记：插件带 `error` 字段（安装/升级/卸载失败或页面运行期上报）
- *   时显示 danger 图标按钮，Tooltip 展示错误详情，行内可直接升级/卸载修复。
+ * 快照（创建/还原/删除）不在管理器范围内（`docs/todos/use-plugins-manager.md` §1.2），
+ * 仍由面板直接调用宿主命令；这些操作同样会改写插件状态，因此成功后失效插件列表查询。
  */
 export function ConfigPlugin() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const preinstall = useStore(store.preinstall)
+  const manager = useDshPluginsManager()
 
-  const { data: pluginList, isLoading, error: pluginError } = useQuery({
-    queryKey: queryKeys.plugins,
-    queryFn: () => invoke<DshPlugin[]>('get_dsh_plugins'),
-  })
-
-  // 重新探测更新可用性并写回缓存（Rust 侧 30min 缓存；失败静默按「无更新」处理，
-  // 插件管理器仍可用）。升级入口只在确有更新（或异常修复）时显示，而不是常驻。
-  function refreshUpdates() {
-    void invoke<DshPlugin[]>('refresh_plugin_updates')
-      .then(list => queryClient.setQueryData(queryKeys.plugins, list))
-      .catch(err => console.error('[ConfigPlugin] refresh_plugin_updates failed:', err))
-  }
-
-  // 打开面板补齐一次；之后插件文件变化（安装/升级/卸载会改写版本与 spec）重新探测
-  useMount(refreshUpdates)
-  useListen<DshPlugin[]>('dsh-plugins-updated', refreshUpdates)
-
-  const loading = isLoading
-  const error = pluginError ? String(pluginError) : ''
+  const plugins = manager.installed
+  const internalPlugins = plugins.filter(plugin => plugin.internal)
+  const managedPlugins = plugins.filter(plugin => !plugin.internal)
 
   /** 「内置插件」分组是否展开：默认折叠，内置插件由启动自愈维护，不作为常规可管理项 */
   const [showInternal, toggleShowInternal] = useToggle()
   /** 高级选项：默认关闭，快照（创建/还原/删除）属于低频维护操作，不常驻每行 */
   const [advanced, toggleAdvanced] = useToggle()
-  // 内置插件（internal）随包分发、由启动自愈安装与维护，排到列表末尾并收进默认折叠的
-  // 分组：与可升级/可卸载的插件并列只会让用户把它们当作普通插件。它们仍可升级
-  // （切换核心版本后内置包可能落后），但不提供卸载/禁用/快照入口。
-  const plugins = pluginList ?? []
-  const internalPlugins = plugins.filter(plugin => plugin.internal)
-  const managedPlugins = plugins.filter(plugin => !plugin.internal)
+  const [busy, setBusy] = useState<{ id: string, action: 'update' | 'remove' | 'disable' | 'enable' | 'snapshot' | 'restore' | 'delete-snapshot' } | null>(null)
+  /** 安装输入的原始文本：支持逗号/空白分隔的多个 spec */
+  const [installRef, setInstallRef] = useState('')
+  const [installing, setInstalling] = useState(false)
+  /** 兼容性预检结果：安装前先经 manager.search 展示解析到的版本与兼容性 */
+  const [searchResults, setSearchResults] = useState<PluginSearchResult[] | null>(null)
 
   const [dialogHolder, openDialog] = useOverlay(Modal, { type: 'holder' })
 
-  /**
-   * 记录被拦下版本的精确授权：核心版本兼容性走 `allow_plugin_versions`（写档案的
-   * `compatibility.json`），发布时长策略走 `allow_plugin_policy_versions`（写
-   * `minimumReleaseAgeExclude`）。两套授权互不相干，但都只认精确版本、都由用户在这里确认。
-   */
-  const allowBlocked = useMutation({
-    mutationFn: (refusal: BlockedRefusal) => invoke<void>(
-      refusal.kind === 'incompatible' ? 'allow_plugin_versions' : 'allow_plugin_policy_versions',
-      { versions: refusal.versions },
-    ),
-    onError: (err) => {
-      console.error('[ConfigPlugin] authorising blocked versions failed:', err)
-      toast(t('plugins.authorize_failed'), {})
-    },
-  })
-
-  /**
-   * 插件操作被拦下时的出路：标题 + 说明 + 被拦下的精确版本，动作按钮「授权」点一次补齐
-   * 所需豁免并重跑原操作（不想要就关掉气泡，不另设取消按钮）。
-   *
-   * 三种情况共用这条通道：核心版本不兼容、发布保护期挡下、以及「升级以 0 退出但版本没动」
-   * （最后一种只是同一种发布保护期的静默形态：`--latest` 盯着最新版本，而最新版本还在窗口
-   * 内时 pnpm 直接不动、也不打印原因）。标题是**这次操作的插件**，清单是**档案里真正挡住
-   * 它的条目**——两者可以不同：插件操作要过整份 lockfile 校验，档案里任何一条太新的版本
-   * 都会拦下别人的升级。
-   *
-   * 常驻（`timeout: 0`）：这是需要用户决定的岔口，超时消失等于把人晾在原地。授权后重跑
-   * 原操作——豁免写进档案后仍要由 pnpm 真正改一遍依赖，不能假定写入即生效。
-   */
-  function onBlocked(refusal: BlockedRefusal, name: string, retry: () => Promise<void>) {
-    const core = refusal.kind === 'incompatible'
-    const hold = refusal.kind === 'update-hold'
-    // 「升级没落地」只有发布保护期这一种成因有出路；后端判定为档案钉死（或没探测到新版
-    // 本）时不给按钮，否则用户只会反复点一个没用的动作。
-    const actionable = !hold || refusal.retryable
-    const titleKey = core
-      ? 'plugins.blocked_incompatible_title'
-      : hold ? 'plugins.hold_title' : 'plugins.blocked_policy_title'
-    const descKey = core
-      ? 'plugins.blocked_incompatible_desc'
-      : hold
-        ? (actionable ? 'plugins.hold_desc' : 'plugins.hold_pinned_desc')
-        : 'plugins.blocked_policy_desc'
-    const blocked = refusal.versions.map(item => `${item.name}@${item.version}`).join('、')
-    const key = toast(t(titleKey, { name }), {
-      variant: core ? 'danger' : 'warning',
-      timeout: 0,
-      description: t(descKey, { blocked }),
-      actionProps: actionable
-        ? {
-            children: t('buttons.authorize'),
-            onPress: () => {
-              toast.close(key)
-              void authorise(refusal, retry)
-            },
-          }
-        : undefined,
-    })
-  }
-
-  async function authorise(refusal: BlockedRefusal, retry: () => Promise<void>) {
-    try {
-      await allowBlocked.mutateAsync(refusal)
-    }
-    catch (e) {
-      silence(e, 'plugin blocked: error already shown by mutation onError')
-      return
-    }
-    await retry()
-  }
-
-  /** 行内操作进行中状态：id + 操作类型（update/remove/disable/enable/snapshot/restore/delete-snapshot），保证单例运行 */
-  const [busy, setBusy] = useState<{ id: string, action: 'update' | 'remove' | 'disable' | 'enable' | 'snapshot' | 'restore' | 'delete-snapshot' } | null>(null)
-
-  const upgrade = useMutation({
-    mutationFn: (id: string) => invoke<void>('update_dsh_plugin', { id }),
-    onSuccess: (_data, id) => {
-      const name = plugins.find(p => p.id === id)?.name ?? id
-      // 失效插件列表查询：dsh-plugins-updated 事件在停服务重启场景下可能丢失
-      // （插件操作会停止运行中的服务），必须显式重拉以确保列表落盘后刷新。
-      void queryClient.invalidateQueries({ queryKey: queryKeys.plugins })
-      toast(t('plugins.updated_toast', { name }), {})
-    },
-    onError: (err, id) => {
-      const name = plugins.find(p => p.id === id)?.name ?? id
-      console.error('[ConfigPlugin] upgrade failed:', err)
-      // 被拦下不是「升级失败」：要么是核心不兼容、要么是发布保护期，重跑多少次都一样。
-      // 给出可操作的出路（授权精确版本后重试），而不是一句没有出路的失败。
-      const refusal = parseBlockedRefusal(String(err))
-      if (refusal) {
-        onBlocked(refusal, name, () => onUpgrade(id))
-        return
-      }
-      toast(t('plugins.upgrade_failed', { name }), {})
-    },
-  })
-  const remove = useMutation({
-    mutationFn: (id: string) => invoke<void>('remove_dsh_plugin', { id }),
-    onSuccess: (_data, id) => {
-      const name = plugins.find(p => p.id === id)?.name ?? id
-      // 同上：卸载成功后显式重拉插件列表，避免事件推送丢失导致列表未更新。
-      void queryClient.invalidateQueries({ queryKey: queryKeys.plugins })
-      toast(t('plugins.removed_toast', { name }), {})
-    },
-    onError: (err, id) => {
-      const name = plugins.find(p => p.id === id)?.name ?? id
-      console.error('[ConfigPlugin] remove failed:', err)
-      // 卸载同样要重写 lockfile 并复核整份档案，因此同样可能被核心不兼容或发布保护期
-      // 拦下：一样给出授权后重跑的出路，而不是一句失败。
-      const refusal = parseBlockedRefusal(String(err))
-      if (refusal) {
-        onBlocked(refusal, name, () => runRemove(id))
-        return
-      }
-      toast(t('plugins.remove_failed', { name }), {})
-    },
-  })
-  const disable = useMutation({
-    mutationFn: (id: string) => invoke<void>('disable_dsh_plugin', { id }),
-    onSuccess: (_data, id) => {
-      const name = plugins.find(p => p.id === id)?.name ?? id
-      void queryClient.invalidateQueries({ queryKey: queryKeys.plugins })
-      toast(t('plugins.disable_toast', { name }), {})
-    },
-    onError: (err, id) => {
-      const name = plugins.find(p => p.id === id)?.name ?? id
-      console.error('[ConfigPlugin] disable failed:', err)
-      toast(t('plugins.disable_failed', { name }), {})
-    },
-  })
-  const enable = useMutation({
-    mutationFn: (args: { id: string, clearConfigOverride: boolean }) =>
-      invoke<void>('enable_dsh_plugin', { id: args.id, clearConfigOverride: args.clearConfigOverride }),
-    onSuccess: (_data, args) => {
-      const name = plugins.find(p => p.id === args.id)?.name ?? args.id
-      void queryClient.invalidateQueries({ queryKey: queryKeys.plugins })
-      toast(t('plugins.enable_toast', { name }), {})
-    },
-    onError: (err, args) => {
-      const name = plugins.find(p => p.id === args.id)?.name ?? args.id
-      console.error('[ConfigPlugin] enable failed:', err)
-      toast(t('plugins.enable_failed', { name }), {})
-    },
-  })
   const snapshot = useMutation({
     mutationFn: (id: string) => invoke<void>('snapshot_plugin', { id }),
     onSuccess: (_data, id) => {
@@ -250,7 +88,6 @@ export function ConfigPlugin() {
   const restore = useMutation({
     mutationFn: (id: string) => invoke<void>('restore_plugin', { id }),
     onSuccess: (_data, _id) => {
-      // 还原后快照仍在（覆盖式不删快照），插件版本回到快照态：重拉列表。
       void queryClient.invalidateQueries({ queryKey: queryKeys.plugins })
     },
     onError: (err, id) => {
@@ -273,22 +110,27 @@ export function ConfigPlugin() {
     },
   })
 
-  async function onUpgrade(id: string) {
+  /**
+   * 管理器动作只等待组结算：授权等待期间的横幅与结果 Toast 都由管理器弹出，
+   * 面板仅负责行内 busy 与「同一次点击不重复派发」。
+   */
+  async function runAction(id: string, action: 'update' | 'remove' | 'disable' | 'enable', run: () => Promise<unknown>) {
     if (busy)
       return
-    setBusy({ id, action: 'update' })
+    setBusy({ id, action })
     try {
-      await upgrade.mutateAsync(id)
-      // 只有升级成功才拉起服务：失败时档案/依赖仍是待处理状态（不兼容、发布保护期、
-      // 网络…），此时重启只会再失败一次（重启 > 报错），把真正的失败原因淹没掉。
-      void store.harness.restart()
+      await run()
     }
     catch (e) {
-      silence(e, 'plugin upgrade: error already shown by mutation onError')
+      silence(e, 'plugin action: error already reported by the manager')
     }
     finally {
       setBusy(null)
     }
+  }
+
+  async function onUpgrade(id: string) {
+    await runAction(id, 'update', () => manager.upgrade(id))
   }
 
   async function onRemove(id: string, name: string) {
@@ -310,50 +152,45 @@ export function ConfigPlugin() {
       silence(e, 'plugin remove: dialog cancelled')
       return
     }
-    await runRemove(id)
+    await runAction(id, 'remove', () => manager.uninstall(id))
   }
 
-  /** 已确认过的卸载（发布时长豁免后重跑时不再追问一次「确认卸载」）。 */
-  async function runRemove(id: string) {
-    if (busy)
+  /**
+   * 新增安装入口：先 `manager.search` 预检兼容性（只读，不改 Profile），
+   * 命中明确不兼容的 spec 时中止并提示，其余交给 `manager.install` 走统一队列。
+   */
+  async function onInstall() {
+    const refs = installRef.trim().split(/[\s,]+/).filter(Boolean)
+    if (refs.length === 0 || installing)
       return
-    setBusy({ id, action: 'remove' })
+    setInstalling(true)
     try {
-      await remove.mutateAsync(id)
-      // 同升级：只有成功才拉起服务（失败时档案仍是待处理状态，重启只会报错一次）
-      void store.harness.restart()
+      const results = await manager.search(refs)
+      setSearchResults(results)
+      const incompatibles = results.filter(item => item.compatible === false)
+      if (incompatibles.length > 0) {
+        const names = incompatibles.map(item => item.name ?? item.spec).join(', ')
+        toast(t('plugins.search_incompatible', { names }), { variant: 'danger' })
+        return
+      }
+      setInstallRef('')
+      await manager.install(refs)
     }
     catch (e) {
-      silence(e, 'plugin remove: error already shown by mutation onError')
+      silence(e, 'plugin install: error already reported by the manager')
     }
     finally {
-      setBusy(null)
+      setInstalling(false)
     }
   }
 
   async function onDisable(id: string) {
-    if (busy)
-      return
-    // 禁用是可逆操作（保留包体，启用即可恢复），无需确认对话框。
-    setBusy({ id, action: 'disable' })
-    try {
-      await disable.mutateAsync(id)
-      // 只有成功才拉起服务，使新的 bundles 列表生效（失败时什么都没变，重启没有意义）
-      void store.harness.restart()
-    }
-    catch (e) {
-      silence(e, 'plugin disable: error already shown by mutation onError')
-    }
-    finally {
-      setBusy(null)
-    }
+    await runAction(id, 'disable', () => manager.disable(id))
   }
 
   async function onEnable(id: string, clearConfigOverride = false) {
     if (busy)
       return
-    // 配置覆盖禁用：启用会修改用户的 cordis.patch.yml（仅移除该插件的禁用覆盖，
-    // 其余配置条目保留），属于改写用户配置文件的操作，必须先明确确认。
     if (clearConfigOverride) {
       const name = plugins.find(p => p.id === id)?.name ?? id
       try {
@@ -373,24 +210,12 @@ export function ConfigPlugin() {
         return
       }
     }
-    setBusy({ id, action: 'enable' })
-    try {
-      await enable.mutateAsync({ id, clearConfigOverride })
-      // 同禁用：只有成功才拉起服务，使新的 bundles 列表生效
-      void store.harness.restart()
-    }
-    catch (e) {
-      silence(e, 'plugin enable: error already shown by mutation onError')
-    }
-    finally {
-      setBusy(null)
-    }
+    await runAction(id, 'enable', () => manager.enable(id, { clearConfigOverride }))
   }
 
   async function onSnapshot(id: string, name: string, hasSnapshot: boolean) {
     if (busy)
       return
-    // 已存在快照：覆盖式，先确认再覆盖（快照语义 = 覆盖当前状态）。
     if (hasSnapshot) {
       try {
         await openDialog({
@@ -496,7 +321,7 @@ export function ConfigPlugin() {
   }
 
   /** 插件行：可管理插件列表与「内置插件」折叠分组共用同一行结构 */
-  function renderPluginRow(plugin: DshPlugin) {
+  function renderPluginRow(plugin: Plugin) {
     return (
       <Item
         key={plugin.id}
@@ -566,8 +391,7 @@ export function ConfigPlugin() {
         )}
         right={(
           <>
-            {/* 升级入口仅在确有更新（updateAvailable）或插件异常（error，修复入口）时显示；
-                与文档 P1「对 dshmarket 点击升级」一致，且不会常驻——up-to-date 插件不显示升级按钮 */}
+            {/* 升级入口仅在确有更新（updateAvailable）或插件异常（error，修复入口）时显示 */}
             <If cond={plugin.updateAvailable || plugin.error != null}>
               <Chip
                 className={actionChip({ busy: !!busy })}
@@ -579,16 +403,16 @@ export function ConfigPlugin() {
                 <span className="flex items-center gap-1">
                   <If cond={busy?.id === plugin.id && busy.action === 'update'} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.upgrade')}
-                  <If cond={plugin.latestVersion != null && plugin.error == null}>
+                  <If cond={plugin.latest != null && plugin.error == null}>
                     <span className="font-mono text-[10px] opacity-80 max-w-[80px] truncate">
-                      {plugin.latestVersion && plugin.latestVersion.length >= 40 ? `${plugin.latestVersion.slice(0, 8)}…` : plugin.latestVersion}
+                      {plugin.latest && plugin.latest.length >= 40 ? `${plugin.latest.slice(0, 8)}…` : plugin.latest}
                     </span>
                   </If>
                 </span>
               </Chip>
             </If>
             {/* 启用入口：配置覆盖禁用（含内置插件）或桌面禁用清单 → 可启用。
-                配置覆盖禁用时点击会先弹确认框，确认后后端才移除该覆盖 */}
+                配置覆盖禁用时点击会先弹确认框，确认后管理器透传 clearConfigOverride */}
             <If cond={plugin.patchDisabled || (!plugin.internal && plugin.disabled)}>
               <Chip
                 className={actionChip({ busy: !!busy })}
@@ -702,7 +526,7 @@ export function ConfigPlugin() {
                 variant="primary"
                 className="rounded-md"
                 onPress={store.preinstall.open}
-                isDisabled={preinstall.installing}
+                isDisabled={store.preinstall.installing}
               >
                 {t('preinstall.open_preset')}
               </Button>
@@ -715,9 +539,62 @@ export function ConfigPlugin() {
         description={t('plugins.panel_tooltip')}
       />
 
-      {/* 加载 / 失败 / 空态 */}
-      <Panel.Loadable loading={loading} error={error}>
+      <Panel.Loadable loading={manager.loading} error={manager.error}>
         <div className="flex flex-col gap-4">
+          {/* 安装入口：接受 npm spec（可逗号/空白分隔多个），先经管理器只读预检再入队 */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <Input
+                variant="secondary"
+                className="h-8 flex-1 rounded-md font-mono text-xs"
+                placeholder={t('plugins.install_placeholder')}
+                aria-label={t('plugins.install_placeholder')}
+                value={installRef}
+                onChange={e => setInstallRef(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter')
+                    void onInstall()
+                }}
+              />
+              <Button
+                size="sm"
+                variant="tertiary"
+                className="h-8 shrink-0 rounded-md"
+                isDisabled={installRef.trim() === ''}
+                onPress={() => void onInstall()}
+              >
+                <span className="flex items-center gap-1">
+                  <If cond={installing} then={<Spinner size="sm" color="current" />} />
+                  {t('plugins.install')}
+                </span>
+              </Button>
+            </div>
+            <If cond={searchResults != null}>
+              <div className="flex flex-col gap-1 px-1">
+                {(searchResults ?? []).map(result => (
+                  <div key={result.spec} className="flex items-center gap-2 text-[11px] text-muted">
+                    <span className="min-w-0 truncate font-mono">{result.spec}</span>
+                    <If cond={result.version != null}>
+                      <code className="shrink-0 rounded bg-default px-1.5 py-0.5 font-mono text-[10px]">
+                        {result.version}
+                      </code>
+                    </If>
+                    <If cond={result.compatible === false}>
+                      <Chip size="sm" variant="soft" color="danger" className="shrink-0">
+                        {t('plugins.search_incompatible_badge')}
+                      </Chip>
+                    </If>
+                    <If cond={result.problem != null}>
+                      <span className="shrink-0 text-danger">
+                        {t(searchProblemKeys[result.problem ?? 'unknown'])}
+                      </span>
+                    </If>
+                  </div>
+                ))}
+              </div>
+            </If>
+          </div>
+
           <If cond={managedPlugins.length > 0} else={<Empty>{t('plugins.empty')}</Empty>}>
             {managedPlugins.map(plugin => renderPluginRow(plugin))}
           </If>

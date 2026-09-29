@@ -9,12 +9,17 @@ describe('plugin disable/enable frontend contract', () => {
     expect(source).toContain('onEnable')
   })
 
-  it('config-plugin.tsx invokes the disable/enable commands directly', () => {
-    const source = readFileSync(new URL('../src/ui/config/plugin.tsx', import.meta.url), 'utf8')
+  it('config-plugin.tsx routes disable/enable through the plugin manager', () => {
+    const panel = readFileSync(new URL('../src/ui/config/plugin.tsx', import.meta.url), 'utf8')
+    const manager = readFileSync(new URL('../src/store/modules/plugins/store.ts', import.meta.url), 'utf8')
 
-    // 面板直接持有 enable/disable mutation（与 upgrade/remove 同一层级）
-    expect(source).toContain('disable_dsh_plugin')
-    expect(source).toContain('enable_dsh_plugin')
+    expect(panel).toContain('manager.disable')
+    expect(panel).toContain('manager.enable')
+    // 宿主命令归管理器统一派发，面板不得再各自持有 mutation
+    expect(panel).not.toContain('disable_dsh_plugin')
+    expect(panel).not.toContain('enable_dsh_plugin')
+    expect(manager).toContain('disable_dsh_plugin')
+    expect(manager).toContain('enable_dsh_plugin')
   })
 
   it('config-plugin.tsx renders a Disabled badge via plugins.disabled_badge', () => {
@@ -40,12 +45,18 @@ describe('plugin disable/enable frontend contract', () => {
     expect(onDisableMatch![0]).not.toContain('openDialog')
   })
 
-  it('config-plugin.tsx owns the plugin list query and update probe', () => {
-    const source = readFileSync(new URL('../src/ui/config/plugin.tsx', import.meta.url), 'utf8')
+  it('the plugin manager owns the single plugin list query and update probe', () => {
+    const hook = readFileSync(new URL('../src/hooks/use-plugins-manager.ts', import.meta.url), 'utf8')
+    const store = readFileSync(new URL('../src/store/modules/plugins/store.ts', import.meta.url), 'utf8')
+    const panel = readFileSync(new URL('../src/ui/config/plugin.tsx', import.meta.url), 'utf8')
 
-    expect(source).toContain('get_dsh_plugins')
-    expect(source).toContain('refresh_plugin_updates')
-    expect(source).toContain('queryKeys.plugins')
+    expect(hook).toContain('get_dsh_plugins')
+    expect(hook).toContain('queryKeys.plugins')
+    expect(store).toContain('refresh_plugin_updates')
+    // 面板只消费 manager.installed，不再自行查询（消除重复查询）
+    expect(panel).not.toContain('get_dsh_plugins')
+    expect(panel).not.toContain('refresh_plugin_updates')
+    expect(panel).toContain('manager.installed')
   })
 
   it('en-US.json contains all 7 disable/enable i18n keys', () => {

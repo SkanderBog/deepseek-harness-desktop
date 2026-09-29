@@ -14,29 +14,29 @@ use super::errors;
 use super::installed_name;
 use super::load_presets;
 use super::profile_dir;
-use super::PreinstallPluginInfo;
+use super::InstallTarget;
 use super::{new_process_owner, run_plugin_process, PreinstallLogPayload, PREINSTALL_LOG_EVENT};
 
 pub(super) fn verify_installed_products(
     app_handle: &AppHandle,
-    ids: &[String],
-    preset_map: &HashMap<&str, &PreinstallPluginInfo>,
+    targets: &[InstallTarget],
     command_output: &str,
 ) -> Result<(), String> {
     let node_modules = profile_dir(app_handle).join("node_modules");
     let mut missing = Vec::new();
-    for id in ids {
-        let Some(preset) = preset_map.get(id.as_str()) else {
+    for target in targets {
+        // 无法静态得知包名的 spec（git / 任意 URL）跳过核验：把整条 spec 当目录名会
+        // 制造必然失败的误报（见 [`super::spec::package_name_of_spec`]）。
+        let Some(name) = target.name.as_deref() else {
             continue;
         };
-        let name = installed_name(preset);
         let manifest = node_modules.join(name).join("package.json");
         if manifest.is_file() {
-            if let Err(e) = errors::clear(app_handle, id) {
-                log::warn!("failed to clear plugin error for {id}: {e}");
+            if let Err(e) = errors::clear(app_handle, &target.id) {
+                log::warn!("failed to clear plugin error for {}: {e}", target.id);
             }
         } else {
-            missing.push((id.clone(), manifest));
+            missing.push((target.id.clone(), manifest));
         }
     }
     if missing.is_empty() {
