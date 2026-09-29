@@ -3,8 +3,8 @@
 ## deepseek-ai/deepseek-harness
 
 - Repository: <https://github.com/deepseek-ai/deepseek-harness>
-- Version: `dsh-v0.2.0-rc.1`
-- Revision: `4878cdabd87d4041bdaff61d04c966883b9fd07a`
+- Version: `dsh-v0.2.0-rc.2`
+- Revision: `639ed015397290b3745d163aafe02ffee4aa3f84`
 - Source: `source/deepseek-harness`
 - License: MIT — Copyright (c) 2026 DeepSeek
 
@@ -22,7 +22,7 @@ Not derived:
 
 Note:
 
-- The account-stream carrier gate and the sidebar/DOM contracts mirrored here survived `0.1.7-alpha.1` → `0.2.0-rc.1` unchanged; `dshDesktop` still reports `protocolVersion: 1` and only gained the optional `deviceInfo` member.
+- The account-stream carrier gate and the sidebar/DOM contracts mirrored here survived `0.2.0-rc.1` → `0.2.0-rc.2` unchanged; `dshDesktop` still reports `protocolVersion: 1` with the optional `deviceInfo` member, and `DESKTOP_HOST_PROTOCOL_VERSION` stays `4`.
 
 ## License
 

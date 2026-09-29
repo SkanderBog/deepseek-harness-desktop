@@ -161,12 +161,12 @@ git diff --check
 | `dsh-tauri-extension` | `qinyre/dsh-plugin-capabilities` | `source/dsh-plugin-capabilities` | `v0.3.11` (`52e3f66`) | `v0.3.11` | 暂无待评估项（该上游的 Market 模块确定不移植；扩展面板的市场页改为直接消费 `dshmarket` 的 `market` 服务） | [日志](../packages/dsh-tauri-extension/docs/sync-log.md) |
 | `dsh-tauri-extension`（市场标签页） | `dsh-market/dsh-market` | `source/dsh-market` | `v1.47.0-6` (`53f793e`) | `v1.47.0-6` (`53f793e`) | 非代码移植：消费其 `ctx.provide('market')` 服务。`render()` 尚未发版，故先以 `source` 子模块承载；待上游发版后改为常规 npm 依赖并移除子模块 | - |
 | `dsh-tauri-scheduler` | `MichengAI/dsh-automation` | `source/dsh-automation` | `ecfe1e6` (+`c426c3d`) | `v0.1.51` (`ecfe1e6`) | `v0.1.33`–`v0.1.42` 全部不采纳（2026-09-16）；`v0.1.43`–`v0.1.51` 已评估并采纳 3 项（`116c953`+`a0c4cc6` 增量摘要、`0bde1a4` 插件卸载记 `cancelled`），其余不采纳/归档（2026-09-28）；无待评估项 | [日志](https://www.google.com/search?q=../packages/dsh-tauri-scheduler/docs/sync-log.md) |
-| `dsh-tauri`（内核载体契约） | `deepseek-ai/deepseek-harness` | `source/deepseek-harness` | `dsh-v0.2.0-rc.1` (`4878cdabd87`) | `dsh-v0.2.0-rc.1` (`4878cdabd87`) | 区间 261 commits：宿主契约（鉴权闸门 / index 注入行 / `dshDesktop` 标记 / `__DSH_BOOT__`）逐字节未变，采纳基线推进 + `dshDesktop.deviceInfo`（仅 `navigator.userAgent`）；Windows 标题栏/全屏 DOM 契约、三个新可选包、Electron 专属适配归档不实施；无待评估项 | [日志](../packages/dsh-tauri/docs/sync-log.md) |
+| `dsh-tauri`（内核载体契约） | `deepseek-ai/deepseek-harness` | `source/deepseek-harness` | `dsh-v0.2.0-rc.2` (`639ed015397`) | `dsh-v0.2.0-rc.2` (`639ed015397`) | 区间 187 commits（140 非 merge，1022 文件）：宿主契约（鉴权闸门 / index 注入行 / `dshDesktop` 标记 / `__DSH_BOOT__`）10 份源文件 blob SHA 逐字节相等，仅基线推进；`FALLBACK_DSH_TAG` 保留最后已打包的 rc.1 tag（打包仓库未产出 rc.2 前不杜撰 buildId）；Windows 标题栏/全屏 DOM 契约、新可选包、Electron 专属适配、上游 pi-ai 0.87.1 升级归档不实施；无待评估项 | [日志](../packages/dsh-tauri/docs/sync-log.md) |
 
 ### 5.2 已知配置与异常记录
 
 * **子模块绑定**：`source/*` 下 8 个参考仓库均已引入 `.gitmodules`。其中 `source/dsh-market` 是 2026-09 新增的**临时**参考仓库：上游 `render()` API 只存在于 main 分支，尚未发版，故先以源码子模块承载供 GitHub 源安装测试；上游发版后应改为 npm 依赖并移除该子模块。当前 gitlink 配置已暂存，待提交。
-* **内核参考仓库**：`source/deepseek-harness`（`deepseek-ai/deepseek-harness`，基线 `4878cdabd87` = `dsh-v0.2.0-rc.1`）是**只读对照基线**，为 Issue #496（非 Electron 壳可复用的无端口嵌入式宿主）提供契约比对依据。按 §1.2，DSH 内核**排除在本同步流程之外**：此子模块不参与择优采纳，只用于核对宿主契约与登记核心版本基线（登记见 §5.1 末行，明细见 `packages/dsh-tauri/docs/sync-log.md`）。桌面端载体鉴权适配的实现见 `packages/dsh-tauri/src/host/service/gate.ts`（`DSH_TAURI_EMBEDDED=1` 时覆写两道鉴权闸门）。
+* **内核参考仓库**：`source/deepseek-harness`（`deepseek-ai/deepseek-harness`，基线 `639ed015397` = `dsh-v0.2.0-rc.2`）是**只读对照基线**，为 Issue #496（非 Electron 壳可复用的无端口嵌入式宿主）提供契约比对依据。按 §1.2，DSH 内核**排除在本同步流程之外**：此子模块不参与择优采纳，只用于核对宿主契约与登记核心版本基线（登记见 §5.1 末行，明细见 `packages/dsh-tauri/docs/sync-log.md`）。桌面端载体鉴权适配的实现见 `packages/dsh-tauri/src/host/service/gate.ts`（`DSH_TAURI_EMBEDDED=1` 时覆写两道鉴权闸门）。
 * **路径纠偏记录**：
 * `source/dsh-automation` 已纠正 gitlink 配置，子模块 HEAD 指向 `f1bc91a`。
 * `source/dsh-automation` gitlink 为 `f1bc91a`，但工作区 checkout 停在 `e75499e`（`git submodule status` 前缀 `+`，

@@ -3,10 +3,10 @@
 ## deepseek-ai/deepseek-harness
 
 - Repository: <https://github.com/deepseek-ai/deepseek-harness>
-- Version: `dsh-v0.2.0-rc.1`
-- Revision: `4878cdabd87d4041bdaff61d04c966883b9fd07a`
+- Version: `dsh-v0.2.0-rc.2`
+- Revision: `639ed015397290b3745d163aafe02ffee4aa3f84`
 - Source: `source/deepseek-harness`
-- Catalog pin: `dsh:` → `0.2.0-rc.1` (`pnpm-workspace.yaml`)
+- Catalog pin: `dsh:` → `0.2.0-rc.2` (`pnpm-workspace.yaml`)
 - License: MIT — Copyright (c) 2026 DeepSeek
 - Not copied: the native-style context menu is this repo's own feature; where an action exists officially it is delegated to the official implementation first, with the plugin's own path as fallback.
 
