@@ -26,7 +26,25 @@ vi.mock('dsh-tauri/client', () => ({
     },
 }))
 
+interface MatchMediaHost {
+  window?: { matchMedia?: (query: string) => { matches: boolean } }
+}
+
+const host = globalThis as unknown as MatchMediaHost
+const originalWindow = host.window
+
+/** 手机端才有 `(hover: none)` + `(any-pointer: coarse)`；其余查询一律不成立。 */
+function stubDevice(mobile: boolean): void {
+  host.window = {
+    ...host.window,
+    matchMedia: (query: string) => ({
+      matches: mobile && (query === '(hover: none)' || query === '(any-pointer: coarse)'),
+    }),
+  }
+}
+
 afterEach(() => {
+  host.window = originalWindow
   mocks.settings.launcherAvailable = false
   mocks.settings.launcherShortcut = undefined
 })
@@ -72,6 +90,29 @@ describe('registerSettings launcher seat', () => {
 
     expect(registered).toContain('shell.overlay')
     expect(registered).toContain('sidebar.settings')
+  })
+
+  /** 手机端把 `sidebar.settings` 交还官方：自有侧栏与触发器都不许抢座位。 */
+  it('leaves every settings seat to the official dialog on mobile', () => {
+    stubDevice(true)
+
+    const { injected, registered } = activate()
+
+    expect(injected).toEqual([])
+    expect(registered).toEqual([])
+  })
+
+  /** 桌面端（含触屏笔记本）仍走自有侧栏，手机端判据不误伤。 */
+  it('keeps the own sidebar on a touchscreen desktop', () => {
+    stubDevice(false)
+
+    const { injected } = activate()
+
+    expect(injected.map(entry => entry.key)).toEqual([
+      'shell.overlay',
+      'sidebar.settings',
+      'settings.launcher',
+    ])
   })
 
   /** 官方账号菜单落在 `settings.launcher`：声明前必须退回自有触发器，声明后由官方条目渲染。 */

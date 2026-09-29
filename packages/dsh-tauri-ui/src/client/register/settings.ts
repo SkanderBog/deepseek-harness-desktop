@@ -12,6 +12,7 @@ import {
 import { store } from '../store'
 import { SettingsSidebar } from '../ui/settings-sidebar'
 import { SettingsTrigger } from '../ui/settings-trigger'
+import { detectMobileDevice } from './settings.utils'
 
 const SETTINGS_SHORTCUT_EFFECT = 'dsh-tauri-ui: settings launcher shortcut (Ctrl+, hint)'
 
@@ -22,6 +23,9 @@ export const registerSettings = defineRegister<ClientContext>((controller, ctx) 
     )
     return
   }
+
+  if (detectMobileDevice())
+    return
 
   controller.add(
     ctx.slots.inject(SETTINGS_SHELL_OVERLAY_SLOT, () =>
