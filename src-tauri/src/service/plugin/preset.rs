@@ -641,6 +641,22 @@ mod tests {
         }
     }
 
+    /// 回归：同代内的预发布核心（如 `0.2.1-rc.1`）不得把插件判成不兼容，进而不该触发
+    /// 退役；上一代遗留版本仍要退役重装。
+    #[test]
+    fn prerelease_core_in_same_generation_keeps_plugins() {
+        let mut entry = load_presets_for_test()
+            .into_iter()
+            .find(|p| p.id == "dshmarket")
+            .expect("dshmarket");
+        entry.version = Some(matrix(&[("^0.24.1", "^0.2.0-rc.1")]));
+        for core in ["0.2.0-rc.1", "0.2.0-rc.2", "0.2.0", "0.2.1-rc.1"] {
+            assert!(!entry.unsupported_on(Some(core)), "core={core}");
+            assert!(!entry.retire_on(Some(core), Some("0.24.5")), "core={core}");
+            assert!(entry.retire_on(Some(core), Some("0.23.0")), "core={core}");
+        }
+    }
+
     #[test]
     fn plugin_version_deserializes_as_optional_metadata_without_changing_spec() {
         for (field, expected) in [
@@ -687,7 +703,10 @@ mod tests {
         capped.version = Some(matrix(&[("^1.0.0", "^0.1.5-rc.1")]));
         assert!(!capped.unsupported_on(Some("0.1.5-rc.1")));
         assert!(!capped.unsupported_on(Some("0.1.6")));
-        assert!(capped.unsupported_on(Some("0.1.7-rc.1")));
+        // 预发布核心按数值区间判定：`0.1.7-rc.1` 落在 `^0.1.5-rc.1` 内，故仍兼容
+        assert!(!capped.unsupported_on(Some("0.1.7-rc.1")));
+        // 下界之下的预发布核心依旧不兼容
+        assert!(capped.unsupported_on(Some("0.1.4-rc.1")));
         assert!(capped.unsupported_on(Some("0.2.0")));
     }
 

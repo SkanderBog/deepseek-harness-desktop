@@ -95,9 +95,31 @@ pub struct VersionPair {
     pub dsh: String,
 }
 
+/// 区间是否命中给定版本——对齐内核安装校验的 `includePrerelease` 语义。
+///
+/// `semver` crate 对预发布版本另设门槛：必须存在比较符与本版本 major.minor.patch 相同且
+/// 自带 pre。于是 `^0.2.0-rc.1` 漏掉 `0.2.1-rc.1` 这类同代更高补丁号的预发布核心（内核
+/// 侧放行），核心一发 rc 就把插件误标成不兼容并触发 `retire_on` 退役。补一个对本版本恒真
+/// 的精确比较符即可绕开门槛，其余比较符的判定不受影响。
+fn matches_including_prerelease(req: &semver::VersionReq, version: &semver::Version) -> bool {
+    let matched = req.matches(version);
+    if matched || version.pre.is_empty() {
+        return matched;
+    }
+    let mut bridged = req.clone();
+    bridged.comparators.push(semver::Comparator {
+        op: semver::Op::Exact,
+        major: version.major,
+        minor: Some(version.minor),
+        patch: Some(version.patch),
+        pre: version.pre.clone(),
+    });
+    bridged.matches(version)
+}
+
 /// 区间是否命中给定版本（区间无法解析时视为不命中）
 fn req_matches(req: &str, version: &semver::Version) -> bool {
-    parse_req(req).is_some_and(|req| req.matches(version))
+    parse_req(req).is_some_and(|req| matches_including_prerelease(&req, version))
 }
 
 /// 解析区间声明，兼容 npm 风格的空格分隔多比较符。
@@ -163,7 +185,7 @@ impl PluginVersion {
                 return false;
             };
             declared = true;
-            if req.matches(&core) {
+            if matches_including_prerelease(&req, &core) {
                 return false;
             }
         }
@@ -719,6 +741,52 @@ mod tests {
         assert!(matrix.matches_any_declared(Some("0.21.3")));
         assert!(!matrix.matches_any_declared(Some("0.25.0")));
         assert!(!matrix.matches_any_declared(None));
+    }
+
+    /// 回归：预发布核心按**数值区间**判定，与内核安装校验
+    /// （`semver.satisfies(runtime, req, { includePrerelease: true })`）一致。
+    ///
+    /// `^0.2.0-rc.1` 覆盖整个 0.2.x，包括 `0.2.1-rc.1` 这类更高补丁号的预发布核心；
+    /// 旧实现按 `semver` crate 的预发布门槛判定，会把刚发的 rc 判成「不兼容当前核心」，
+    /// 并把已装插件退役。
+    #[test]
+    fn prerelease_core_is_judged_by_numeric_range() {
+        let matrix = PluginVersion::Matrix(vec![
+            VersionPair {
+                version: "^0.19.1".to_string(),
+                dsh: "^0.1.5-rc.1".to_string(),
+            },
+            VersionPair {
+                version: "^0.21.1".to_string(),
+                dsh: "^0.1.7-rc.1".to_string(),
+            },
+            VersionPair {
+                version: "^0.24.1".to_string(),
+                dsh: "^0.2.0-rc.1".to_string(),
+            },
+        ]);
+        for (core, expected) in [
+            ("0.2.0-rc.1", Some("^0.24.1")),
+            ("0.2.0-rc.2", Some("^0.24.1")),
+            ("0.2.0", Some("^0.24.1")),
+            ("0.2.1-rc.1", Some("^0.24.1")),
+            ("0.2.9-beta.3", Some("^0.24.1")),
+            ("0.1.5-rc.3", Some("^0.19.1")),
+            ("0.1.6-rc.1", Some("^0.19.1")),
+            ("0.1.7-rc.3", Some("^0.21.1")),
+        ] {
+            assert_eq!(
+                matrix.plugin_req_for_core(Some(core)),
+                expected,
+                "core={core}"
+            );
+            assert!(!matrix.unsupported_on(Some(core)), "core={core}");
+        }
+        // 低于下界 / 跨代边界仍判不兼容：门槛放宽不能把真正的越界版本放进来
+        for core in ["0.1.5-alpha.2", "0.2.0-alpha.1", "0.3.0-rc.1", "0.3.0"] {
+            assert_eq!(matrix.plugin_req_for_core(Some(core)), None, "core={core}");
+            assert!(matrix.unsupported_on(Some(core)), "core={core}");
+        }
     }
 
     /// 回归 issue：已装版本**新于**声明区间时不算过期。
