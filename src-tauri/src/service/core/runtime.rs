@@ -20,10 +20,20 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+use std::os::windows::fs::FileTypeExt;
+
 use tauri::AppHandle;
 
 use super::source::CoreSource;
 
+/// 核心自有包所在的 scope。
+const CORE_PACKAGE_SCOPE: &str = "@deepseek-ai";
+/// 核心家族自身的包名前缀：`dsh` 与 `dsh-*`。
+///
+/// 同 scope 下的 cordis、cosmokit、schemastery 等共享框架库是插件可以合法依赖并
+/// 锁定版本的对象（如 billion-context 锁 schemastery 3.18.4），不能按整个 scope 删除。
+const CORE_PACKAGE_PREFIX: &str = "dsh";
 const NATIVE_REPAIR_TIMEOUT: Duration = Duration::from_secs(120);
 /// 原生模块重建（node-gyp 编译）可能远超安装耗时，单独放宽上限
 const NATIVE_REBUILD_TIMEOUT: Duration = Duration::from_secs(300);
@@ -226,6 +236,12 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
 
     link_required_plugins(app_handle, &core_root)?;
 
+    // 档案里的核心包残留必须在 dsh 启动前清掉：Node 从 profile 目录向上查找裸包时
+    // 会先命中它，核心自带的正确版本反而被跳过。清理失败不影响后续原生探测。
+    if let Err(e) = prune_stale_core_packages(app_handle, &core_root) {
+        log::warn!("{e}");
+    }
+
     // 已核验过的运行时直接放行：跳过平台/架构探测与原生模块探测两个 node 子进程
     // （issue #766）。指纹失配、戳缺失或不可解析时一律走原探测路径；指纹本身不完整
     // （`None`）时既不比对也不落盘。
@@ -345,6 +361,106 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
         &node,
         &core_root,
     ))
+}
+
+/// 清除档案里被旧版 dsh 投影进来、版本又与当前核心不一致的核心包。
+///
+/// 既有清理（上游 `removeLinkProjections` 与桌面端 `remove_legacy_profile_module_fallback`）
+/// 都只认符号链接、且要求 `.dsh-module-fallback` 源目录仍然存在；用户「无视风险切换」
+/// 升级核心时档案不重建，残留因此在 Node 的逐级查找里长期抢先命中，症状与病因脱钩。
+fn prune_stale_core_packages(app_handle: &AppHandle, core_root: &Path) -> Result<(), String> {
+    let profile = crate::service::plugin::profile_dir(app_handle);
+    let declared = crate::service::plugin::list_installed(app_handle);
+    prune_stale_core_entries(
+        &profile.join("node_modules"),
+        &core_root.join("node_modules"),
+        &declared,
+    )
+}
+
+fn prune_stale_core_entries(
+    profile_node_modules: &Path,
+    anchor_node_modules: &Path,
+    declared: &HashSet<String>,
+) -> Result<(), String> {
+    let scope = profile_node_modules.join(CORE_PACKAGE_SCOPE);
+    let entries = match std::fs::read_dir(&scope) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(format!(
+                "CORE_PLUGIN_STALE_CORE_SCAN_FAILED: {}: {e}",
+                scope.display()
+            ))
+        }
+    };
+
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            format!(
+                "CORE_PLUGIN_STALE_CORE_SCAN_FAILED: {}: {e}",
+                scope.display()
+            )
+        })?;
+        let name = format!(
+            "{CORE_PACKAGE_SCOPE}/{}",
+            entry.file_name().to_string_lossy()
+        );
+        if !is_safe_package_name(&name) || declared.contains(&name) {
+            continue;
+        }
+        if !is_core_family_package(&name) {
+            continue;
+        }
+        let path = entry.path();
+        let Some(profile_version) = read_package_version(&path.join("package.json")) else {
+            continue;
+        };
+        let Some(anchor_version) =
+            read_package_version(&anchor_node_modules.join(&name).join("package.json"))
+        else {
+            continue;
+        };
+        if profile_version == anchor_version {
+            continue;
+        }
+        if let Err(e) = remove_core_package_residue(&path) {
+            log::warn!("{e}");
+            continue;
+        }
+        log::info!(
+            "CORE_PLUGIN_STALE_CORE_PRUNED: {name} {profile_version} (profile) != {anchor_version} (anchor), removed"
+        );
+    }
+    Ok(())
+}
+
+fn remove_core_package_residue(path: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|e| {
+        format!(
+            "CORE_PLUGIN_STALE_CORE_REMOVE_FAILED: {}: {e}",
+            path.display()
+        )
+    })?;
+    let file_type = metadata.file_type();
+    #[cfg(windows)]
+    let is_link = file_type.is_symlink() || file_type.is_symlink_dir();
+    #[cfg(not(windows))]
+    let is_link = file_type.is_symlink();
+    if is_link {
+        return remove_link_only(path);
+    }
+    let result = if file_type.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    };
+    result.map_err(|e| {
+        format!(
+            "CORE_PLUGIN_STALE_CORE_REMOVE_FAILED: {}: {e}",
+            path.display()
+        )
+    })
 }
 
 /// 从活动 profile 与应用内置清单收集需要在核心根下解析的包，并逐个建立入口。
@@ -739,6 +855,23 @@ fn is_safe_package_name(name: &str) -> bool {
         && valid_package_component(parts[1])
 }
 
+/// 是否属于核心家族（`@deepseek-ai/dsh` 或 `@deepseek-ai/dsh-*`）。
+///
+/// `dshmarket` 这类第三方插件虽在同一 scope 下，但既不是核心自带包也不是要清理的
+/// 残留，必须排除；共享框架库（cordis、cosmokit、schemastery 等）同理由前缀天然排除。
+fn is_core_family_package(name: &str) -> bool {
+    let Some(package) = name
+        .strip_prefix(CORE_PACKAGE_SCOPE)
+        .and_then(|rest| rest.strip_prefix('/'))
+    else {
+        return false;
+    };
+    package == CORE_PACKAGE_PREFIX
+        || package
+            .strip_prefix(CORE_PACKAGE_PREFIX)
+            .is_some_and(|suffix| suffix.starts_with('-'))
+}
+
 fn valid_package_component(value: &str) -> bool {
     !value.is_empty()
         && value != "."
@@ -765,6 +898,15 @@ fn read_package_name(path: &Path) -> Result<Option<String>, String> {
         .get("name")
         .and_then(|value| value.as_str())
         .map(str::to_owned))
+}
+
+fn read_package_version(path: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    value
+        .get("version")
+        .and_then(|value| value.as_str())
+        .map(str::to_owned)
 }
 
 /// 结论戳文件路径：放在依赖根下。清空依赖目录（等价于重新装配）会一并清掉它。
@@ -1753,5 +1895,149 @@ mod tests {
         assert!(diagnostic.contains("fs-ext"));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 档案里未被声明、且版本与安装锚点不一致的核心包必须被清掉——这正是
+    /// 「未能保存设置，请重试。」的成因（旧世代 dsh-settings 抢在核心之前被解析）。
+    #[test]
+    fn stale_undeclared_core_package_is_pruned() {
+        let root = std::env::temp_dir().join(format!("dsh-stale-core-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let profile_modules = root.join("profiles/tauri/node_modules");
+        let anchor_modules = root.join("dependencies/dsh/node_modules");
+
+        write_package_version(&profile_modules, "dsh-settings", "0.1.5-rc.2");
+        write_package_version(&anchor_modules, "dsh-settings", "0.1.7-rc.2");
+
+        prune_stale_core_entries(&profile_modules, &anchor_modules, &HashSet::new()).unwrap();
+
+        assert!(
+            !profile_modules
+                .join("@deepseek-ai/dsh-settings/package.json")
+                .exists(),
+            "mismatched undeclared core package must be removed from the profile"
+        );
+        assert!(
+            anchor_modules
+                .join("@deepseek-ai/dsh-settings/package.json")
+                .is_file(),
+            "the anchor copy must never be touched"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 版本与锚点一致的核心包是 pnpm hoisted 平铺的合法传递依赖，必须原样保留；
+    /// 档案自己声明过的核心包同样不能动（哪怕是版本不一致）。
+    #[test]
+    fn matching_or_declared_core_packages_are_kept() {
+        let root = std::env::temp_dir().join(format!("dsh-stale-core-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let profile_modules = root.join("profiles/tauri/node_modules");
+        let anchor_modules = root.join("dependencies/dsh/node_modules");
+
+        write_package_version(&profile_modules, "dsh-settings", "0.1.7-rc.2");
+        write_package_version(&anchor_modules, "dsh-settings", "0.1.7-rc.2");
+        write_package_version(&profile_modules, "dsh-tools", "0.1.5-rc.2");
+        write_package_version(&anchor_modules, "dsh-tools", "0.1.7-rc.2");
+        // 非核心 scope 与无 package.json 的条目都不在判定范围内。
+        write_package_version(&root.join("other"), "dsh-settings", "0.1.5-rc.2");
+        std::fs::create_dir_all(profile_modules.join("@deepseek-ai/dsh-orphan")).unwrap();
+
+        let declared = HashSet::from(["@deepseek-ai/dsh-tools".to_string()]);
+        prune_stale_core_entries(&profile_modules, &anchor_modules, &declared).unwrap();
+
+        assert!(
+            profile_modules
+                .join("@deepseek-ai/dsh-settings/package.json")
+                .is_file(),
+            "version-matching core package must be kept"
+        );
+        assert!(
+            profile_modules
+                .join("@deepseek-ai/dsh-tools/package.json")
+                .is_file(),
+            "declared core package must be kept"
+        );
+        assert!(
+            profile_modules.join("@deepseek-ai/dsh-orphan").is_dir(),
+            "entry without a readable version must be left alone"
+        );
+        assert!(
+            root.join("other/@deepseek-ai/dsh-settings/package.json")
+                .is_file(),
+            "only the @deepseek-ai scope is inspected"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 同 scope 下的共享框架库（插件可合法锁版本）与第三方插件 `dshmarket` 都不能
+    /// 按「版本错配」误删，否则会直接弄坏插件。
+    #[test]
+    fn shared_framework_libraries_and_third_party_plugins_are_kept() {
+        let root = std::env::temp_dir().join(format!("dsh-stale-core-scope-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let profile_modules = root.join("profiles/tauri/node_modules");
+        let anchor_modules = root.join("dependencies/dsh/node_modules");
+
+        for name in ["schemastery", "cosmokit", "cordis", "dshmarket"] {
+            write_package_version(&profile_modules, name, "0.1.5-rc.2");
+            write_package_version(&anchor_modules, name, "0.1.7-rc.2");
+        }
+
+        prune_stale_core_entries(&profile_modules, &anchor_modules, &HashSet::new()).unwrap();
+
+        for name in ["schemastery", "cosmokit", "cordis", "dshmarket"] {
+            assert!(
+                profile_modules
+                    .join(format!("@deepseek-ai/{name}/package.json"))
+                    .is_file(),
+                "{name} is outside the core family and must be kept"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 符号链接形态（残留在 `.dsh-module-fallback` 已消失时正是这种）也必须能删掉，
+    /// 且只删入口、不动源目录。
+    #[cfg(unix)]
+    #[test]
+    fn stale_core_package_symlink_is_removed_without_touching_source() {
+        let root = std::env::temp_dir().join(format!("dsh-stale-core-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let profile_modules = root.join("profiles/tauri/node_modules");
+        let anchor_modules = root.join("dependencies/dsh/node_modules");
+        let source = root.join("fallback/@deepseek-ai/dsh-settings");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("package.json"), r#"{"version":"0.1.5-rc.2"}"#).unwrap();
+        std::fs::create_dir_all(profile_modules.join("@deepseek-ai")).unwrap();
+        std::os::unix::fs::symlink(&source, profile_modules.join("@deepseek-ai/dsh-settings"))
+            .unwrap();
+        write_package_version(&anchor_modules, "dsh-settings", "0.1.7-rc.2");
+
+        prune_stale_core_entries(&profile_modules, &anchor_modules, &HashSet::new()).unwrap();
+
+        assert!(
+            !profile_modules.join("@deepseek-ai/dsh-settings").exists(),
+            "stale link must be removed"
+        );
+        assert!(
+            source.join("package.json").is_file(),
+            "the link source must survive"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn write_package_version(modules: &Path, name: &str, version: &str) {
+        let dir = modules.join("@deepseek-ai").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("package.json"),
+            format!(r#"{{"name":"@deepseek-ai/{name}","version":"{version}"}}"#),
+        )
+        .unwrap();
     }
 }
