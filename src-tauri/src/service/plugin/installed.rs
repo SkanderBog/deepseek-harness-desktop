@@ -46,14 +46,18 @@ pub(crate) fn profile_dir(app_handle: &AppHandle) -> PathBuf {
 /// 供「插件是否已安装」的单点判定（[`is_installed`]）与安全模式的用户插件清除
 /// （[`super::safe`]）共用：后者需要的是全量清单，而非逐个 id 的探测。
 pub(crate) fn list_installed(app_handle: &AppHandle) -> HashSet<String> {
-    let manifest_path = profile_dir(app_handle).join("package.json");
-    let Ok(content) = std::fs::read_to_string(&manifest_path) else {
-        return HashSet::new();
-    };
+    declared_packages(app_handle).unwrap_or_default()
+}
 
-    let Ok(manifest) = serde_json::from_str::<ProfilePackageJson>(&content) else {
-        return HashSet::new();
-    };
+/// 档案清单声明的包名；清单缺失、不可读或结构不合法时返回 `None`。
+///
+/// 与 [`list_installed`] 的区别是区分「确实没有声明任何包」与「读不到声明」：
+/// 删除类操作必须把后者当未知状态处理，否则一次解析失败会让所有已声明的包
+/// 变成「未声明」，进而被误删。
+pub(crate) fn declared_packages(app_handle: &AppHandle) -> Option<HashSet<String>> {
+    let manifest_path = profile_dir(app_handle).join("package.json");
+    let content = std::fs::read_to_string(&manifest_path).ok()?;
+    let manifest = serde_json::from_str::<ProfilePackageJson>(&content).ok()?;
 
     let mut set: HashSet<String> = manifest.dependencies.into_keys().collect();
     if let Some(dsh) = manifest.dsh {
@@ -61,7 +65,7 @@ pub(crate) fn list_installed(app_handle: &AppHandle) -> HashSet<String> {
             set.extend(profile.bundles);
         }
     }
-    set
+    Some(set)
 }
 
 /// 插件是否仍被 profile 清单（`dependencies` / `dsh.profile.bundles`）引用。

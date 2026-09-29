@@ -370,7 +370,13 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
 /// 升级核心时档案不重建，残留因此在 Node 的逐级查找里长期抢先命中，症状与病因脱钩。
 fn prune_stale_core_packages(app_handle: &AppHandle, core_root: &Path) -> Result<(), String> {
     let profile = crate::service::plugin::profile_dir(app_handle);
-    let declared = crate::service::plugin::list_installed(app_handle);
+    let Some(declared) = crate::service::plugin::declared_packages(app_handle) else {
+        log::warn!(
+            "CORE_PLUGIN_STALE_CORE_DECLARED_UNKNOWN: {} is unreadable, skipping cleanup",
+            profile.display()
+        );
+        return Ok(());
+    };
     prune_stale_core_entries(
         &profile.join("node_modules"),
         &core_root.join("node_modules"),
@@ -378,12 +384,16 @@ fn prune_stale_core_packages(app_handle: &AppHandle, core_root: &Path) -> Result
     )
 }
 
+/// 逐个比对档案与锚点的同名核心包版本，清除版本错配且档案未声明的条目。
 fn prune_stale_core_entries(
     profile_node_modules: &Path,
     anchor_node_modules: &Path,
     declared: &HashSet<String>,
 ) -> Result<(), String> {
     let scope = profile_node_modules.join(CORE_PACKAGE_SCOPE);
+    let Some(scope_root) = containment_root(&scope, profile_node_modules) else {
+        return Ok(());
+    };
     let entries = match std::fs::read_dir(&scope) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -413,6 +423,14 @@ fn prune_stale_core_entries(
             continue;
         }
         let path = entry.path();
+        if !entry_is_contained(&path, &scope_root) {
+            log::warn!(
+                "CORE_PLUGIN_STALE_CORE_OUT_OF_SCOPE: {} escapes {}, skipping",
+                path.display(),
+                scope.display()
+            );
+            continue;
+        }
         let Some(profile_version) = read_package_version(&path.join("package.json")) else {
             continue;
         };
@@ -433,6 +451,58 @@ fn prune_stale_core_entries(
         );
     }
     Ok(())
+}
+
+/// 解析 scope 的真实位置，并确认它既不是重定向入口、也仍留在档案的 `node_modules` 内。
+///
+/// 返回 `None` 时整轮跳过扫描：顺着被重定向的 scope 递归删除，删除目标就会落到
+/// 档案之外的目录上，这比「这一轮没清干净」严重得多。
+fn containment_root(scope: &Path, profile_node_modules: &Path) -> Option<PathBuf> {
+    let metadata = std::fs::symlink_metadata(scope).ok()?;
+    let file_type = metadata.file_type();
+    #[cfg(windows)]
+    let is_link = file_type.is_symlink() || file_type.is_symlink_dir();
+    #[cfg(not(windows))]
+    let is_link = file_type.is_symlink();
+    if is_link {
+        log::warn!(
+            "CORE_PLUGIN_STALE_CORE_SCOPE_REDIRECTED: {} is a link, skipping cleanup",
+            scope.display()
+        );
+        return None;
+    }
+
+    let root = std::fs::canonicalize(profile_node_modules).ok()?;
+    let real = std::fs::canonicalize(scope).ok()?;
+    if !real.starts_with(&root) {
+        log::warn!(
+            "CORE_PLUGIN_STALE_CORE_SCOPE_ESCAPED: {} resolves to {}, skipping cleanup",
+            scope.display(),
+            real.display()
+        );
+        return None;
+    }
+    Some(real)
+}
+
+/// 符号链接/junction 条目只需删除入口本身，不会触及目标；真实目录必须解析后仍在 scope 内。
+fn entry_is_contained(path: &Path, scope_root: &Path) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    let file_type = metadata.file_type();
+    #[cfg(windows)]
+    if file_type.is_symlink() || file_type.is_symlink_dir() {
+        return true;
+    }
+    #[cfg(not(windows))]
+    if file_type.is_symlink() {
+        return true;
+    }
+    match std::fs::canonicalize(path) {
+        Ok(real) => real.starts_with(scope_root),
+        Err(_) => false,
+    }
 }
 
 fn remove_core_package_residue(path: &Path) -> Result<(), String> {
@@ -2027,6 +2097,31 @@ mod tests {
         assert!(
             source.join("package.json").is_file(),
             "the link source must survive"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// scope 目录本身被重定向时，宁可整轮不清，也不能顺着链接删到档案之外。
+    #[cfg(unix)]
+    #[test]
+    fn redirected_scope_is_skipped_entirely() {
+        let root =
+            std::env::temp_dir().join(format!("dsh-stale-core-redirect-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let profile_modules = root.join("profiles/tauri/node_modules");
+        let anchor_modules = root.join("dependencies/dsh/node_modules");
+        let outside = root.join("outside/@deepseek-ai");
+        write_package_version(&root.join("outside"), "dsh-settings", "0.1.5-rc.2");
+        write_package_version(&anchor_modules, "dsh-settings", "0.1.7-rc.2");
+        std::fs::create_dir_all(&profile_modules).unwrap();
+        std::os::unix::fs::symlink(&outside, profile_modules.join("@deepseek-ai")).unwrap();
+
+        prune_stale_core_entries(&profile_modules, &anchor_modules, &HashSet::new()).unwrap();
+
+        assert!(
+            outside.join("dsh-settings/package.json").is_file(),
+            "a redirected scope must never be pruned through"
         );
 
         let _ = std::fs::remove_dir_all(&root);

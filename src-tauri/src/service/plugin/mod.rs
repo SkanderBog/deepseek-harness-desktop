@@ -58,7 +58,9 @@ pub use install::{
     allow_policy_versions, allow_version_exemptions, install, remove, update, IncompatibleVersion,
     PolicyBlockedVersion,
 };
-pub(crate) use installed::{ensure_profile_npmrc, installed_name, list_installed, profile_dir};
+pub(crate) use installed::{
+    declared_packages, ensure_profile_npmrc, installed_name, list_installed, profile_dir,
+};
 pub use installed::{list, PreinstallPlugin};
 pub(crate) use internal::cancel as cancel_internal_plugins;
 pub(crate) use internal::ensure as ensure_internal_plugins;
