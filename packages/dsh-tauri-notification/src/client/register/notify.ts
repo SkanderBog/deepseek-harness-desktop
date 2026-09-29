@@ -1,13 +1,14 @@
 import type { ClientContext } from 'dsh-tauri/client'
-import type { NotificationKind, PendingInteractionFace, SessionsFace, UiSessionFace } from '../types'
+import type { NativeNotificationAction, NotificationKind, PendingInteractionFace, SessionsFace, UiSessionFace } from '../types'
 import { defineRegister } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../../shared/constants'
-import { APPROVE_ACTION_ID } from '../constants'
+import { APPROVE_ACTION_ID, REJECT_ACTION_ID, REPLY_ACTION_ID } from '../constants'
 import { locale } from '../locales'
-import { approveInteraction, pendingDetail, pendingIdentity, pendingNotificationKind } from '../service/approval'
+import { answerQuestion, approveInteraction, pendingDetail, pendingIdentity, pendingNotificationKind, rejectInteraction } from '../service/approval'
 import { allowPendingNotification, allowTurnNotification, boundText, notificationTag } from '../service/decision'
 import { showNativeNotification } from '../service/native'
 import { createSoundPlayer } from '../service/sound'
+import { turnEndedByUser } from '../service/turn-end'
 import { notificationSettings } from '../store'
 
 /** 状态抖动合并窗口：running 可能连续翻转几次，等它稳定后再判断是否提醒。 */
@@ -70,7 +71,19 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
       console.warn(`[${PLUGIN_ID}] approve from notification failed: ${result.error ?? 'unknown'}`)
   }
 
-  const notify = (sessionId: string, kind: NotificationKind, title: string, body: string, requireInteraction: boolean, actions?: { id: string, title: string }[], onAction?: (action: string) => void): void => {
+  const rejectFromNotification = async (sessionId: string): Promise<void> => {
+    const result = await rejectInteraction(readUiSession(), sessionId)
+    if (!result.ok)
+      console.warn(`[${PLUGIN_ID}] reject from notification failed: ${result.error ?? 'unknown'}`)
+  }
+
+  const replyFromNotification = async (sessionId: string, text: string): Promise<void> => {
+    const result = await answerQuestion(readUiSession(), sessionId, text)
+    if (!result.ok)
+      console.warn(`[${PLUGIN_ID}] reply from notification failed: ${result.error ?? 'unknown'}`)
+  }
+
+  const notify = (sessionId: string, kind: NotificationKind, title: string, body: string, requireInteraction: boolean, actions?: NativeNotificationAction[], onAction?: (action: string, inputValue: string | null) => void): void => {
     const settings = notificationSettings.$state
     sound.play(settings.sound, settings.customSound)
     sequence += 1
@@ -113,7 +126,35 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
       const detail = pendingDetail(current)
       const fallback = kind === 'approval' ? locale.text('bodyApproval') : locale.text('bodyQuestion')
       const label = kind === 'approval' ? locale.text('labelApproval') : locale.text('labelQuestion')
-      const answerable = kind === 'approval' && current.answerable !== false && typeof current.answer === 'function'
+      const answerable = current.answerable !== false && typeof current.answer === 'function'
+      // 通知按钮一律要求交互仍可回答：答应不了的时候给按钮只会让用户白点。
+      // 授权给「批准 / 拒绝」，提问给一个带输入框的「回复」——系统通知渲染不了选项列表，
+      // 所以提问只能走自由文本，宿主原样回传输入内容。
+      let actions: NativeNotificationAction[] | undefined
+      if (answerable) {
+        actions = kind === 'approval'
+          ? [
+              { id: APPROVE_ACTION_ID, title: locale.text('approve') },
+              { id: REJECT_ACTION_ID, title: locale.text('reject') },
+            ]
+          : [{
+              id: REPLY_ACTION_ID,
+              title: locale.text('reply'),
+              input: true,
+              inputPlaceholder: locale.text('replyPlaceholder'),
+              inputButtonTitle: locale.text('reply'),
+            }]
+      }
+      const onAction = answerable
+        ? (action: string, inputValue: string | null): void => {
+            if (action === APPROVE_ACTION_ID)
+              void approveFromNotification(sessionId)
+            else if (action === REJECT_ACTION_ID)
+              void rejectFromNotification(sessionId)
+            else if (action === REPLY_ACTION_ID && inputValue)
+              void replyFromNotification(sessionId, inputValue)
+          }
+        : undefined
       notify(
         sessionId,
         kind,
@@ -122,13 +163,8 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
         sessionTitle(sessionId),
         `${label} · ${detail || fallback}`,
         true,
-        answerable ? [{ id: APPROVE_ACTION_ID, title: locale.text('approve') }] : undefined,
-        answerable
-          ? (action) => {
-              if (action === APPROVE_ACTION_ID)
-                void approveFromNotification(sessionId)
-            }
-          : undefined,
+        actions,
+        onAction,
       )
     })
   }
@@ -146,7 +182,13 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
       const currentSessionId = adapter.sessionList()?.current
       if (!allowTurnNotification({ mode, hostHidden, sessionId, currentSessionId }))
         return
-      notify(sessionId, 'turn', sessionTitle(sessionId), locale.text('labelTurn'), false)
+      // 「用户手动中断」和「跑完了」在客户端看到的是同一个 `running: false`：结束原因只在宿主
+      // 的 `turn/end` 里，所以弹之前问一次宿主；是中断就什么都不做（用户自己掐断的，不需要提醒）。
+      void (async () => {
+        if (await turnEndedByUser(sessionId))
+          return
+        notify(sessionId, 'turn', sessionTitle(sessionId), locale.text('labelTurn'), false)
+      })()
     })
   }
 

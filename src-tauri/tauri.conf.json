@@ -21,6 +21,11 @@
       "desktop": {
         "schemes": ["dsh"]
       }
+    },
+    "notifications": {
+      "windows": {
+        "toastActivatorClsid": "4FBB68DF-E119-4FBB-82D5-FA10F85B519B"
+      }
     }
   },
   "bundle": {

@@ -11,10 +11,13 @@ export interface NotificationExtra {
 
 /**
  * `onAction` 的事件体：`actionId` 为 `'tap'` 表示点了通知本体，否则是按钮的 action id。
- * `notification` 只在应用内（热）激活时存在——冷启动的按钮点击不携带 `extra`。
+ * `notification` 只在应用内（热）激活时存在；带输入框的按钮另外把用户输入放在
+ * `inputValue`（vender 补丁让按钮的 arguments 携带 JSON，冷启动也能带回 `extra`）。
  */
 export interface NotificationActionEvent {
   actionId?: string
+  /** 带输入框的按钮：用户在系统通知文本框里填的内容。 */
+  inputValue?: string | null
   notification?: { extra?: NotificationExtra } | null
 }
 

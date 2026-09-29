@@ -42,8 +42,8 @@ interface IframeBridgeMessage {
   tag?: string
   sessionId?: string | null
   requireInteraction?: boolean
-  /** 通知桥：插件声明的系统通知按钮（`{ action, title }`） */
-  actions?: { action: string, title: string }[]
+  /** 通知桥：插件声明的系统通知按钮（`{ action, title, … }`；`input` 系列字段透传给 Windows toast 的输入框） */
+  actions?: { action: string, title: string, input?: boolean, inputPlaceholder?: string, inputButtonTitle?: string }[]
   /** 插件异常桥 / 剪贴板图片桥：插件 id 或剪贴板请求 id */
   id?: string
   error?: string
@@ -77,6 +77,8 @@ export interface NotificationClickedPayload {
   tag?: string
   /** 命中的系统通知按钮 action id；点通知本体时为空。 */
   action?: string | null
+  /** 带输入框的按钮：用户在系统通知里填的文本。 */
+  inputValue?: string | null
 }
 
 /**
@@ -190,7 +192,7 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
 
   function handleNativeNotification(data: IframeBridgeMessage) {
     const actions = Array.isArray(data.actions) ? data.actions : []
-    const primary = actions[0]
+    const hasActions = actions.length > 0
     const title = data.title ?? ''
     const body = data.body ?? ''
 
@@ -198,17 +200,26 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       try {
         // 后端只在 `actionTypeId` 已注册时才往通知里写按钮，所以必须先注册再发送；
         // 每次都用插件给的本地化文案重新注册，按钮文案才能跟随界面语言。
-        if (primary) {
+        // 整组按钮一起注册（授权是「批准 / 拒绝」），带输入框的按钮把 input 系列字段一并透传，
+        // Windows 靠它们生成 toast 里的文本框与提交按钮。
+        if (hasActions) {
           await registerActionTypes([{
             id: NOTIFICATION_ACTION_TYPE,
-            actions: [{ id: primary.action, title: primary.title, foreground: true }],
+            actions: actions.map(action => ({
+              id: action.action,
+              title: action.title,
+              foreground: true,
+              input: action.input === true,
+              inputPlaceholder: action.inputPlaceholder,
+              inputButtonTitle: action.inputButtonTitle,
+            })),
           }])
         }
         await sendNotification({
           id: notificationIdFor(data.tag),
           title,
           body,
-          actionTypeId: primary ? NOTIFICATION_ACTION_TYPE : undefined,
+          actionTypeId: hasActions ? NOTIFICATION_ACTION_TYPE : undefined,
           extra: {
             sessionId: data.sessionId ?? '',
             title,
@@ -296,12 +307,13 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       type: 'dsh://notification-clicked',
       tag: payload.tag || undefined,
       action: payload.action || undefined,
+      inputValue: payload.inputValue || undefined,
     })
   }
 
   /** `onAction`：点通知本体（`actionId === 'tap'`）交给 `onNotificationClicked`，这里只管按钮。 */
   function handleNotificationAction(event: NotificationActionEvent) {
-    const { actionId, notification } = event
+    const { actionId, inputValue, notification } = event
     // 事件有没有真的到达壳层只有日志能回答：Windows 的 toast 激活依赖插件侧回调。
     // eslint 只允许 console.warn/error，而 console 会被 utils/logger 劫持写进前台日志
     // （desktop.frontdesk.log），所以开发态用 warn 留痕、打包态不打扰。
@@ -314,6 +326,7 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       title: notification?.extra?.title,
       tag: notification?.extra?.tag,
       action: actionId,
+      inputValue: typeof inputValue === 'string' ? inputValue : null,
     })
   }
 

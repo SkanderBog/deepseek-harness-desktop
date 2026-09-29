@@ -29,6 +29,9 @@ const zh = {
   bodyQuestion: '有待回答的问题',
   sessionFallback: 'DSH 会话',
   approve: '批准',
+  reject: '拒绝',
+  reply: '回复',
+  replyPlaceholder: '输入回复内容',
 }
 
 const en: Record<keyof typeof zh, string> = {
@@ -59,6 +62,9 @@ const en: Record<keyof typeof zh, string> = {
   bodyQuestion: 'A question is waiting for your answer',
   sessionFallback: 'DSH session',
   approve: 'Approve',
+  reject: 'Reject',
+  reply: 'Reply',
+  replyPlaceholder: 'Type your reply',
 }
 
 /** 通知设置的文案字典；`registerLocale` 必须由 `ctx.effect` 调用（保持未绑定 this）。 */

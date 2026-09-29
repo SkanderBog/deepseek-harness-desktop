@@ -14,6 +14,7 @@ const plugins = [
   'dsh-tauri-experimental',
   'dsh-tauri-model',
   'dsh-tauri-ui',
+  'dsh-tauri-notification',
   'dsh-tauri-worktree',
 ]
 

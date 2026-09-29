@@ -242,6 +242,10 @@ jobs:
           XCODE_APP="$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
           sudo xcode-select -s "$XCODE_APP"
           swift --version
+          # 该插件的 macOS 后端经 swift-build 产出 dylib，测试二进制运行时按 @rpath 找 Swift 并发
+          # 运行库；dyld 默认只搜 target/、$HOME/lib、/usr/local/lib、/usr/lib，工具链里的
+          # libswift_Concurrency.dylib 不在其中，实测报 `Library not loaded: @rpath/libswift_Concurrency.dylib`。
+          echo "DYLD_FALLBACK_LIBRARY_PATH=$XCODE_APP/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx:/usr/lib/swift" >> "$GITHUB_ENV"
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2

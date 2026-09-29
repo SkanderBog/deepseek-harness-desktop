@@ -1,4 +1,4 @@
-import type { PendingInteractionFace, SessionStatusFace, UiSessionFace } from '../types'
+import type { ApprovalDecision, PendingInteractionFace, SessionStatusFace, UiSessionFace } from '../types'
 import { boundText } from './decision'
 
 export interface DecideResult {
@@ -78,13 +78,50 @@ function resolvedReason(pending: PendingInteractionFace): string {
  * （例如授权已在界面里处理过，或该交互已降级为不可回答）。
  */
 export async function approveInteraction(uiSession: UiSessionFace | undefined, sessionId: string): Promise<DecideResult> {
+  return decideApproval(uiSession, sessionId, 'allowed-once')
+}
+
+/** 通知上的「拒绝」按钮走这里，语义与界面里的拒绝一致。 */
+export async function rejectInteraction(uiSession: UiSessionFace | undefined, sessionId: string): Promise<DecideResult> {
+  return decideApproval(uiSession, sessionId, 'rejected')
+}
+
+async function decideApproval(uiSession: UiSessionFace | undefined, sessionId: string, decision: ApprovalDecision): Promise<DecideResult> {
   const pending = readPendingInteraction(uiSession, sessionId)
   if (!pending || pending.kind !== 'approval')
     return { ok: false, error: 'APPROVAL_UNAVAILABLE' }
   if (pending.answerable === false || typeof pending.answer !== 'function')
     return { ok: false, error: 'APPROVAL_NOT_ANSWERABLE' }
   try {
-    await pending.answer('allowed-once')
+    await pending.answer(decision)
+    return { ok: true }
+  }
+  catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/**
+ * 通过官方待处理交互回答提问——通知里的输入框文本走这里。
+ *
+ * 系统通知渲染不了选项列表，所以把用户输入的自由文本当作官方的 `custom`（「其他」）
+ * 答案回传，`selected` 留空；问题 id 取批次里的第一个问题（官方每个会话同一时刻只有
+ * 一个待处理交互，通知也只展示它的首个问题）。
+ */
+export async function answerQuestion(uiSession: UiSessionFace | undefined, sessionId: string, text: string): Promise<DecideResult> {
+  const pending = readPendingInteraction(uiSession, sessionId)
+  if (!pending || (pending.kind !== 'question' && pending.kind !== 'plan-review'))
+    return { ok: false, error: 'QUESTION_UNAVAILABLE' }
+  if (pending.answerable === false || typeof pending.answer !== 'function')
+    return { ok: false, error: 'QUESTION_NOT_ANSWERABLE' }
+  const custom = text.trim()
+  if (!custom)
+    return { ok: false, error: 'QUESTION_EMPTY' }
+  const id = pending.questions?.[0]?.id
+  if (!id)
+    return { ok: false, error: 'QUESTION_ID_MISSING' }
+  try {
+    await pending.answer({ answers: [{ id, selected: [], custom }] })
     return { ok: true }
   }
   catch (error) {

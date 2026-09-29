@@ -127,8 +127,10 @@ pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
         // 一次点击只回灌一次；用完即弃，避免长时间运行后字典持续增长。
         delete pendingOnClicks[data.tag];
         // 按钮点击走 onaction（动作 id 由前端约定），点通知本体走 onclick。
+        // 带输入框的按钮（如「回复」）把用户填的文本一并回灌；没填时给空串。
         if (data.action && typeof instance.onaction === 'function') {
-          try { instance.onaction({ action: String(data.action), tag: data.tag }); } catch (_) {}
+          var inputValue = typeof data.inputValue === 'string' ? data.inputValue : '';
+          try { instance.onaction({ action: String(data.action), tag: data.tag, inputValue: inputValue }); } catch (_) {}
         } else if (typeof instance.onclick === 'function') {
           try { instance.onclick(new Event('click')); } catch (_) {}
         }

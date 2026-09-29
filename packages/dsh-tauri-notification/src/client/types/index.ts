@@ -33,14 +33,42 @@ export interface SessionsFace {
   readonly list: ObservableSnapshotFace<SessionListStateFace>
 }
 
-/** 待处理交互的选项（`PendingQuestion` 的 questions 项）。 */
-export interface PendingQuestionFace {
-  readonly question?: string
-  readonly header?: string
+/** 提问的一个可选项（官方 `AskUserQuestionOption`）。 */
+export interface PendingQuestionOptionFace {
+  /** 作答时回传的就是 `label` 字面值（官方 `selected` 收的是 label，不是 id）。 */
+  readonly label?: string
+  readonly description?: string
 }
 
-/** 授权结果：与官方 `ApprovalDecision` 对齐，本插件只会用 `allowed-once`。 */
+/** 待处理交互的选项（`PendingQuestion` 的 questions 项）。 */
+export interface PendingQuestionFace {
+  /** 官方 `AskUserQuestionItem.id`：作答时必须原样回传。 */
+  readonly id?: string
+  readonly question?: string
+  readonly detail?: string
+  readonly header?: string
+  readonly options?: readonly PendingQuestionOptionFace[]
+  readonly multiSelect?: boolean
+}
+
+/** 授权结果：与官方 `ApprovalDecision` 对齐，通知上的「批准 / 拒绝」分别对应两个取值。 */
 export type ApprovalDecision = 'allowed-once' | 'rejected'
+
+/** 一条提问回答：与官方 `AskUserQuestionAnswerItem` 对齐（`selected` 收的是选项 label）。 */
+export interface QuestionAnswerFace {
+  readonly id: string
+  readonly selected: readonly string[]
+  /** 自由输入的「其他」答案；系统通知的输入框走这里。 */
+  readonly custom?: string
+}
+
+/** 提问回答批次：与官方 `AskUserQuestionAnswer` 对齐。 */
+export interface QuestionOutcomeFace {
+  readonly answers: readonly QuestionAnswerFace[]
+}
+
+/** 待处理交互能接受的作答：授权决定，或提问回答批次。 */
+export type PendingOutcome = ApprovalDecision | QuestionOutcomeFace
 
 /**
  * 待处理交互（`PendingApproval` / `PendingQuestion`）。
@@ -58,7 +86,7 @@ export interface PendingInteractionFace {
   readonly displayReason?: unknown
   readonly answerable?: boolean
   readonly questions?: readonly PendingQuestionFace[]
-  answer?: (outcome: ApprovalDecision) => Promise<void>
+  answer?: (outcome: PendingOutcome) => Promise<void>
 }
 
 /** 单个会话的状态（`SessionStatus`）。 */
@@ -77,6 +105,15 @@ export interface UiSessionFace {
 export interface NativeNotificationAction {
   readonly id: string
   readonly title: string
+  /**
+   * Windows：把按钮渲染成「输入框 + 提交按钮」，用户输入的文本随动作一起回传。
+   * 其他平台忽略该字段，退化成普通按钮。
+   */
+  readonly input?: boolean
+  /** Windows：输入框占位文案（`<input placeHolderContent>`）。 */
+  readonly inputPlaceholder?: string
+  /** Windows：提交按钮文案；缺省时用 `title`。 */
+  readonly inputButtonTitle?: string
 }
 
 /** 交给宿主窗口补丁（`NOTIFICATION_SHIM_JS`）的原生通知描述。 */
@@ -89,8 +126,8 @@ export interface NativeNotificationInput {
   readonly actions?: readonly NativeNotificationAction[]
   /** 用户点通知本体（非按钮）。 */
   readonly onClick?: () => void
-  /** 用户点按钮：回传 action id。 */
-  readonly onAction?: (action: string) => void
+  /** 用户点按钮：回传 action id 与该按钮输入框里的文本（无输入框或没填时为 `null`）。 */
+  readonly onAction?: (action: string, inputValue: string | null) => void
 }
 
 /** 通知类别：决定文案与是否需要常驻。 */

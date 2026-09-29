@@ -134,6 +134,12 @@ tray-icon = { version = "0.25", default-features = false, features = [ "ksni" ] 
 # （上游 issue: https://github.com/webdriverio/desktop-mobile/issues/665）。
 [patch.crates-io]
 tauri-plugin-wdio-webdriver = { path = "vendor/tauri-plugin-wdio-webdriver" }
+# 上游 0.5.0-rc.14 的 Windows 后端有三处缺口：不发 `<input>`、动作 `arguments` 只写裸
+# action id（冷启动 COM 回调看不到 launch=，会话身份丢失）、且只有 MSIX 打包应用才注册
+# COM 激活器。本地副本补齐输入框、把 arguments 改写成携带 extra 的 JSON、并为未打包的
+# DSH 写入 AUMID + CLSID 注册表项并在独立 STA 线程上跑消息泵。详见 vendor 目录内
+# PATCH.md（上游 issue: https://github.com/Choochmeque/tauri-plugin-notifications/issues）。
+tauri-plugin-notifications = { path = "vendor/tauri-plugin-notifications" }
 
 # 行号表而非完整调试信息：panic 与回溯仍能定位到行，target 体积与链接耗时都随之下降
 [profile.dev]
