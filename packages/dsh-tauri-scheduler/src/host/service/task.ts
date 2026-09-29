@@ -1,7 +1,7 @@
 import type { OperationResult, SchedulerSchedule, SchedulerTask, TaskInput } from '../types'
 import { randomUUID } from 'node:crypto'
 import { defineService } from 'dsh-tauri'
-import { conformsTo, defaults, filter, find, findIndex, isArray, isBoolean, isEmpty, isNil, isObject, isString, omitBy, pick, reject } from 'lodash-es'
+import { conformsTo, defaults, filter, find, findIndex, isArray, isBoolean, isEmpty, isEqual, isNil, isObject, isString, omitBy, pick, reject } from 'lodash-es'
 import { withWriteQueue } from '../config/runtime'
 import { storage } from '../storage'
 import { localTimeZone, nextOccurrence, validateSchedule } from '../utils/schedule'
@@ -40,7 +40,17 @@ export const task = defineService({
     const invalid = validateInput(merged)
     if (invalid !== null)
       return { ok: false, error: invalid }
-    const updated = { ...build(merged), id: current.id }
+    const rebuilt = build(merged)
+    const updated: SchedulerTask = {
+      ...rebuilt,
+      id: current.id,
+      createdAt: current.createdAt,
+      updatedAt: new Date().toISOString(),
+      lastRunAt: current.lastRunAt,
+      nextRunAt: !isEqual(rebuilt.schedule, current.schedule) || (rebuilt.enabled && isNil(current.nextRunAt))
+        ? rebuilt.nextRunAt
+        : current.nextRunAt,
+    }
     await saveTask(updated)
     return { ok: true, task: updated }
   },

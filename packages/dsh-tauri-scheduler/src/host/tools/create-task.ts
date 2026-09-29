@@ -1,5 +1,5 @@
 import { task } from '../service/task'
-import { scheduleParameters, textBlock } from '../utils/tool'
+import { nullableText, scheduleParameters, textBlock } from '../utils/tool'
 
 const outputSchema = {
   type: 'object',
@@ -7,7 +7,7 @@ const outputSchema = {
   properties: {
     ok: { type: 'boolean' },
     taskId: { type: 'string' },
-    nextRunAt: { type: 'string' },
+    nextRunAt: nullableText,
     error: { type: 'string' },
   },
   required: ['ok'],

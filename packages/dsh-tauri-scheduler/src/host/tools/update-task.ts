@@ -1,7 +1,7 @@
 import type { TaskInput } from '../types'
 import { scheduler } from '../service/scheduler'
 import { task } from '../service/task'
-import { scheduleParameters, textBlock } from '../utils/tool'
+import { nullableText, scheduleParameters, textBlock } from '../utils/tool'
 
 const TEXT_FIELDS = ['name', 'prompt', 'workspaceId', 'permission', 'provider', 'model', 'reasoningEffort'] as const
 
@@ -11,7 +11,7 @@ const outputSchema = {
   properties: {
     ok: { type: 'boolean' },
     taskId: { type: 'string' },
-    nextRunAt: { type: 'string' },
+    nextRunAt: nullableText,
     ran: { type: 'boolean' },
     error: { type: 'string' },
   },

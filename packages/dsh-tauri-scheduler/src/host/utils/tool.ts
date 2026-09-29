@@ -17,6 +17,9 @@ export const scheduleParameters = {
   required: ['kind'],
 }
 
+// 核心校验器只认 `oneOf`；`type: ['string','null']` 与 `anyOf` 都会抛错。
+export const nullableText = { oneOf: [{ type: 'string' }, { type: 'null' }] }
+
 export function textBlock(text: string): Array<{ type: 'text', text: string }> {
   return [{ type: 'text', text }]
 }

@@ -12,5 +12,6 @@ const { secondary } = sharedStyles
 export default c([
   c(`[${SESSION_ICON_ATTRIBUTE}]`, { width: '16px', height: '20px', flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginLeft: '2px', marginRight: '5px', color: secondary }),
   c('[role="treeitem"]', { position: 'relative' }),
+  c(`[role="treeitem"]:hover [${SESSION_ICON_ATTRIBUTE}]`, { visibility: 'hidden' }),
   c('button:has(.dshp-scheduler__nav-dot)', { position: 'relative' }),
 ])
