@@ -81,11 +81,43 @@ export interface NotificationClickedPayload {
   inputValue?: string | null
 }
 
+/** 插件的动作类型载荷（它的 `ActionType` 没有从 JS API 导出，这里从函数签名反推）。 */
+type ActionTypeRegistration = Parameters<typeof registerActionTypes>[0][number]
+
+/** 已注册过的按钮集合，按 action type id 索引。 */
+const registeredActionTypes = new Map<string, ActionTypeRegistration>()
+
+/** 注册表上限：实际只有「批准 / 拒绝」与「回复」两组，这里只是防止异常输入把表撑大。 */
+const ACTION_TYPE_LIMIT = 16
+
 /**
- * 系统通知的动作类型 id：插件声明的按钮（授权弹窗的「批准」）挂在它下面。
- * 每次发送前都用插件给的本地化文案重新注册，按钮文案才能跟随界面语言。
+ * 一组按钮对应一个 action type id，由动作 id 拼出来；同一组按钮永远映射到同一个 id。
+ *
+ * 插件的 `registerActionTypes` 是「按 id 覆盖」的（Windows 存一张 id → 动作表，macOS 的
+ * `setNotificationCategories` 更是整表替换）。复用同一个 id 会让后注册的集合顶掉先注册的：
+ * 两个会话同时挂起时，授权通知的按钮会变成提问通知的「回复」。
  */
-const NOTIFICATION_ACTION_TYPE = 'dsh-notification-approval'
+function actionTypeIdFor(actions: readonly { action: string }[]): string {
+  return `dsh-notification-${actions.map(action => action.action).join('-')}`
+}
+
+/**
+ * 把当前按钮集合并入注册表，并返回**全部**已注册集合。
+ *
+ * macOS 侧 `setNotificationCategories` 整表替换，只注册当前集合会把已经发出去的通知上的
+ * 按钮抹掉；所以每次都把用过的集合一起注册回去。
+ */
+function actionTypesToRegister(current: ActionTypeRegistration): ActionTypeRegistration[] {
+  registeredActionTypes.delete(current.id)
+  registeredActionTypes.set(current.id, current)
+  while (registeredActionTypes.size > ACTION_TYPE_LIMIT) {
+    const oldest = registeredActionTypes.keys().next().value
+    if (oldest === undefined)
+      break
+    registeredActionTypes.delete(oldest)
+  }
+  return [...registeredActionTypes.values()]
+}
 
 /**
  * 通知 id 必须是 32 位整数，这里取 tag 的稳定哈希：同一会话的同一条通知反复发送时
@@ -197,14 +229,16 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     const body = data.body ?? ''
 
     void (async () => {
-      try {
-        // 后端只在 `actionTypeId` 已注册时才往通知里写按钮，所以必须先注册再发送；
-        // 每次都用插件给的本地化文案重新注册，按钮文案才能跟随界面语言。
-        // 整组按钮一起注册（授权是「批准 / 拒绝」），带输入框的按钮把 input 系列字段一并透传，
-        // Windows 靠它们生成 toast 里的文本框与提交按钮。
-        if (hasActions) {
-          await registerActionTypes([{
-            id: NOTIFICATION_ACTION_TYPE,
+      // 后端只在 `actionTypeId` 已注册时才往通知里写按钮，所以必须先注册再发送；
+      // 每次都用插件给的本地化文案重新注册，按钮文案才能跟随界面语言。
+      // 整组按钮一起注册（授权是「批准 / 拒绝」），带输入框的按钮把 input 系列字段一并透传，
+      // Windows 靠它们生成 toast 里的文本框与提交按钮。
+      const actionTypeId = hasActions ? actionTypeIdFor(actions) : undefined
+      let actionsRegistered = false
+      if (actionTypeId) {
+        try {
+          await registerActionTypes(actionTypesToRegister({
+            id: actionTypeId,
             actions: actions.map(action => ({
               id: action.action,
               title: action.title,
@@ -213,13 +247,21 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
               inputPlaceholder: action.inputPlaceholder,
               inputButtonTitle: action.inputButtonTitle,
             })),
-          }])
+          }))
+          actionsRegistered = true
         }
+        catch (error) {
+          // 注册失败不能连通知一起丢掉：Linux/FreeBSD 的 notify-rust 明确不支持动作，抛错时
+          // 退化成没有按钮的通知，用户至少还能点回对应会话。
+          console.warn('[notification] registerActionTypes failed, sending without actions:', error)
+        }
+      }
+      try {
         await sendNotification({
           id: notificationIdFor(data.tag),
           title,
           body,
-          actionTypeId: hasActions ? NOTIFICATION_ACTION_TYPE : undefined,
+          actionTypeId: actionsRegistered ? actionTypeId : undefined,
           extra: {
             sessionId: data.sessionId ?? '',
             title,

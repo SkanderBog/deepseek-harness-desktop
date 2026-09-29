@@ -4,7 +4,7 @@ import { defineRegister } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../../shared/constants'
 import { APPROVE_ACTION_ID, REJECT_ACTION_ID, REPLY_ACTION_ID } from '../constants'
 import { locale } from '../locales'
-import { answerQuestion, approveInteraction, pendingDetail, pendingIdentity, pendingNotificationKind, rejectInteraction } from '../service/approval'
+import { answerableQuestionId, answerQuestion, approveInteraction, pendingDetail, pendingIdentity, pendingNotificationKind, rejectInteraction } from '../service/approval'
 import { allowPendingNotification, allowTurnNotification, boundText, notificationTag } from '../service/decision'
 import { showNativeNotification } from '../service/native'
 import { createSoundPlayer } from '../service/sound'
@@ -65,20 +65,20 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
     }, FOCUS_RETRY_MS)
   }
 
-  const approveFromNotification = async (sessionId: string): Promise<void> => {
-    const result = await approveInteraction(readUiSession(), sessionId)
+  const approveFromNotification = async (sessionId: string, identity: string): Promise<void> => {
+    const result = await approveInteraction(readUiSession(), sessionId, identity)
     if (!result.ok)
       console.warn(`[${PLUGIN_ID}] approve from notification failed: ${result.error ?? 'unknown'}`)
   }
 
-  const rejectFromNotification = async (sessionId: string): Promise<void> => {
-    const result = await rejectInteraction(readUiSession(), sessionId)
+  const rejectFromNotification = async (sessionId: string, identity: string): Promise<void> => {
+    const result = await rejectInteraction(readUiSession(), sessionId, identity)
     if (!result.ok)
       console.warn(`[${PLUGIN_ID}] reject from notification failed: ${result.error ?? 'unknown'}`)
   }
 
-  const replyFromNotification = async (sessionId: string, text: string): Promise<void> => {
-    const result = await answerQuestion(readUiSession(), sessionId, text)
+  const replyFromNotification = async (sessionId: string, text: string, identity: string): Promise<void> => {
+    const result = await answerQuestion(readUiSession(), sessionId, text, identity)
     if (!result.ok)
       console.warn(`[${PLUGIN_ID}] reply from notification failed: ${result.error ?? 'unknown'}`)
   }
@@ -128,31 +128,48 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
       const label = kind === 'approval' ? locale.text('labelApproval') : locale.text('labelQuestion')
       const answerable = current.answerable !== false && typeof current.answer === 'function'
       // 通知按钮一律要求交互仍可回答：答应不了的时候给按钮只会让用户白点。
-      // 授权给「批准 / 拒绝」，提问给一个带输入框的「回复」——系统通知渲染不了选项列表，
-      // 所以提问只能走自由文本，宿主原样回传输入内容。
+      // 授权给「批准 / 拒绝」；提问给一个带输入框的「回复」——系统通知渲染不了选项列表，
+      // 所以提问只能走自由文本，宿主原样回传输入内容。多问题批次一个文本框答不完，
+      // 这时不给按钮，点通知本体回会话界面作答。
+      const identity = pendingIdentity(current)
+      const canReply = kind === 'question' && answerableQuestionId(current) !== undefined
       let actions: NativeNotificationAction[] | undefined
-      if (answerable) {
-        actions = kind === 'approval'
-          ? [
-              { id: APPROVE_ACTION_ID, title: locale.text('approve') },
-              { id: REJECT_ACTION_ID, title: locale.text('reject') },
-            ]
-          : [{
-              id: REPLY_ACTION_ID,
-              title: locale.text('reply'),
-              input: true,
-              inputPlaceholder: locale.text('replyPlaceholder'),
-              inputButtonTitle: locale.text('reply'),
-            }]
+      if (kind === 'approval' && answerable) {
+        actions = [
+          { id: APPROVE_ACTION_ID, title: locale.text('approve') },
+          { id: REJECT_ACTION_ID, title: locale.text('reject') },
+        ]
       }
-      const onAction = answerable
+      else if (canReply) {
+        actions = [{
+          id: REPLY_ACTION_ID,
+          title: locale.text('reply'),
+          input: true,
+          inputPlaceholder: locale.text('replyPlaceholder'),
+          inputButtonTitle: locale.text('reply'),
+        }]
+      }
+      const onAction = actions
         ? (action: string, inputValue: string | null): void => {
-            if (action === APPROVE_ACTION_ID)
-              void approveFromNotification(sessionId)
-            else if (action === REJECT_ACTION_ID)
-              void rejectFromNotification(sessionId)
-            else if (action === REPLY_ACTION_ID && inputValue)
-              void replyFromNotification(sessionId, inputValue)
+            // 每个按钮都带上这条通知当初展示的那次挂起（`identity`）：系统通知会一直挂到
+            // 用户处理它为止，期间会话可能已经有**新的**待处理交互，身份对不上就不回答
+            // （见 approval.ts 的 APPROVAL_STALE / QUESTION_STALE）。
+            if (action === APPROVE_ACTION_ID) {
+              void approveFromNotification(sessionId, identity)
+            }
+            else if (action === REJECT_ACTION_ID) {
+              void rejectFromNotification(sessionId, identity)
+            }
+            else if (action === REPLY_ACTION_ID) {
+              // 非 Windows 平台插件没有文本框，带 `input` 的按钮会退化成普通按钮：这时点击
+              // 拿不到文本，静默丢弃会让用户以为通知坏了，改为把会话拉到前台去回答。
+              if (inputValue) {
+                void replyFromNotification(sessionId, inputValue, identity)
+              }
+              else {
+                focusSession(sessionId)
+              }
+            }
           }
         : undefined
       notify(
@@ -186,6 +203,11 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
       // 的 `turn/end` 里，所以弹之前问一次宿主；是中断就什么都不做（用户自己掐断的，不需要提醒）。
       void (async () => {
         if (await turnEndedByUser(sessionId))
+          return
+        // 问宿主是异步的，等待期间会话可能又跑起来了：再确认一次，别给正在干活的会话弹「已完成」。
+        const currentStatus = readUiSession()?.sessionStatus.getSnapshot().get(sessionId)
+        const currentSummary = readSessions()?.list.getSnapshot().byId[sessionId]
+        if (currentStatus ? currentStatus.running === true : currentSummary?.running === true)
           return
         notify(sessionId, 'turn', sessionTitle(sessionId), locale.text('labelTurn'), false)
       })()

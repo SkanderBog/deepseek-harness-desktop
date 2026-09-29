@@ -76,20 +76,26 @@ function resolvedReason(pending: PendingInteractionFace): string {
  *
  * 只有同一次挂起期间注册过、且仍可回答的交互才能被外部回答；否则返回失败
  * （例如授权已在界面里处理过，或该交互已降级为不可回答）。
+ *
+ * `expectedIdentity` 是这条通知**当初展示**的那次挂起（`pendingIdentity`）。系统通知会在
+ * 心里一直挂着直到用户处理它，所以一条过期的「批准」可能在原授权早已被界面处理、同一会话
+ * 又冒出**新的**授权之后才被点到；身份对不上就拒绝，绝不回答「当前恰好挂着的那一个」。
  */
-export async function approveInteraction(uiSession: UiSessionFace | undefined, sessionId: string): Promise<DecideResult> {
-  return decideApproval(uiSession, sessionId, 'allowed-once')
+export async function approveInteraction(uiSession: UiSessionFace | undefined, sessionId: string, expectedIdentity?: string): Promise<DecideResult> {
+  return decideApproval(uiSession, sessionId, 'allowed-once', expectedIdentity)
 }
 
 /** 通知上的「拒绝」按钮走这里，语义与界面里的拒绝一致。 */
-export async function rejectInteraction(uiSession: UiSessionFace | undefined, sessionId: string): Promise<DecideResult> {
-  return decideApproval(uiSession, sessionId, 'rejected')
+export async function rejectInteraction(uiSession: UiSessionFace | undefined, sessionId: string, expectedIdentity?: string): Promise<DecideResult> {
+  return decideApproval(uiSession, sessionId, 'rejected', expectedIdentity)
 }
 
-async function decideApproval(uiSession: UiSessionFace | undefined, sessionId: string, decision: ApprovalDecision): Promise<DecideResult> {
+async function decideApproval(uiSession: UiSessionFace | undefined, sessionId: string, decision: ApprovalDecision, expectedIdentity?: string): Promise<DecideResult> {
   const pending = readPendingInteraction(uiSession, sessionId)
   if (!pending || pending.kind !== 'approval')
     return { ok: false, error: 'APPROVAL_UNAVAILABLE' }
+  if (expectedIdentity !== undefined && pendingIdentity(pending) !== expectedIdentity)
+    return { ok: false, error: 'APPROVAL_STALE' }
   if (pending.answerable === false || typeof pending.answer !== 'function')
     return { ok: false, error: 'APPROVAL_NOT_ANSWERABLE' }
   try {
@@ -102,22 +108,40 @@ async function decideApproval(uiSession: UiSessionFace | undefined, sessionId: s
 }
 
 /**
+ * 通知里那个输入框能回答的问题 id；**恰好一个问题**时才有值。
+ *
+ * 通知只有一个文本框，而官方契约要求每个问题各带一条答案：多问题批次从这里只答第一个，
+ * 会让宿主把整批当成已答完。所以这类批次不提供回复按钮（交给会话界面），此函数也是
+ * 「要不要给回复按钮」的唯一判据。
+ */
+export function answerableQuestionId(pending: PendingInteractionFace): string | undefined {
+  const questions = pending.questions ?? []
+  if (questions.length !== 1)
+    return undefined
+  const id = questions[0]?.id
+  return typeof id === 'string' && id.length > 0 ? id : undefined
+}
+
+/**
  * 通过官方待处理交互回答提问——通知里的输入框文本走这里。
  *
  * 系统通知渲染不了选项列表，所以把用户输入的自由文本当作官方的 `custom`（「其他」）
- * 答案回传，`selected` 留空；问题 id 取批次里的第一个问题（官方每个会话同一时刻只有
- * 一个待处理交互，通知也只展示它的首个问题）。
+ * 答案回传，`selected` 留空。
  */
-export async function answerQuestion(uiSession: UiSessionFace | undefined, sessionId: string, text: string): Promise<DecideResult> {
+export async function answerQuestion(uiSession: UiSessionFace | undefined, sessionId: string, text: string, expectedIdentity?: string): Promise<DecideResult> {
   const pending = readPendingInteraction(uiSession, sessionId)
   if (!pending || (pending.kind !== 'question' && pending.kind !== 'plan-review'))
     return { ok: false, error: 'QUESTION_UNAVAILABLE' }
+  if (expectedIdentity !== undefined && pendingIdentity(pending) !== expectedIdentity)
+    return { ok: false, error: 'QUESTION_STALE' }
   if (pending.answerable === false || typeof pending.answer !== 'function')
     return { ok: false, error: 'QUESTION_NOT_ANSWERABLE' }
+  if ((pending.questions ?? []).length !== 1)
+    return { ok: false, error: 'QUESTION_NOT_SINGLE' }
   const custom = text.trim()
   if (!custom)
     return { ok: false, error: 'QUESTION_EMPTY' }
-  const id = pending.questions?.[0]?.id
+  const id = answerableQuestionId(pending)
   if (!id)
     return { ok: false, error: 'QUESTION_ID_MISSING' }
   try {

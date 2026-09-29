@@ -17,11 +17,20 @@ describe('handleSessionEvent', () => {
     expect(turnEndFact('s1')).toBeUndefined()
   })
 
-  it('缺少会话 id 或结束原因时不记录', () => {
+  it('缺少会话 id 时不记录', () => {
     handleSessionEvent({}, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
-    handleSessionEvent({ id: 's1' }, { type: 'turn/end', data: { turn: 1 } })
-    handleSessionEvent({ id: 's1' }, { type: 'turn/end' })
+    handleSessionEvent({ id: '' }, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
     expect(turnEndFact('s1')).toBeUndefined()
+  })
+
+  it('宿主没给结束原因时记成空原因，把上一次的旧原因冲掉', () => {
+    // 直接返回会留下旧的 `aborted`，客户端就会把这一回合的通知也当成中断吞掉。
+    handleSessionEvent({ id: 's1' }, { type: 'turn/end', data: { turn: 1, reason: { kind: 'aborted' } } })
+    expect(turnEndFact('s1')).toEqual({ reason: 'aborted', turn: 1 })
+    handleSessionEvent({ id: 's1' }, { type: 'turn/end', data: { turn: 2 } })
+    expect(turnEndFact('s1')).toEqual({ reason: '', turn: 2 })
+    handleSessionEvent({ id: 's1' }, { type: 'turn/end' })
+    expect(turnEndFact('s1')).toEqual({ reason: '', turn: -1 })
   })
 
   it('宿主没给回合号时用 -1 占位', () => {
