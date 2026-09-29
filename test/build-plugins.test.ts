@@ -69,6 +69,9 @@ describe('plugin deployment documentation pruning', () => {
     expect(isNonRuntimeFile(join('dsh-tauri-pet', 'skills', 'hatch-dsh-pet', 'SKILL.md'))).toBe(false)
     expect(isNonRuntimeFile(join('dsh-tauri-pet', 'skills', 'hatch-dsh-pet', 'README.md'))).toBe(false)
     expect(isNonRuntimeFile(join('dsh-tauri-pet', 'skills', 'hatch-dsh-pet', 'references', 'sprite-atlas.md'))).toBe(false)
+    expect(isNonRuntimeFile(join('dsh-tauri-extension', 'skills', 'skill-creator', 'SKILL.md'))).toBe(false)
+    expect(isNonRuntimeFile(join('dsh-tauri-extension', 'skills', 'skill-creator', 'agents', 'grader.md'))).toBe(false)
+    expect(isNonRuntimeFile(join('dsh-tauri-extension', 'skills', 'find-skills', 'LICENSE'))).toBe(false)
   })
 
   it('does not treat a lookalike segment as a skills directory', () => {
