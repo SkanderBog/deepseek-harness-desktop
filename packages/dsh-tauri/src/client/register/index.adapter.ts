@@ -32,6 +32,7 @@
 import type {
   AdapterAddWorkspaceOptions,
   AdapterAddWorkspaceOutcome,
+  AdapterAddWorkspaceRuntime,
   AdapterCapability,
   AdapterContext,
   AdapterGeneration,
@@ -44,6 +45,7 @@ import type {
   AdapterSessionId,
   AdapterSessionList,
   AdapterSessions,
+  AdapterStartSession,
   AdapterStartSessionOutcome,
   AdapterSurface,
   AdapterWorkspaceId,
@@ -420,31 +422,57 @@ const SESSIONS_PROVIDE_INFO_MIGRATION: DshMigration = {
 }
 
 /**
+ * 按能力读取一个候选服务上的 `startSession`，返回**绑定到 owner** 的调用器。
+ *
+ * `uiWorkspace` 可能晚于适配层创建（见 {@link SESSIONS_OPEN_MIGRATION}），因此调用期重读。
+ */
+function startSessionAt(owner: AdapterRuntimeObject | undefined): AdapterStartSession | undefined {
+  if (owner === undefined)
+    return undefined
+  const fn = owner.startSession
+  if (typeof fn !== 'function')
+    return undefined
+  return (workspaceId?: AdapterWorkspaceId) => fn.call(owner, workspaceId)
+}
+
+/** 跨布局解析「新建会话」的官方入口（`uiWorkspace` 优先，`workspaces` 兜底，调用期解析）。 */
+function resolveStartSessionCapability(surface: AdapterSurface): AdapterStartSession | undefined {
+  return startSessionAt(surface.uiWorkspace) ?? startSessionAt(surface.workspaces)
+}
+
+/** 迁移写入的 `surface.startSession` 优先；缺席时调用期重解析（晚到达的服务也能接上）。 */
+function surfaceStartSession(surface: AdapterSurface): AdapterStartSession | undefined {
+  return surface.startSession ?? resolveStartSessionCapability(surface)
+}
+
+/**
  * legacy：`workspaces` 自身没有导航方法，由独立的 `uiWorkspace` 服务提供。
- * 只有 `uiWorkspace` 真的提供该能力时才覆盖；它缺席时回退 `workspaces` 原生实现。
+ *
+ * 投影**无条件安装**、候选能力在调用期按需解析：`uiWorkspace` 可能晚于适配层创建，
+ * 拿「创建期该服务是否在场」当安装判据会让 `workspaces.connectWorkspace` / `startSession`
+ * 永久缺席（issue #756）。两个候选都没有该能力时返回 undefined，不静默吞掉消费方的调用。
  */
 const LEGACY_WORKSPACES_MIGRATION: DshMigration = {
   id: 'legacy:workspaces-navigation',
-  description: 'uiWorkspace.startSession / connectWorkspace → workspaces 导航投影',
-  detect: (_probe, surface) => {
-    const owner = surface.uiWorkspace
-    if (owner === undefined)
-      return false
-    return typeof owner.startSession === 'function' || typeof owner.connectWorkspace === 'function'
-  },
+  description: 'uiWorkspace.startSession / connectWorkspace → workspaces 导航投影（调用期解析）',
+  detect: () => true,
   apply(surface) {
     const workspaces = surface.workspaces
-    const owner = surface.uiWorkspace
-    if (workspaces === undefined || owner === undefined)
+    if (workspaces === undefined)
       return
     surface.workspaces = new Proxy(workspaces as object, {
       get(target, prop) {
         if (prop === 'startSession' || prop === 'connectWorkspace') {
-          const fn = owner[prop]
-          if (typeof fn === 'function')
-            return (...args: unknown[]) => fn.call(owner, ...args)
-          const fallback = Reflect.get(target, prop)
-          return typeof fallback === 'function' ? fallback.bind(target) : fallback
+          if (surface.uiWorkspace?.[prop] === undefined && typeof Reflect.get(target, prop) !== 'function')
+            return undefined
+          return (...args: unknown[]) => {
+            const owner = surface.uiWorkspace
+            const fn = owner?.[prop]
+            if (typeof fn === 'function')
+              return fn.call(owner, ...args)
+            const fallback = Reflect.get(target, prop)
+            return typeof fallback === 'function' ? fallback.call(target, ...args) : fallback
+          }
         }
         const member = Reflect.get(target, prop)
         return typeof member === 'function' ? member.bind(target) : member
@@ -461,12 +489,15 @@ const NAVIGATION_MIGRATION: DshMigration = {
   apply(surface) {
     // 逐个候选服务找「真的实现了 startSession」的那一个：只按服务在场判断会让
     // 半迁移宿主（uiWorkspace 只提供 pickDirectory）静默吞掉 workspaces 的原生导航。
-    for (const owner of [surface.uiWorkspace, surface.workspaces]) {
-      const fn = owner?.startSession
-      if (owner !== undefined && typeof fn === 'function') {
-        surface.startSession = (workspaceId?: AdapterWorkspaceId) => fn.call(owner, workspaceId)
-        return
-      }
+    // 创建期一个都没有时保持缺席（不落投影），由 surfaceStartSession 在调用期接上晚到的服务，
+    // 否则能力探测与退级阶梯（点官方按钮 → 明确回报不可用）会把「尚未物化」误判成「已支持」。
+    if (resolveStartSessionCapability(surface) === undefined)
+      return
+    surface.startSession = (workspaceId?: AdapterWorkspaceId) => {
+      const start = resolveStartSessionCapability(surface)
+      if (start === undefined)
+        throw new Error('startSession is unavailable: no uiWorkspace.startSession / workspaces.startSession capability')
+      return start(workspaceId)
     }
   },
 }
@@ -580,33 +611,47 @@ const SESSIONS_OPEN_MIGRATION: DshMigration = {
  * 跨布局：「打开文件夹」三段能力聚合。
  *
  * 目录选择在 legacy 是 `uiWorkspace.pickDirectory`、modern 是 `workspaces.pickDirectory`；
- * 建工作区一直是 `workspaces.create`；开新会话复用上一条迁移解析出的 `surface.startSession`。
+ * 建工作区一直是 `workspaces.create`；开新会话复用「新建会话」解析出的入口。
  * 三段缺一即视为不可用，由消费方退级到点官方按钮。
+ *
+ * 聚合在**调用期**重算（见 {@link surfaceAddWorkspace}）：`uiWorkspace` 可能晚于适配层创建，
+ * 创建期一次探测会让「打开文件夹」在晚到达的宿主上永久不可用。
  */
+function addWorkspaceAt(surface: AdapterSurface): AdapterAddWorkspaceRuntime | undefined {
+  const workspaces = surface.workspaces
+  const create = workspaces?.create
+  // 目录选择的宿主服务随版本迁移（详见文件头）：modern 在 workspaces 上，legacy 在 uiWorkspace 上。
+  const pickOwner = typeof workspaces?.pickDirectory === 'function' ? workspaces : surface.uiWorkspace
+  const pickDirectory = pickOwner?.pickDirectory
+  const startSession = surfaceStartSession(surface)
+  if (
+    typeof pickDirectory !== 'function'
+    || typeof create !== 'function'
+    || pickOwner === undefined
+    || startSession === undefined
+  ) {
+    return undefined
+  }
+  return {
+    pickDirectory: () => pickDirectory.call(pickOwner) as Promise<string | null | undefined>,
+    createWorkspace: input => create.call(workspaces, input),
+    startSession: workspaceId => startSession(workspaceId),
+  }
+}
+
+/** 迁移写入的 `surface.addWorkspace` 优先；缺席时调用期重算（晚到达的服务也能接上）。 */
+function surfaceAddWorkspace(surface: AdapterSurface): AdapterAddWorkspaceRuntime | undefined {
+  return surface.addWorkspace ?? addWorkspaceAt(surface)
+}
+
 const WORKSPACE_ADD_MIGRATION: DshMigration = {
   id: 'workspace:resolve-add-workspace',
   description: 'pickDirectory + workspaces.create + startSession → surface.addWorkspace',
   detect: () => true,
   apply(surface) {
-    const workspaces = surface.workspaces
-    const startSession = surface.startSession
-    // 目录选择的宿主服务随版本迁移（详见文件头）：modern 在 workspaces 上，legacy 在 uiWorkspace 上。
-    const pickOwner = typeof workspaces?.pickDirectory === 'function' ? workspaces : surface.uiWorkspace
-    const pickDirectory = pickOwner?.pickDirectory
-    const create = workspaces?.create
-    if (
-      typeof pickDirectory !== 'function'
-      || typeof create !== 'function'
-      || startSession === undefined
-      || pickOwner === undefined
-    ) {
-      return
-    }
-    surface.addWorkspace = {
-      pickDirectory: () => pickDirectory.call(pickOwner) as Promise<string | null | undefined>,
-      createWorkspace: input => create.call(workspaces, input),
-      startSession: workspaceId => startSession(workspaceId),
-    }
+    const runtime = addWorkspaceAt(surface)
+    if (runtime !== undefined)
+      surface.addWorkspace = runtime
   },
 }
 
@@ -663,7 +708,7 @@ async function runStartSession(
   workspaceId: AdapterWorkspaceId | undefined,
   warn: AdapterWarn,
 ): Promise<AdapterStartSessionOutcome> {
-  const start = surface.startSession
+  const start = surfaceStartSession(surface)
   if (start !== undefined) {
     const value = start(workspaceId)
     // 异步实现回报解析后的结果（而不是把 pending Promise 当 value 外抛）。
@@ -714,7 +759,7 @@ async function runAddWorkspace(
   options: AdapterAddWorkspaceOptions | undefined,
   warn: AdapterWarn,
 ): Promise<AdapterAddWorkspaceOutcome> {
-  const runtime = surface.addWorkspace
+  const runtime = surfaceAddWorkspace(surface)
   if (runtime === undefined) {
     if (clickIfPresent(ADD_WORKSPACE_SELECTOR))
       return { status: 'delegated' }
@@ -792,9 +837,9 @@ export function defineAdapter(ctx: unknown, options: DefineAdapterOptions = {}):
     'sessions.provideInfo': () => typeof sessions.provideInfo === 'function',
     'workspaces.list': () => typeof workspaces.list?.getSnapshot === 'function',
     'workspaces.create': () => typeof workspaces.create === 'function',
-    'navigation.startSession': () => surface.startSession !== undefined,
+    'navigation.startSession': () => surfaceStartSession(surface) !== undefined,
     'navigation.openSession': () => hasOpenCapability(surface),
-    'navigation.addWorkspace': () => surface.addWorkspace !== undefined,
+    'navigation.addWorkspace': () => surfaceAddWorkspace(surface) !== undefined,
     'composer.workspace-less': () =>
       typeof document !== 'undefined'
       && document.documentElement.getAttribute(COMPOSER_CWD_ATTRIBUTE) === '1',
@@ -811,10 +856,10 @@ export function defineAdapter(ctx: unknown, options: DefineAdapterOptions = {}):
     workspaces,
     service,
     has: capability => capabilityChecks[capability](),
-    resolveStartSession: () => surface.startSession,
+    resolveStartSession: () => surfaceStartSession(surface),
     resolveOpenSession: () => surfaceOpenSession(surface, openBridges.get(surface)),
     sessionList: () => readSessionList(surface),
-    resolveAddWorkspace: () => surface.addWorkspace,
+    resolveAddWorkspace: () => surfaceAddWorkspace(surface),
     startSession: workspaceId => runStartSession(surface, workspaceId, warn),
     openSession: sessionId => runOpenSession(surface, sessionId, warn),
     addWorkspace: callOptions => runAddWorkspace(surface, callOptions, warn),
