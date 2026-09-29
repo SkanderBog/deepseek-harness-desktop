@@ -33,7 +33,7 @@ const Icons: Record<string, IconComponent | undefined> = {
   'plugins': Puzzle,
   'dsh-tauri-ssh': Server,
   'dsh-tauri-pet-settings': Ghost,
-  'better-sidebar': LayoutSplitSideContentRight
+  'better-sidebar': LayoutSplitSideContentRight,
 }
 
 export function SettingsSidebar(_props: SettingsSidebarProps): ReactElement | null {

@@ -76,7 +76,7 @@ export default c([
   }),
   c('[data-slot="settings.section"] > div', {
     maxWidth: 'none !important',
-    paddingBottom: '24px'
+    paddingBottom: '24px',
   }),
   c('[data-slot="conversation.chat.turnTail"]', [
     c('[class$="card"]', {
