@@ -1,8 +1,3 @@
-# 官方「已归档会话」设置页：与本插件的归档分区重复，且只支持取消归档、不能删除。
-# 默认在加载层关闭该入口（0.1.6 起存在该行；旧内核无此 id 时仅告警跳过，不影响启动）。
-- id: ui-settings-unarchive-sessions
-  disabled: true
-
 - insert:
     - id: dsh-tauri-archive
       name: dsh-tauri-archive

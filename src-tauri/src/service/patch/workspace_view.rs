@@ -15,7 +15,11 @@
 //!
 //! 目标选择：**活动核心**的 `dsh-client-ui-workspace/lib/client.js`（web 侧由 dsh 的
 //! web 服务直接读该文件），读写与幂等判定统一交给 [`crate::utils::patch_dsh`]。
-//! 锚点缺失（上游换了实现，或已经是 0.1.6 的 `delete` 写法）一律安全跳过，不阻断启动。
+//!
+//! 锚点按语句逐条独立判定（issue #762）：0.1.7 起上游把第三条 `Object.entries(...)`
+//! 换成了 `delete d.sessionUpdatedAtByAccount;`，三行连排的整块锚点随之失配，
+//! 前两条的 `?? {}` 保护也跟着静默失效。逐条放宽后，存活几条就放宽几条，
+//! 只有三条语句全都不在场（上游整体改写该 action）才判定锚点缺失并安全跳过。
 //!
 //! 挂点：`service::workflow::launch` 启动 dsh 进程前的补丁链（最佳努力，失败只告警）。
 
@@ -45,20 +49,29 @@ const SESSION_UPDATED_AT_PATCHED: &str =
 const WORKSPACE_CLIENT_JS: &str =
     "node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js";
 
+/// 逐条锚点（原写法 → 放宽写法）。独立判定、独立替换：上游只要还留着其中一条，
+/// 这条的 `?? {}` 保护就必须生效，不被其它条目的增删连坐。
+const RETENTION_STATEMENTS: [(&str, &str); 3] = [
+    (GROUP_EXPANSION_ORIGINAL, GROUP_EXPANSION_PATCHED),
+    (SESSION_ORDER_ORIGINAL, SESSION_ORDER_PATCHED),
+    (SESSION_UPDATED_AT_ORIGINAL, SESSION_UPDATED_AT_PATCHED),
+];
+
 fn patch_source(source: &str) -> PatchOutcome {
     if source.contains(PATCH_MARKER) {
         return PatchOutcome::AlreadyPatched;
     }
-    if !source.contains(GROUP_EXPANSION_ORIGINAL)
-        || !source.contains(SESSION_ORDER_ORIGINAL)
-        || !source.contains(SESSION_UPDATED_AT_ORIGINAL)
-    {
+    let mut patched = source.to_string();
+    let mut relaxed = 0usize;
+    for (original, replacement) in RETENTION_STATEMENTS {
+        if source.contains(original) {
+            patched = patched.replacen(original, replacement, 1);
+            relaxed += 1;
+        }
+    }
+    if relaxed == 0 {
         return PatchOutcome::AnchorMissing;
     }
-    let patched = source
-        .replacen(GROUP_EXPANSION_ORIGINAL, GROUP_EXPANSION_PATCHED, 1)
-        .replacen(SESSION_ORDER_ORIGINAL, SESSION_ORDER_PATCHED, 1)
-        .replacen(SESSION_UPDATED_AT_ORIGINAL, SESSION_UPDATED_AT_PATCHED, 1);
     PatchOutcome::Patched(patched)
 }
 
@@ -96,25 +109,49 @@ mod tests {
         assert_eq!(patched.matches("filter(([key]) => retained.has(key)))").count(), 3);
     }
 
+    /// 0.1.7 起上游把第三条换成 `delete d.sessionUpdatedAtByAccount;`（issue #762 现场）。
+    fn fixture_after_delete() -> String {
+        format!(
+            "\t\t\t\t\tretainAccountKeys: (d, workspaceKeys) => {{\n\t\t\t\t\t\tconst retained = new Set(workspaceKeys);\n\t\t\t\t\t\t{GROUP_EXPANSION_ORIGINAL}\n\t\t\t\t\t\t{SESSION_ORDER_ORIGINAL}\n\t\t\t\t\t\tdelete d.sessionUpdatedAtByAccount;\n\t\t\t\t\t}},\n"
+        )
+    }
+
+    #[test]
+    fn relaxes_surviving_keys_after_upstream_switched_to_delete() {
+        let PatchOutcome::Patched(patched) = patch_source(&fixture_after_delete()) else {
+            panic!("expected patched source");
+        };
+        assert!(patched.contains("Object.entries(d.groupExpansion ?? {})"));
+        assert!(patched.contains("Object.entries(d.sessionOrderByAccount ?? {})"));
+        assert!(patched.contains("delete d.sessionUpdatedAtByAccount;"));
+        assert_eq!(patched.matches(PATCH_MARKER).count(), 2);
+    }
+
     #[test]
     fn patch_is_idempotent() {
-        let PatchOutcome::Patched(patched) = patch_source(&fixture()) else {
+        for layout in [fixture(), fixture_after_delete()] {
+            let PatchOutcome::Patched(patched) = patch_source(&layout) else {
+                panic!("expected Patched");
+            };
+            assert_eq!(patch_source(&patched), PatchOutcome::AlreadyPatched);
+        }
+    }
+
+    #[test]
+    fn skips_when_retention_statements_are_gone() {
+        // 上游整体改写该 action：三条语句全不在，不能凭残缺片段猜着改。
+        let rewritten =
+            "\t\t\t\t\tretainAccountKeys: (d) => {\n\t\t\t\t\t\tdelete d.groupExpansion;\n\t\t\t\t\t},\n";
+        assert_eq!(patch_source(rewritten), PatchOutcome::AnchorMissing);
+    }
+
+    #[test]
+    fn leaves_lookalike_from_entries_untouched() {
+        let lookalike = "d.sessionOrderByAccount = Object.fromEntries(Object.entries(source.members).map(([key, members]) => {";
+        let source = format!("{}{lookalike}", fixture());
+        let PatchOutcome::Patched(patched) = patch_source(&source) else {
             panic!("expected Patched");
         };
-        assert_eq!(patch_source(&patched), PatchOutcome::AlreadyPatched);
-    }
-
-    #[test]
-    fn skips_when_anchor_missing() {
-        // 0.1.6 及以后：字段被删，`retainAccountKeys` 只剩两条语句。
-        let newer = format!(
-            "const retained = new Set(workspaceKeys);\n{GROUP_EXPANSION_ORIGINAL}\n{SESSION_ORDER_ORIGINAL}\ndelete d.sessionUpdatedAtByAccount;\n"
-        );
-        assert_eq!(patch_source(&newer), PatchOutcome::AnchorMissing);
-    }
-
-    #[test]
-    fn skips_partial_upstream_layout() {
-        assert_eq!(patch_source(GROUP_EXPANSION_ORIGINAL), PatchOutcome::AnchorMissing);
+        assert!(!patched.contains("Object.entries(source.members ?? {})"));
     }
 }

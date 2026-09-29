@@ -34,6 +34,21 @@ const NODE_PROBE_SCRIPT: &str = "process.stdout.write(process.platform + ':' + p
 const NATIVE_IMPORT_SCRIPT: &str = "await import('sharp'); await import('koffi')";
 /// 探测脚本的结果标记行前缀（脚本 stdout 里可能混有原生模块自身的输出）
 const NATIVE_PROBE_MARKER: &str = "__DSH_NATIVE_PROBE__";
+/// 已核验通过的原生依赖结论戳（issue #766）。
+///
+/// 探测要启动 node 子进程、把核心 `node_modules` 下每个原生包 require 一遍，前面还要
+/// 再起一个子进程探测平台/架构，健康机器上这两步是纯开销。而结论在「同一个 node
+/// 运行时 + 同一份核心 `node_modules`」下是稳定的，把结论连同输入指纹落到基础目录，
+/// 命中即直接放行。
+///
+/// 只写 Ready：失败/未知一律不落盘，绝不把一次性修复结果固化成「以后都不用查」。
+/// 指纹覆盖所有会造成结论变化的现实可变项——node 可执行文件身份（路径 + 大小 +
+/// 修改时间）、核心目录与核心版本、`node_modules` 前两层的条目（名字 + 修改时间）：
+/// 核心更新、node 升级/替换、平台包增删、`node_modules` 被重建都会失配，从而必然
+/// 重新探测。清空依赖目录或删掉这个文件即可强制回到「每次探测」。
+const NATIVE_PROBE_STAMP_FILE: &str = "core-native-probe.stamp.json";
+/// 指纹采集的条目上限：`node_modules` 异常膨胀时不至于把启动拖慢
+const NATIVE_PROBE_STAMP_MAX_ENTRIES: usize = 512;
 /// 原生模块探测脚本：列出无法被当前运行时加载的原生模块。
 ///
 /// 1. `sharp` / `koffi`：NAPI 可选依赖，缺目标平台包时动态 import 失败（原有修复路径）；
@@ -48,6 +63,9 @@ const { join } = await import('node:path');
 const root = process.cwd();
 const loader = createRequire(join(root, 'dsh-native-probe.cjs'));
 const failures = [];
+// 扫描中途抛错时置位：此时 failures 可能只是「还没扫到」的空清单，绝不能当成
+// 「原生依赖都正常」报上去（见脚本末尾的标记行输出条件）。
+let incomplete = false;
 const describe = (error) => String((error && error.message) || error);
 const isAbi = (text) => text.includes('NODE_MODULE_VERSION');
 const attempt = (name, target) => {
@@ -99,8 +117,11 @@ try {
   }
 } catch (error) {
   process.stderr.write('native addon scan failed: ' + describe(error) + '\n');
+  incomplete = true;
 }
-process.stdout.write('__DSH_NATIVE_PROBE__' + JSON.stringify(failures) + '\n');
+// 扫描没做完就不输出标记行：Rust 侧据此拿到「结论未知」（进而回退到 sharp/koffi
+// 探测、不写结论戳），而不是一份「没有失败」的空清单被误判成 Ready。
+if (!incomplete) process.stdout.write('__DSH_NATIVE_PROBE__' + JSON.stringify(failures) + '\n');
 "#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,6 +226,21 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
 
     link_required_plugins(app_handle, &core_root)?;
 
+    // 已核验过的运行时直接放行：跳过平台/架构探测与原生模块探测两个 node 子进程
+    // （issue #766）。指纹失配、戳缺失或不可解析时一律走原探测路径；指纹本身不完整
+    // （`None`）时既不比对也不落盘。
+    let stamp_key = native_probe_stamp_key(app_handle, &node, &core_root);
+    if let Some(key) = stamp_key.as_deref() {
+        if let Some((stored, platform, arch)) = read_native_probe_stamp(app_handle) {
+            if stored == key {
+                log::debug!(
+                    "Bundled core native dependencies are ready for {platform}:{arch} (cached)"
+                );
+                return Ok(());
+            }
+        }
+    }
+
     let target = detect_node_target(&node, &core_root).await?;
     let mut probe = probe_native_modules(&node, &core_root).await;
     if probe.is_ready() {
@@ -213,6 +249,9 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
             target.platform,
             target.arch
         );
+        if let Some(key) = stamp_key.as_deref() {
+            write_native_probe_stamp(app_handle, key, &target);
+        }
         return Ok(());
     }
     if let NativeProbe::Unknown(reason) = probe.clone() {
@@ -726,6 +765,149 @@ fn read_package_name(path: &Path) -> Result<Option<String>, String> {
         .get("name")
         .and_then(|value| value.as_str())
         .map(str::to_owned))
+}
+
+/// 结论戳文件路径：放在依赖根下。清空依赖目录（等价于重新装配）会一并清掉它。
+fn native_probe_stamp_path(app_handle: &AppHandle) -> PathBuf {
+    crate::config::get_base_dir(app_handle).join(NATIVE_PROBE_STAMP_FILE)
+}
+
+/// 原生依赖探测的输入指纹：node 身份 + 核心目录与版本 + `node_modules` 前两层条目
+/// （含原生包自带的产物目录）。
+///
+/// 全部是廉价的元数据读取（不启动子进程、不递归进包内部）。取「前两层」而不是只取
+/// 顶层，是为了让 scope 包（`@scope/name`）的增删也能被感知；额外记录产物目录的修改
+/// 时间，是因为原地重写 `.node` 只改 `build/Release` 这类目录、不改包目录本身。
+///
+/// 任何让指纹**不完整**的情况（目录读不到、条目数超出上限而只能截断）都返回 `None`：
+/// 截断过的指纹可能刚好和上次的完整指纹撞上，反而跳过一次本该做的探测。宁可不缓存。
+fn native_probe_stamp_key(app_handle: &AppHandle, node: &Path, core_root: &Path) -> Option<String> {
+    use std::fmt::Write as _;
+
+    let mut key = String::new();
+    let _ = write!(key, "node={}", node.display());
+    if let Ok(meta) = std::fs::metadata(node) {
+        let _ = write!(key, ":{}", meta.len());
+        let _ = write!(key, ":{}", file_modified_nanos(&meta));
+    }
+    let _ = write!(
+        key,
+        "\ncore={}\nversion={}",
+        core_root.display(),
+        crate::service::core::active_version(app_handle).unwrap_or_default()
+    );
+
+    let mut entries: Vec<String> = Vec::new();
+    collect_probe_stamp_entries(&core_root.join("node_modules"), &mut entries)?;
+    if entries.len() > NATIVE_PROBE_STAMP_MAX_ENTRIES {
+        return None;
+    }
+    entries.sort_unstable();
+    for entry in entries {
+        key.push('\n');
+        key.push_str(&entry);
+    }
+    Some(key)
+}
+
+/// 原生包自带的产物目录，与 `NATIVE_PROBE_SCRIPT` 的候选判定同源
+const NATIVE_ARTIFACT_DIRS: [&str; 4] = ["build/Release", "build/Debug", "prebuilds", "prebuilt"];
+
+/// 采集指纹条目：`node_modules` 顶层（`.bin` 跳过，`.pnpm` 只记自身）与 scope 目录的
+/// 下一层，每项再带上其原生包产物目录。任一目录读不到即返回 `None` —— 不完整的指纹
+/// 不能用来断言「和上次一样」，少记一项就可能漏掉一次真实变化。
+fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>) -> Option<()> {
+    let reader = std::fs::read_dir(dir).ok()?;
+    for entry in reader {
+        let entry = entry.ok()?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name == ".bin" {
+            continue;
+        }
+        push_probe_stamp_entry(&entry.path(), name, out);
+        if !name.starts_with('@') {
+            continue;
+        }
+        let scope = std::fs::read_dir(entry.path()).ok()?;
+        for inner in scope {
+            let inner = inner.ok()?;
+            let inner_name = inner.file_name();
+            let Some(inner_name) = inner_name.to_str() else {
+                continue;
+            };
+            push_probe_stamp_entry(&inner.path(), &format!("{name}/{inner_name}"), out);
+        }
+    }
+    Some(())
+}
+
+/// 记录一个包的目录时间与其产物目录时间。产物目录不存在时只留包目录一项，
+/// 避免为绝大多数非原生包平白拉长指纹。
+fn push_probe_stamp_entry(dir: &Path, label: &str, out: &mut Vec<String>) {
+    out.push(format!("{label}={}", path_modified_nanos(dir)));
+    for relative in NATIVE_ARTIFACT_DIRS {
+        let artifact = dir.join(relative);
+        if artifact.is_dir() {
+            out.push(format!(
+                "{label}/{relative}={}",
+                path_modified_nanos(&artifact)
+            ));
+        }
+    }
+}
+
+fn path_modified_nanos(path: &Path) -> String {
+    match std::fs::metadata(path) {
+        Ok(meta) => file_modified_nanos(&meta),
+        Err(_) => "-".to_string(),
+    }
+}
+
+fn file_modified_nanos(meta: &std::fs::Metadata) -> String {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|since| since.as_nanos().to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+/// 读取结论戳；文件缺失、不可解析或字段不全时返回 None（视为无戳）
+fn read_native_probe_stamp(app_handle: &AppHandle) -> Option<(String, String, String)> {
+    let raw = std::fs::read_to_string(native_probe_stamp_path(app_handle)).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    Some((
+        value.get("key")?.as_str()?.to_string(),
+        value.get("platform")?.as_str()?.to_string(),
+        value.get("arch")?.as_str()?.to_string(),
+    ))
+}
+
+/// 写结论戳：只在探测确认 Ready 后调用。写失败不影响启动，只降级为「下次仍探测」。
+fn write_native_probe_stamp(app_handle: &AppHandle, key: &str, target: &NodeTarget) {
+    let path = native_probe_stamp_path(app_handle);
+    if let Some(parent) = path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            log::debug!(
+                "CORE_NATIVE_PROBE_STAMP_WRITE_FAILED: {}: {error}",
+                parent.display()
+            );
+            return;
+        }
+    }
+    let value = serde_json::json!({
+        "key": key,
+        "platform": &target.platform,
+        "arch": &target.arch,
+    });
+    if let Err(error) = std::fs::write(&path, value.to_string()) {
+        log::debug!(
+            "CORE_NATIVE_PROBE_STAMP_WRITE_FAILED: {}: {error}",
+            path.display()
+        );
+    }
 }
 
 async fn detect_node_target(node: &Path, core_root: &Path) -> Result<NodeTarget, String> {

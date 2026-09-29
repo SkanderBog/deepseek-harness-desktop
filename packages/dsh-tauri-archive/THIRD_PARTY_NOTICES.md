@@ -16,7 +16,6 @@ Integration points:
 - Official row/menu recognition: only official `itemWrap`-structured primitives entries are recognised, and workspace rows are matched by the official row title (`workspace-patch.utils.ts:13,32,52`).
 - Official service surface: `src/client/types/runtime.ts:24-29` declares the official sessions (list subscription, refresh, open, bind, fork) and workspaces surfaces; `open` moved in kernel 0.1.7 and is restored by this repo's adapter instead of being re-implemented.
 - Official archive action mirroring: a session archived through the official menu appears in this package's page immediately (`src/client/hooks/use-archive-view.ts:15`).
-- Official row disabled: `cordis.patch.yml` disables the official row id `ui-settings-unarchive-sessions`, whose page duplicates this package's archive section and only supports unarchive, never delete.
 
 Deliberate difference:
 

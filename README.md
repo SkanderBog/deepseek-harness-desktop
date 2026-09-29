@@ -85,7 +85,7 @@ brew install dsh-tauri/desktop/deepseek-harness
 
 首次运行会下载 Node 运行时与 Harness 内核（如已经安装 `dsh` ，则使用安装版本），随后直接进入 `http://127.0.0.1:3080` 的 Harness 界面；此后完全本地运行，无需联网。
 
-**系统要求：** Windows 10+ · macOS 10.15+ · Linux（AppImage / .deb）· 首次运行需要网络 · Harness 内核 **0.1.5-rc.1** 或更高
+**系统要求：** Windows 10+ · macOS 12+（Safari 17.4+）· Linux（AppImage / .deb）· 首次运行需要网络 · Harness 内核 **0.1.5-rc.1** 或更高
 
 **离线安装包（Windows / macOS / Linux）：** Releases 里另有 `Deepseek.Harness.Desktop_Bundle_<版本>.<扩展名>`：Node 运行时与 Harness 内核随包分发，**安装后首次启动无需联网**，适合内网 / 白名单环境（预设与社区插件仍需联网；git 相关能力如工作树需系统已装 Git）。Linux 的随包资源在 `.deb` 的 `/usr/lib` 下，root 安装后需补齐该目录权限。
 

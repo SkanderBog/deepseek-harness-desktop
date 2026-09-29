@@ -90,7 +90,7 @@ brew install dsh-tauri/desktop/deepseek-harness
 
 The first run downloads the Node runtime and Harness core (if `dsh` is already installed, the installed version is used), then takes you straight into the harness at `http://127.0.0.1:3080`; after that everything runs locally — no network required.
 
-**System requirements:** Windows 10+ · macOS 10.15+ · Linux (AppImage / .deb) · network on first launch · Harness core **0.1.5-rc.1** or later
+**System requirements:** Windows 10+ · macOS 12+ (Safari 17.4+) · Linux (AppImage / .deb) · network on first launch · Harness core **0.1.5-rc.1** or later
 
 **Offline bundle (Windows / macOS / Linux):** Releases also ship `Deepseek.Harness.Desktop_Bundle_<version>.<ext>` — the Node runtime and Harness core are bundled in, so the **first launch needs no network**. Built for air-gapped / whitelisted machines (preset and community plugins still need network, and git-backed features such as worktree need a system Git). The Linux bundle ships inside the `.deb`, whose `/usr/lib` resources are read-only, so the bundled core's directory permissions have to be fixed after a root install.
 
