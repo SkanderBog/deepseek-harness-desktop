@@ -45,10 +45,11 @@ export const RECOMMENDED_DSH_VERSION = '0.2.0-rc.2'
  * fails (offline, rate-limited, or the recommended version vanished). A
  * concrete tag — never an unknown version. It names a release of the
  * packaging repository, so it advances only once that repository has
- * actually published the corresponding build; until `0.2.0-rc.2` is
- * packaged it stays on `0.2.0-rc.1`.
+ * actually published the corresponding build; `0.2.0-rc.2` is packaged as
+ * `dsh-0.2.0-rc.2-36556493178`, so the fallback no longer trails the
+ * recommendation.
  */
-export const FALLBACK_DSH_TAG = 'dsh-0.2.0-rc.1-36424634893'
+export const FALLBACK_DSH_TAG = 'dsh-0.2.0-rc.2-36556493178'
 
 /** The official DSH project repository (org verified on GitHub). */
 export const OFFICIAL_INSTALL_REPO = 'https://github.com/deepseek-ai/deepseek-harness.git'

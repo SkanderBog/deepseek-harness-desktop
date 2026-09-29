@@ -48,7 +48,7 @@ const PKG_REPO = 'dsh-tauri-desk/deepseek-harness-pkg'
 
 /** The pinned core and its release/npm shapes: fixtures follow the pin, never the reverse. */
 const DSH_VERSION = RECOMMENDED_DSH_VERSION
-const DSH_TAG = `dsh-${DSH_VERSION}-36424634893`
+const DSH_TAG = `dsh-${DSH_VERSION}-36556493178`
 const DSH_TGZ = `dsh-${DSH_VERSION}.tgz`
 const NPM_TGZ = `https://registry.npmjs.org/@deepseek-ai/dsh/-/${DSH_TGZ}`
 const MIRROR_TGZ = `https://registry.npmmirror.com/@deepseek-ai/dsh/-/${DSH_TGZ}`

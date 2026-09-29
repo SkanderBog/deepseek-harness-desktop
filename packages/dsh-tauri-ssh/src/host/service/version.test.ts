@@ -12,6 +12,7 @@ import {
 
 /** A realistic newest-first release list (test tags republishing included). */
 const RELEASES = [
+  { tag: 'dsh-0.2.0-rc.2-36556493178', prerelease: false },
   { tag: 'dsh-0.2.0-preview.1-32490000001', prerelease: true },
   { tag: 'dsh-0.2.0-rc.1-36424634893', prerelease: false },
   { tag: 'dsh-0.1.2-rc.1-33729514615', prerelease: false },
@@ -50,8 +51,8 @@ describe('isPreviewTag', () => {
 
 describe('pickReleaseTag', () => {
   it('resolves the recommended version onto its release tag (recommended path)', () => {
-    const resolved = pickReleaseTag(RELEASES, { recommended: '0.2.0-rc.1' })
-    expect(resolved).toMatchObject({ tag: 'dsh-0.2.0-rc.1-36424634893', version: '0.2.0-rc.1', source: 'recommended' })
+    const resolved = pickReleaseTag(RELEASES, { recommended: '0.2.0-rc.2' })
+    expect(resolved).toMatchObject({ tag: 'dsh-0.2.0-rc.2-36556493178', version: '0.2.0-rc.2', source: 'recommended' })
     expect(resolved.notes).toEqual([])
   })
 
@@ -92,7 +93,7 @@ describe('pickReleaseTag', () => {
   it('falls back to the newest stable release when the recommended version is absent', () => {
     const resolved = pickReleaseTag(RELEASES, { recommended: '0.3.0' })
     expect(resolved.source).toBe('latest-stable')
-    expect(resolved.tag).toBe('dsh-0.2.0-rc.1-36424634893')
+    expect(resolved.tag).toBe('dsh-0.2.0-rc.2-36556493178')
     expect(resolved.notes[0]).toContain('回退最新稳定')
   })
 
