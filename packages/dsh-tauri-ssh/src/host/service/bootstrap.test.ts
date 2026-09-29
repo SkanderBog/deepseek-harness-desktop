@@ -33,7 +33,7 @@ import {
   splitBundleProbeStdout,
   startCommandFor,
 } from './bootstrap'
-import { RECOMMENDED_DSH_VERSION } from './version'
+import { FALLBACK_DSH_TAG, RECOMMENDED_DSH_VERSION } from './version'
 
 const profile: MachineProfile = {
   id: MachineId('m1'),
@@ -254,7 +254,7 @@ describe('planRemoteInstall', () => {
     }))
     if (plan.dsh.kind !== 'pkg-zip')
       throw new Error('expected pkg-zip')
-    expect(plan.dsh.tag).toBe(DSH_TAG)
+    expect(plan.dsh.tag).toBe(FALLBACK_DSH_TAG)
     expect(plan.notes.join('\n')).toContain('release 列表获取失败')
   })
 

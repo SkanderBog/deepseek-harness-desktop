@@ -1,7 +1,7 @@
 {
   "engines": {
     "dsh": {
-      "recommend": "0.2.0-rc.1",
+      "recommend": "0.2.0-rc.2",
       "minimum": "0.1.5-rc.1"
     },
     "node": {
@@ -43,7 +43,7 @@
     },
     "dsh": {
       "engine": {
-        "recommend": "0.2.0-rc.1",
+        "recommend": "0.2.0-rc.2",
         "minimum": "0.1.5-rc.1"
       },
       "entry": "node_modules/@deepseek-ai/dsh/lib/bin.js",
@@ -196,7 +196,7 @@
         "checked": false,
         "version": [
           { "version": "^2.11.0", "dsh": "^0.1.5-rc.1" },
-          { "version": "latest", "dsh": "^0.1.7-rc.1" },
+          { "version": "^2.11.3", "dsh": "^0.1.7-rc.1" },
           { "version": "latest", "dsh": "^0.2.0-rc.1" }
         ]
       },

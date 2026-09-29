@@ -116,7 +116,7 @@ describe('pickReleaseTag', () => {
   })
 
   it('notes an unresolvable version pin before falling back', () => {
-    const resolved = pickReleaseTag(RELEASES, { ref: '9.9.9' })
+    const resolved = pickReleaseTag(RELEASES, { ref: '9.9.9', recommended: '0.2.0-rc.1' })
     expect(resolved.source).toBe('recommended')
     expect(resolved.notes[0]).toContain('回退推荐/最新稳定版')
   })

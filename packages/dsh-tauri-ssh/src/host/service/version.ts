@@ -38,12 +38,15 @@ export interface ResolvedDshTag {
  * verified against); installs pin this version instead of following whatever
  * "latest" happens to be.
  */
-export const RECOMMENDED_DSH_VERSION = '0.2.0-rc.1'
+export const RECOMMENDED_DSH_VERSION = '0.2.0-rc.2'
 
 /**
  * The last known-good packaged release tag, used when version resolution
  * fails (offline, rate-limited, or the recommended version vanished). A
- * concrete tag — never an unknown version.
+ * concrete tag — never an unknown version. It names a release of the
+ * packaging repository, so it advances only once that repository has
+ * actually published the corresponding build; until `0.2.0-rc.2` is
+ * packaged it stays on `0.2.0-rc.1`.
  */
 export const FALLBACK_DSH_TAG = 'dsh-0.2.0-rc.1-36424634893'
 

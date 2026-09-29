@@ -49,7 +49,7 @@ mapping entry**.
 
 ```jsonc
 {
-  "engines": { "dsh": { "recommend": "0.2.0-rc.1", "minimum": "0.1.5-rc.1" } },
+  "engines": { "dsh": { "recommend": "0.2.0-rc.2", "minimum": "0.1.5-rc.1" } },
   "dependencies": {
     "node": {
       "engine": ">=22.22.0",
