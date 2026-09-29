@@ -6,7 +6,7 @@
 
 use crate::config;
 use crate::logger;
-use crate::service::core;
+use crate::service::{core, plugin, profile};
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
@@ -144,6 +144,40 @@ pub async fn clear_service_logs(app_handle: AppHandle) -> Result<(), String> {
     std::fs::write(&log_path, "").map_err(|e| e.to_string())
 }
 
+/// 拼装「复制日志」的环境信息段（纯函数，便于单测锁定报障格式）。
+///
+/// 报障时最常缺的就是「当前档案」与「装了哪些插件、什么版本」：插件问题几乎都
+/// 与档案内的插件组合相关，没有这两项只能反复向用户追问。因此这里在原有的
+/// app/dsh/node/os 之外补 `profile` 与 `plugins` 两块。
+///
+/// `dsh_version` 缺失（核心未安装）时整行省略：`dsh: -` 会让用户误以为核心在
+/// 但版本不明。插件为空时写 `(none)`，与「读取失败」在文本上无法区分但语义一致
+/// （都是没有可报的插件），无需额外区分。
+fn format_env_info(
+    app_version: &str,
+    dsh_version: Option<&str>,
+    node_version: &str,
+    os: &str,
+    arch: &str,
+    profile: &str,
+    plugins: &[String],
+) -> String {
+    let mut lines = vec![format!("app: {app_version}")];
+    if let Some(version) = dsh_version {
+        lines.push(format!("dsh: {version}"));
+    }
+    lines.push(format!("node: {node_version}"));
+    lines.push(format!("os: {os} ({arch})"));
+    lines.push(format!("profile: {profile}"));
+    lines.push(format!("plugins: {}", plugins.len()));
+    if plugins.is_empty() {
+        lines.push("(none)".to_string());
+    } else {
+        lines.extend(plugins.iter().cloned());
+    }
+    lines.join("\n")
+}
+
 /// 读取运行日志（DSH 服务日志 + 桌面端 Rust 运行日志），格式化为便于
 /// 反馈/报障复制的纯文本块：`### 环境信息`、`### 服务日志`、`### 前台日志`
 /// 与 `### 后台日志` 四段。
@@ -197,18 +231,33 @@ pub async fn read_run_logs(app_handle: AppHandle) -> Result<String, String> {
         lines[start..].join("\n")
     };
 
-    // 环境信息：桌面端应用版本、dsh 发行版本、Node 版本与系统平台/架构，便于报障时快速定位环境差异
-    let dsh_version = core::active_version(&app_handle)
-        .or_else(|| config::get_dsh_version(&app_handle))
-        .map(|v| format!("dsh: {v}\n"))
-        .unwrap_or_default();
-    let env_text = format!(
-        "app: {}\n{}node: {}\nos: {} ({})",
-        app_handle.package_info().version,
-        dsh_version,
-        config::get_active_node_version(),
+    // 环境信息：桌面端应用版本、dsh 发行版本、Node 版本、系统平台/架构，以及当前
+    // 档案名与已安装插件列表，便于报障时快速定位环境差异。
+    // 插件名取 npm 包名（profile `dependencies` 的依赖键），与 `dsh plugin <cmd> <id>`
+    // 及插件面板一致；版本解析不出时只留包名，避免出现读起来像被截断的 `name@`。
+    let dsh_version =
+        core::active_version(&app_handle).or_else(|| config::get_dsh_version(&app_handle));
+    let mut plugin_lines: Vec<String> = plugin::watch::list(&app_handle)
+        .iter()
+        .map(|p| {
+            if p.version.is_empty() {
+                p.id.clone()
+            } else {
+                format!("{}@{}", p.id, p.version)
+            }
+        })
+        .collect();
+    // 稳定排序：插件面板按加载顺序展示，报障块按包名字典序，便于两次日志对比差异
+    plugin_lines.sort();
+    let app_version = app_handle.package_info().version.to_string();
+    let env_text = format_env_info(
+        &app_version,
+        dsh_version.as_deref(),
+        &config::get_active_node_version(),
         std::env::consts::OS,
         std::env::consts::ARCH,
+        &profile::active_profile(&app_handle),
+        &plugin_lines,
     );
 
     let service_text = read_tail(&service, MAX_LINES);
@@ -250,8 +299,71 @@ pub async fn open_external_url(app_handle: AppHandle, url: String) -> Result<(),
 
 #[cfg(test)]
 mod tests {
+    use super::format_env_info;
     use super::is_frontend_log_line;
     use super::tail_bytes;
+
+    #[test]
+    fn env_info_carries_profile_and_plugins() {
+        let text = format_env_info(
+            "0.19.0",
+            Some("0.1.7-rc.2"),
+            "24.19.0",
+            "windows",
+            "x86_64",
+            "web",
+            &[
+                "dshmarket@0.22.1".to_string(),
+                "@scope/tool@1.2.3".to_string(),
+            ],
+        );
+        assert_eq!(
+            text,
+            "app: 0.19.0\ndsh: 0.1.7-rc.2\nnode: 24.19.0\nos: windows (x86_64)\nprofile: web\nplugins: 2\ndshmarket@0.22.1\n@scope/tool@1.2.3"
+        );
+    }
+
+    #[test]
+    fn env_info_omits_dsh_line_when_version_unknown() {
+        let text = format_env_info("0.19.0", None, "24.19.0", "linux", "aarch64", "tauri", &[]);
+        assert_eq!(
+            text,
+            "app: 0.19.0\nnode: 24.19.0\nos: linux (aarch64)\nprofile: tauri\nplugins: 0\n(none)"
+        );
+        assert!(!text.contains("dsh:"));
+    }
+
+    #[test]
+    fn env_info_marks_empty_plugin_list_explicitly() {
+        let text = format_env_info(
+            "1.0.0",
+            Some("0.1.7"),
+            "22.19.0",
+            "macos",
+            "aarch64",
+            "web",
+            &[],
+        );
+        assert!(text.contains("plugins: 0"));
+        assert!(text.ends_with("(none)"));
+    }
+
+    #[test]
+    fn env_info_keeps_plugin_without_version_readable() {
+        // 版本解析失败时只留包名，不能出现 `name@` 这种看起来被截断的形态
+        let text = format_env_info(
+            "1.0.0",
+            Some("0.1.7"),
+            "22.19.0",
+            "windows",
+            "x86_64",
+            "web",
+            &["dsh-broken".to_string()],
+        );
+        assert!(text.contains("plugins: 1"));
+        assert!(text.contains("dsh-broken"));
+        assert!(!text.contains("dsh-broken@"));
+    }
 
     #[test]
     fn frontend_line_detected() {
