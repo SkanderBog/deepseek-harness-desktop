@@ -36,6 +36,7 @@ pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
     this.options = options;
     this.tag = options.tag || '';
     this.onclick = null;
+    this.onaction = null;
     this.onclose = null;
     this.onerror = null;
     this.onshow = null;
@@ -49,6 +50,7 @@ pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
       tag: this.tag,
       requireInteraction: !!options.requireInteraction,
       sessionId: options.sessionId || sessionIdFromTag(this.tag),
+      actions: Array.isArray(options.actions) ? options.actions : [],
       href: location.href,
       origin: location.origin
     });
@@ -120,7 +122,11 @@ pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
         break;
       case 'dsh://notification-clicked':
         var instance = pendingOnClicks[data.tag];
-        if (instance && typeof instance.onclick === 'function') {
+        if (!instance) break;
+        // 按钮点击走 onaction（动作 id 由前端约定），点通知本体走 onclick。
+        if (data.action && typeof instance.onaction === 'function') {
+          try { instance.onaction({ action: String(data.action), tag: data.tag }); } catch (_) {}
+        } else if (typeof instance.onclick === 'function') {
           try { instance.onclick(new Event('click')); } catch (_) {}
         }
         break;
@@ -129,20 +135,40 @@ pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
 })();"#;
 
 /// 在 Rust 侧显示一条系统原生通知。
+///
+/// Windows 走自建 toast（可拿到点击与按钮事件），其余平台沿用官方插件。
 #[tauri::command]
 pub fn show_native_notification(
     app: tauri::AppHandle,
     payload: NativeNotificationPayload,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        show_notification_with_actions(&app, payload)
+    }
+    #[cfg(not(windows))]
+    {
+        show_plugin_notification(&app, &payload)
+    }
+}
+
+/// 走官方 `tauri-plugin-notification`：跨平台兜底。
+///
+/// 该插件在桌面端 `show()` 之后即丢弃 `NotificationHandle`
+/// （desktop.rs 里 spawn 一个 async 任务去 show），因此这条路径没有点击回调。
+fn show_plugin_notification(
+    app: &tauri::AppHandle,
+    payload: &NativeNotificationPayload,
 ) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;
 
     let mut builder = app
         .notification()
         .builder()
-        .title(payload.title)
-        .body(payload.body);
+        .title(payload.title.clone())
+        .body(payload.body.clone());
 
-    if let Some(icon_path) = app_icon_temp_path(&app) {
+    if let Some(icon_path) = app_icon_temp_path(app) {
         builder = builder.icon(icon_path.to_string_lossy().into_owned());
     }
 
@@ -151,6 +177,71 @@ pub fn show_native_notification(
     }
 
     builder.show().map_err(|e| e.to_string())
+}
+
+/// Windows：自建 toast 并持有 `NotificationHandle`，把激活事件翻译成
+/// `dsh-notification-clicked` 回传前端（前端据此聚焦会话 / 执行按钮动作）。
+///
+/// `notify-rust` 正是官方插件底层使用的同一个 crate；区别只在于这里不丢弃 handle，
+/// 而是在独立线程上等待响应。
+#[cfg(windows)]
+fn show_notification_with_actions(
+    app: &tauri::AppHandle,
+    payload: NativeNotificationPayload,
+) -> Result<(), String> {
+    use notify_rust::{Notification, NotificationResponse, Timeout};
+    use tauri::Emitter;
+
+    let mut notification = Notification::new();
+    notification
+        .summary(&payload.title)
+        .body(&payload.body)
+        .app_id(&app.config().identifier);
+    if payload.require_interaction.unwrap_or(false) {
+        notification.timeout(Timeout::Never);
+    }
+    if let Some(actions) = payload.actions.as_deref() {
+        for action in actions {
+            notification.action(&action.action, &action.title);
+        }
+    }
+
+    let handle = match notification.show() {
+        Ok(handle) => handle,
+        Err(error) => {
+            log::warn!("[notification] notify-rust toast failed: {error}; falling back to plugin");
+            return show_plugin_notification(app, &payload);
+        }
+    };
+
+    let app = app.clone();
+    let session_id = payload.session_id;
+    let title = payload.title;
+    let tag = payload.tag;
+
+    // `wait_for_response` 会阻塞到用户点掉通知或它自己过期；每个通知一条线程，
+    // 系统 toast 到期会派发 dismissed，线程随之结束。
+    std::thread::spawn(move || {
+        let _ = handle.wait_for_response(move |response: &NotificationResponse| {
+            // Default = 点通知本体；Action(id) = 点按钮；Closed / Reply 不触发聚焦。
+            let action = match response {
+                NotificationResponse::Default => Some(String::new()),
+                NotificationResponse::Action(id) => Some(id.clone()),
+                _ => return,
+            };
+            let _ = app.emit(
+                "dsh-notification-clicked",
+                serde_json::json!({
+                    "sessionId": session_id,
+                    "title": title,
+                    "tag": tag,
+                    "action": action,
+                }),
+            );
+        });
+    });
+
+    Ok(())
 }
 
 /// 在 Windows WebView2 中接管 iframe 内的通知请求并注入原生通知桥。

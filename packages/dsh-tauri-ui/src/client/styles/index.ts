@@ -573,6 +573,10 @@ const TAILWINDCSS_GENERATED = `
     border-style: var(--tw-border-style);
     border-width: 0.5px;
   }
+  .border-b {
+    border-bottom-style: var(--tw-border-style);
+    border-bottom-width: 1px;
+  }
   .border-dashed {
     --tw-border-style: dashed;
     border-style: dashed;
@@ -1160,6 +1164,12 @@ const TAILWINDCSS_GENERATED = `
     &::after {
       content: var(--tw-content);
       corner-shape: round;
+    }
+  }
+  .last\\:border-b-0 {
+    &:last-child {
+      border-bottom-style: var(--tw-border-style);
+      border-bottom-width: 0px;
     }
   }
   .hover\\:bg-\\[var\\(--dsw-alias-bg-layer-4\\)\\] {

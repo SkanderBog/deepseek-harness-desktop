@@ -34,6 +34,8 @@ interface IframeBridgeMessage {
   tag?: string
   sessionId?: string | null
   requireInteraction?: boolean
+  /** 通知桥：插件声明的系统通知按钮（`{ action, title }`） */
+  actions?: { action: string, title: string }[]
   /** 插件异常桥 / 剪贴板图片桥：插件 id 或剪贴板请求 id */
   id?: string
   error?: string
@@ -65,6 +67,8 @@ export interface NotificationClickedPayload {
   sessionId?: string | null
   title?: string
   tag?: string
+  /** 命中的系统通知按钮 action id；点通知本体时为空。 */
+  action?: string | null
 }
 
 export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: IframeProps) {
@@ -167,6 +171,9 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
         tag: data.tag ?? null,
         sessionId: data.sessionId ?? null,
         requireInteraction: Boolean(data.requireInteraction),
+        // 按钮透传给 Rust：Windows 自建 toast 会渲染成系统通知按钮，
+        // 点击后以 `dsh-notification-clicked` 带 action 回来。
+        actions: Array.isArray(data.actions) ? data.actions : [],
       },
     }).catch(error => console.error('[notification] show_native_notification failed:', error))
   }
@@ -221,6 +228,13 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       sessionId: payload.sessionId || undefined,
       title: payload.title || undefined,
       tag: payload.tag || undefined,
+    })
+    // 点击 / 按钮动作回灌给帧内的 Notification 实例：插件注册的
+    // onclick、onaction 回调只存在于 iframe 里，壳层只负责转发。
+    post({
+      type: 'dsh://notification-clicked',
+      tag: payload.tag || undefined,
+      action: payload.action || undefined,
     })
   }
 

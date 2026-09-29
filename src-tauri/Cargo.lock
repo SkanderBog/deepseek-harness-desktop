@@ -1052,6 +1052,7 @@ dependencies = [
  "image",
  "libc",
  "log",
+ "notify-rust",
  "objc2-foundation",
  "rayon",
  "rdev",
