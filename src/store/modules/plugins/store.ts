@@ -464,10 +464,13 @@ export const plugins = defineStore({
       }
       const title = this.progressTitle(processes)
       const description = this.progressDetail === '' ? undefined : this.progressDetail
-      if (this.progressKey === null)
+      // 结果 Toast 会把共享气泡挤出可见限额（见 MAX_VISIBLE_TOASTS）：被淘汰的 key 其
+      // update 静默失效，若继续沿用，后续组就完全没有进度提示，故按「已死」重建。
+      const current = this.progressKey
+      if (current === null || !toast.isActive(current))
         this.progressKey = toast(title, { timeout: 0, isLoading: true, description })
       else
-        toast.update(this.progressKey, { title, isLoading: true, description })
+        toast.update(current, { title, isLoading: true, description })
       const key = this.progressKey
       processes.forEach((process) => {
         process.progressKey = key ?? undefined
@@ -487,10 +490,11 @@ export const plugins = defineStore({
 
     /** 安装日志的末行即加载气泡的副标题（HeroUI 默认气泡的 description 直接读条目 content） */
     setProgressDetail(line: string): void {
-      if (this.progressKey === null)
+      const current = this.progressKey
+      if (current === null || !toast.isActive(current))
         return
       this.progressDetail = line
-      toast.update(this.progressKey, { description: line })
+      toast.update(current, { description: line })
     },
 
     presentResults(group: PluginGroup, results: PluginProcessResult[]): void {

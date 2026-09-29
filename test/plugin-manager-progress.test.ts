@@ -10,15 +10,17 @@ interface ToastCallOptions {
   onClose?: (reason: string) => void
 }
 
-const { invoke, restart, toast, update } = vi.hoisted(() => {
+const { invoke, restart, toast, update, isActive } = vi.hoisted(() => {
   let index = 0
   const updateFn = vi.fn()
+  const isActiveFn = vi.fn(() => true)
   const toastFn = vi.fn((_message: string, _options?: ToastCallOptions): string => `toast-${++index}`)
   return {
     invoke: vi.fn(),
     restart: vi.fn(),
     update: updateFn,
-    toast: Object.assign(toastFn, { close: vi.fn(), update: updateFn, clear: vi.fn() }),
+    isActive: isActiveFn,
+    toast: Object.assign(toastFn, { close: vi.fn(), update: updateFn, clear: vi.fn(), isActive: isActiveFn }),
   }
 })
 
@@ -52,6 +54,8 @@ beforeEach(() => {
   toast.mockClear()
   toast.close.mockClear()
   update.mockClear()
+  isActive.mockReset()
+  isActive.mockReturnValue(true)
   restart.mockClear()
   plugins.groups = []
   plugins.processes = []
@@ -144,5 +148,39 @@ describe('plugins manager progress toast', () => {
 
     expect(results.map(result => [result.process.name, result.ok])).toEqual([['b', true]])
     expect(plugins.progressKey).toBeNull()
+  })
+
+  it('rebuilds the shared bubble after the previous one was evicted by result toasts', async () => {
+    plugins.attachPresenter()
+    let submissions = 0
+    invoke.mockImplementation(async (command: string) => {
+      if (command !== 'update_dsh_plugins')
+        return undefined
+      submissions += 1
+      if (submissions > 1)
+        await new Promise(() => {})
+      return undefined
+    })
+    // 第一组结算时（结果 Toast 之前）标记共享气泡已被挤出可见限额
+    plugins.on('completed', () => {
+      isActive.mockReturnValue(false)
+    })
+
+    const first = plugins.enqueue('upgrade', ['aaa'], RUNTIME)
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(1))
+    void plugins.enqueue('upgrade', ['bbb'], RUNTIME)
+    await first
+
+    await vi.waitFor(() => expect(toast.mock.calls.length).toBeGreaterThanOrEqual(3))
+
+    plugins.setProgressDetail('added 1 package')
+    expect(plugins.progressDetail).toBe('')
+    expect(update).not.toHaveBeenCalledWith(progressKey(), { description: 'added 1 package' })
+
+    const rebuilt = toast.mock.results.at(-1)?.value as string
+    expect(rebuilt).not.toBe(progressKey())
+    expect(toast.mock.calls.at(-1)?.[0]).toBe('Upgrading bbb...')
+    expect(toast.mock.calls.at(-1)?.[1]).toMatchObject({ timeout: 0, isLoading: true })
+    expect(plugins.progressKey).toBe(rebuilt)
   })
 })

@@ -10,7 +10,7 @@ const { invoke, restart, toast } = vi.hoisted(() => {
   return {
     invoke: vi.fn(),
     restart: vi.fn(),
-    toast: Object.assign(toastFn, { close: vi.fn(), update: vi.fn(), clear: vi.fn() }),
+    toast: Object.assign(toastFn, { close: vi.fn(), update: vi.fn(), clear: vi.fn(), isActive: vi.fn(() => true) }),
   }
 })
 

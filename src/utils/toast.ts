@@ -102,7 +102,7 @@ function takeCloseReason(key: string, autoClose: boolean): ToastCloseReason {
 }
 
 /**
- * 统一 toast API：直接调用创建，toast.update/close/clear 通过 key 管理。
+ * 统一 toast API：直接调用创建，toast.update/close/clear/isActive 通过 key 管理。
  * HeroUI 默认气泡直接读队列条目的 content，而 HeroUI ToastQueue 没有 update 方法：
  * 这里原地改写条目 content 并通知 react-stately 队列重渲染，同时触发
  * `hooks['toast.updated']`（见 config/hooks）供桌宠窗口的自定义气泡消费。
@@ -152,6 +152,11 @@ export const toast = Object.assign(
         queue.updateVisibleToasts('update')
       }
       void hooks['toast.updated'].trigger({ key, options })
+    },
+
+    /** 该 key 是否仍是活着的 toast：被限额淘汰后 update/close 都会静默失效 */
+    isActive(key: string): boolean {
+      return placementsKeys.has(key)
     },
 
     close(key: string): void {
