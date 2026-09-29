@@ -1,9 +1,10 @@
-//! 插件 spec 兼容性只读检查：解析包名 → 读 npm registry 的 `latest` 清单 →
+//! 插件 spec 兼容性只读检查：解析包名与声明的版本 → 读 npm registry 对应清单 →
 //! 提取 `@deepseek-ai/dsh` 家族依赖 → 用 [`crate::service::plugin::compat`] 判定
 //! 是否匹配运行时核心版本。全程不落盘、不起子进程，供插件市场在安装前提示。
 
 use std::time::Duration;
 
+use semver::Version;
 use tauri::AppHandle;
 
 use crate::service::plugin::compat::{self, PluginInspect};
@@ -44,9 +45,15 @@ async fn inspect_one(client: &reqwest::Client, spec: &str, runtime: Option<&str>
         return problem_result(raw, None, "invalid-spec");
     };
 
+    let requested = requested_version(raw, &name);
+    let exact = requested
+        .as_deref()
+        .filter(|value| Version::parse(value).is_ok());
+    let target = exact.unwrap_or("latest");
     let url = format!(
-        "https://registry.npmjs.org/{}/latest",
-        encode_registry_name(&name)
+        "https://registry.npmjs.org/{}/{}",
+        encode_registry_name(&name),
+        target
     );
     let response = match client
         .get(&url)
@@ -76,7 +83,13 @@ async fn inspect_one(client: &reqwest::Client, spec: &str, runtime: Option<&str>
         .and_then(serde_json::Value::as_str)
         .map(String::from);
     let peers = compat::peers_from_manifest(&manifest);
-    let compatible = runtime.and_then(|runtime| compat::evaluate(&peers, runtime));
+    // 区间（`^1.2.0` / `>=1 <2`）暂不做版本解析：此时读的是 latest 清单，
+    // 拿它的依赖去判定会误伤「用旧版本规避新版不兼容」的标准做法，故放行。
+    let compatible = if requested.is_some() && exact.is_none() {
+        None
+    } else {
+        runtime.and_then(|runtime| compat::evaluate(&peers, runtime))
+    };
     PluginInspect {
         spec: raw.to_string(),
         name: Some(name),
@@ -85,6 +98,15 @@ async fn inspect_one(client: &reqwest::Client, spec: &str, runtime: Option<&str>
         peers: (!peers.is_empty()).then_some(peers),
         problem: None,
     }
+}
+
+/// spec 里在包名之后显式声明的版本片段（`aaa@1.0.0` / `@scope/aaa@^1.0.0`）。
+fn requested_version(raw: &str, name: &str) -> Option<String> {
+    raw.strip_prefix(name)
+        .and_then(|rest| rest.strip_prefix('@'))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(String::from)
 }
 
 /// 出错条目：保留已解析到的包名便于前端展示，兼容性留空（Fail-Open）。

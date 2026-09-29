@@ -100,6 +100,33 @@ describe('plugins manager idempotency', () => {
     expect(results.map(result => [result.ok, result.reason])).toEqual([[false, 'not-installed']])
   })
 
+  it('routes a broken plugin through the upgrade repair path despite having no update', async () => {
+    plugins.setInstalled([
+      {
+        id: 'aaa',
+        name: 'aaa',
+        version: '1.0.0',
+        description: '',
+        repo_url: '',
+        bundled: false,
+        disabled: false,
+        patchDisabled: false,
+        recommended: false,
+        fix: false,
+        internal: false,
+        updateAvailable: false,
+        hasSnapshot: false,
+        error: { message: 'boom', action: 'runtime', at: '1' },
+      },
+    ])
+    invoke.mockResolvedValue(undefined)
+
+    const results = await plugins.enqueue('upgrade', ['aaa'], RUNTIME)
+
+    expect(invoke).toHaveBeenCalledWith('update_dsh_plugins', { ids: ['aaa'] })
+    expect(results.map(result => [result.process.name, result.ok])).toEqual([['aaa', true]])
+  })
+
   it('reports a disable of an already disabled plugin as already absent', async () => {
     plugins.setInstalled([
       {

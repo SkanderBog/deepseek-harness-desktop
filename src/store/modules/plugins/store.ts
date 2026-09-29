@@ -78,6 +78,14 @@ const BLOCK_DESC: Record<BlockedRefusal['kind'], string> = {
   'update-hold': 'plugins.hold_desc',
 }
 
+const NOOP_MESSAGE: Record<PluginProcessType, string> = {
+  install: 'plugins.already_absent',
+  upgrade: 'plugins.no_change',
+  uninstall: 'plugins.already_absent',
+  disable: 'plugins.no_change',
+  enable: 'plugins.no_change',
+}
+
 interface PluginInspectPayload {
   spec: string
   name?: string
@@ -248,7 +256,7 @@ export const plugins = defineStore({
           this.finish(group.id, process, {
             process,
             ok: false,
-            error: i18next.t(reason === 'already-absent' ? 'plugins.already_absent' : 'plugins.not_installed', {
+            error: i18next.t(reason === 'not-installed' ? 'plugins.not_installed' : NOOP_MESSAGE[process.type], {
               name: process.name,
             }),
             reason,
@@ -290,7 +298,9 @@ export const plugins = defineStore({
         return 'already-absent'
       if (process.type === 'enable' && !installed.disabled && !installed.patchDisabled)
         return 'already-absent'
-      if (process.type === 'upgrade' && !installed.updateAvailable)
+      // 面板对「有更新」与「插件异常」都显示升级入口，后者是损坏插件的修复路径：
+      // 即使没有任何更新也必须放行，否则用户永远修不好异常插件。
+      if (process.type === 'upgrade' && !installed.updateAvailable && installed.error == null)
         return 'already-absent'
       return null
     },
@@ -347,7 +357,10 @@ export const plugins = defineStore({
             }
             process.status = 'pending'
           })
-          return blocked
+          // 只有当被点名的包确实在本次提交里时才进入授权等待。refusal 常点名传递依赖
+          // 等外部包，此时 blocked 为空；若照样返回，runGroup 会因无人调用 resume 永久挂起。
+          if (blocked.length > 0)
+            return blocked
         }
         targets.forEach(process =>
           this.finish(group.id, process, {
@@ -394,10 +407,14 @@ export const plugins = defineStore({
 
     finish(groupId: string, process: PluginProcess, result: PluginProcessResult): void {
       const group = this.groups.find(item => item.id === groupId)
-      if (group) {
-        group.pending = group.pending.filter(id => id !== process.id)
-        group.results = [...group.results, result]
+      // 幂等：cancel 会先给仍在运行的进程结算 'cancelled'，被中断的宿主调用随后 reject
+      // 回来时不能再次记账，否则结果、提示与事件都会重复。
+      if (group === undefined || !group.pending.includes(process.id)) {
+        this.detach(process.id)
+        return
       }
+      group.pending = group.pending.filter(id => id !== process.id)
+      group.results = [...group.results, result]
       if (!result.ok) {
         this.pushLog('error', result.error ?? i18next.t('plugins.action_failed'), groupId, process.id)
       }

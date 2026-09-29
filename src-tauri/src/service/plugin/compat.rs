@@ -109,7 +109,10 @@ fn normalize_range(raw: &str) -> Option<String> {
         }
         match pending.take() {
             Some(op) => parts.push(format!("{op}{token}")),
-            None => parts.push(token.to_string()),
+            None => match Version::parse(token.trim_start_matches('v')) {
+                Ok(version) => parts.push(format!("={version}")),
+                Err(_) => parts.push(token.to_string()),
+            },
         }
     }
     if pending.is_some() || parts.is_empty() {
@@ -191,6 +194,16 @@ mod tests {
     }
 
     #[test]
+    fn bare_versions_are_exact_like_npm() {
+        assert_eq!(range_matches("0.2.0", "0.2.0"), Some(true));
+        assert_eq!(range_matches("0.2.0", "0.2.5"), Some(false));
+        assert_eq!(range_matches("0.2.0", "0.3.0"), Some(false));
+        assert_eq!(range_matches("=0.2.0", "0.2.5"), Some(false));
+        assert_eq!(range_matches(">=0.2.0 <0.3.0", "0.2.5"), Some(true));
+        assert_eq!(range_matches("^0.2.0", "0.2.5"), Some(true));
+    }
+
+    #[test]
     fn invalid_range_degrades_to_unknown_and_stays_compatible() {
         assert_eq!(range_matches("not a range", "0.2.0"), None);
         assert_eq!(range_matches(">>>1.0.0", "0.2.0"), None);
@@ -243,7 +256,7 @@ mod tests {
             evaluate(
                 &peers(&[
                     ("@deepseek-ai/dsh", "^0.2.0"),
-                    ("@deepseek-ai/dsh-llm", "^0.1.7-rc.1"),
+                    ("@deepseek-ai/dsh-llm", "^0.2.0-rc.1"),
                 ]),
                 "0.2.0"
             ),

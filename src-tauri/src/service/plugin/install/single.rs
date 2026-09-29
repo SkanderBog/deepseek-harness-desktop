@@ -173,9 +173,12 @@ pub async fn remove_many(app_handle: &AppHandle, ids: &[String]) -> Result<(), S
                 );
             }
         }
-        // 卸载级联清理单插件快照（best-effort）：插件已移除，快照随之失效
-        // （issue #303：卸载后删除快照，避免残留孤儿快照占用存储）。
-        super::super::snapshot::delete_best_effort(app_handle, id);
+        // 卸载级联清理单插件快照（best-effort）：只有插件确实离开 profile 才删。
+        // 离线兜底失败或受保护包残留时插件仍在，快照是用户唯一的回滚手段，必须保留
+        // （issue #303：插件已移除则快照随之失效，避免残留孤儿快照占用存储）。
+        if !is_installed(app_handle, id) {
+            super::super::snapshot::delete_best_effort(app_handle, id);
+        }
     }
     // 与单插件卸载的原语义一致：以「条目是否真的离开 profile」为准。命令以非 0
     // 退出但插件已被移走时不报错（卸载已达成），只有仍残留且兜底也失败才算失败。

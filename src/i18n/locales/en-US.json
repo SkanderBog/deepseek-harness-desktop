@@ -305,6 +305,7 @@
   "plugins.retry_exhausted": "Gave up after too many authorisation attempts",
   "plugins.already_absent": "{{name}} is not installed",
   "plugins.not_installed": "{{name}} is not installed",
+  "plugins.no_change": "{{name}} needs no change",
   "plugins.rejected": "Cancelled: authorisation was declined",
   "plugins.cancelled": "Cancelled",
   "plugins.result_summary": "{{count}} plugin tasks failed",

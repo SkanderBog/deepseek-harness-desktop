@@ -103,6 +103,50 @@ describe('plugins manager approval', () => {
     expect(results.map(result => [result.process.name, result.ok])).toEqual([['a', true], ['b', true]])
   })
 
+  it('fails the group instead of hanging when the refusal names a package outside the submission', async () => {
+    const outside = [{ name: 'transitive-dep', version: '0.1.0', runtime_version: '0.2.0-rc.1' }]
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'install_plugin_specs')
+        throw new Error(`PLUGIN_VERSION_INCOMPATIBLE: ${JSON.stringify(outside)}`)
+      return undefined
+    })
+
+    const done = plugins.enqueue('install', ['aaa'], RUNTIME)
+    const guarded = await Promise.race([
+      done,
+      new Promise(resolve => setTimeout(resolve, 500, 'hung')),
+    ])
+
+    expect(guarded).not.toBe('hung')
+    const results = await done
+    expect(results.map(result => [result.process.name, result.ok])).toEqual([['aaa', false]])
+    expect(plugins.pendingApprovals).toHaveLength(0)
+  })
+
+  it('records a cancelled process once even when the interrupted host call settles later', async () => {
+    const releases: Array<(error: unknown) => void> = []
+    invoke.mockImplementation((command: string) => {
+      if (command !== 'install_plugin_specs')
+        return Promise.resolve(undefined)
+      return new Promise((_resolve, reject) => {
+        releases.push(reject)
+      })
+    })
+
+    const done = plugins.enqueue('install', ['aaa'], RUNTIME)
+    await vi.waitFor(() => expect(releases).toHaveLength(1))
+
+    void plugins.cancel()
+    await vi.waitFor(() => expect(plugins.processes).toHaveLength(0))
+
+    releases[0](new Error('PREINSTALL_FAILED: killed'))
+    const results = await done
+
+    expect(results.map(result => [result.process.name, result.ok, result.reason])).toEqual([
+      ['aaa', false, 'cancelled'],
+    ])
+  })
+
   it('raises a persistent approval toast per blocked process', async () => {
     invoke.mockImplementation(async (command: string) => {
       if (command === 'install_plugin_specs')

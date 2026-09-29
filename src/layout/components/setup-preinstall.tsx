@@ -234,10 +234,13 @@ export function PreinstallSetup() {
     })
   }
 
-  /** 汇总一组进程结果里的失败明细，供错误面板展示 */
+  /**
+   * 汇总一组进程结果里的失败明细，供错误面板展示。
+   * `already-absent` 是卸载的「已达成的目标」（插件本就不在 profile），不算失败。
+   */
   function collectFailures(results: Awaited<ReturnType<typeof manager.install>>): string[] {
     return results
-      .filter(result => !result.ok)
+      .filter(result => !result.ok && result.reason !== 'already-absent')
       .map(result => `${result.process.name}: ${result.error ?? ''}`)
   }
 
@@ -256,6 +259,9 @@ export function PreinstallSetup() {
       failed.push(...collectFailures(await manager.uninstall(toUninstall)))
     if (toInstall.length > 0)
       failed.push(...collectFailures(await manager.install(toInstall)))
+    // 刷新 installed 标记：卸载已生效但安装失败时，重试的 diff 必须基于新状态，
+    // 否则已移除的插件会再次被当作待卸载项，重试永远不会成功。
+    await store.preinstall.load()
     if (failed.length > 0) {
       setFailures(failed)
       return

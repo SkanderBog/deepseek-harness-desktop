@@ -305,6 +305,7 @@
   "plugins.retry_exhausted": "授权重试次数已达上限",
   "plugins.already_absent": "{{name}} 未安装",
   "plugins.not_installed": "{{name}} 未安装",
+  "plugins.no_change": "{{name}} 无需变更",
   "plugins.rejected": "已取消：用户拒绝授权",
   "plugins.cancelled": "已取消",
   "plugins.result_summary": "{{count}} 个插件任务失败",

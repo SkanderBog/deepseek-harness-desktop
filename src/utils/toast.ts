@@ -55,9 +55,15 @@ const closeReasons = new Map<string, ToastCloseReason>()
  */
 const placementOrder = new Map<Placement, string[]>()
 
-function forgetKey(key: string): void {
+/**
+ * 同步清理一条 toast 的登记。`keepReason` 为真时保留关闭原因，供库侧稍后
+ * （rAF 异步）触发的 onClose 读取——`close()` 必须这样调用，否则常驻气泡
+ * （`timeout: 0`）的程序化关闭会被误判为用户拒绝。
+ */
+function forgetKey(key: string, keepReason = false): void {
   toastContents.delete(key)
-  closeReasons.delete(key)
+  if (!keepReason)
+    closeReasons.delete(key)
   const placement = placementsKeys.get(key)
   placementsKeys.delete(key)
   if (placement === undefined)
@@ -136,8 +142,9 @@ export const toast = Object.assign(
       if (placement) {
         closeReasons.set(key, 'closed')
         activeQueues[placement].close(key)
-        // onClose 是 rAF 异步回调，这里同步清理登记，紧随其后的 add 不会把死 key 计入限额
-        forgetKey(key)
+        // onClose 是 rAF 异步回调：保留关闭原因到那时再取，但同步清掉其余登记，
+        // 紧随其后的 add 不会把死 key 计入限额
+        forgetKey(key, true)
       }
       else {
         toastContents.delete(key)
