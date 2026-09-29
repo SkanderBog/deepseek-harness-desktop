@@ -68,6 +68,7 @@ const zh = {
   sessionUnknown: '无法确定当前会话',
   sessionNameEmpty: '会话名称不能为空',
   sessionServiceUnavailable: '无法取得官方会话服务',
+  newSessionUnavailable: '无法在该工作区新建会话',
   renameFailed: '重命名失败',
   editPositionUnknown: '无法确定编辑位置',
 } as const satisfies Record<string, string>
@@ -139,6 +140,7 @@ const en: Record<keyof typeof zh, string> = {
   sessionUnknown: 'Could not determine the current session',
   sessionNameEmpty: 'Session name cannot be empty',
   sessionServiceUnavailable: 'Official session service is unavailable',
+  newSessionUnavailable: 'Could not create a session in this workspace',
   renameFailed: 'Rename failed',
   editPositionUnknown: 'Could not determine the editing position',
 }

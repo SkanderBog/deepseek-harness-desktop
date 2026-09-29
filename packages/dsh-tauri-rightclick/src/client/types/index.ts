@@ -32,7 +32,7 @@ export type WorkspaceListSnapshotLike = Pick<WorkspaceSnapshot, 'items' | 'archi
 
 /** 官方 workspaces 服务加上 alpha/桌面导航兼容扩展。 */
 export type WorkspacesRuntimeLike = Pick<IWorkspaces, 'list' | 'archiveSession' | 'delete'> & {
-  startSession?: (workspaceId: WorkspaceId) => void
+  startSession?: (workspaceId: WorkspaceId) => unknown
   /** 置顶/取消置顶会话：0.1.7 起官方提供；旧核心缺席时右键菜单不展示该入口。 */
   pinSession?: (sessionId: SessionId) => Promise<void>
   unpinSession?: (sessionId: SessionId) => Promise<void>
