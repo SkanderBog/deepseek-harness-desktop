@@ -39,6 +39,11 @@ tauri-plugin-opener = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-store = "2"
 tauri-plugin-notification = "2"
+# 壳层原生通知（含交互按钮）走 Choochmeque fork：Windows/macOS 原生实现，
+# Linux/FreeBSD 自动回退 notify-rust。JS 侧对应
+# `@choochmeque/tauri-plugin-notifications-api`（registerActionTypes /
+# sendNotification / onAction），见 src/layout/components/iframe.tsx。
+tauri-plugin-notifications = { version = "0.5.0-rc.14", default-features = false }
 tauri-plugin-autostart = "2"
 # 桌宠素材直连远端：插件版 HTTP 从 Rust 发起请求，绕开 githubusercontent 的 CORS。
 # 版本须与 package.json 的 @tauri-apps/plugin-http（catalog:tauri，^2.6.0）保持同一 minor：
@@ -133,12 +138,6 @@ tauri-plugin-wdio-webdriver = { path = "vendor/tauri-plugin-wdio-webdriver" }
 debug = 1
 
 [target.'cfg(windows)'.dependencies]
-# 自建 toast：官方 tauri-plugin-notification 2.3.3 在桌面端 `show()` 之后就丢弃
-# `NotificationHandle`（desktop.rs 里 spawn 一个 async 任务去 show），因此拿不到
-# 点击/按钮回调。notify-rust 正是它底层使用的同一个 crate，这里直接持有 handle，
-# 才能把「点击」与「按钮」翻译成 dsh-notification-clicked 事件回传前端。
-# 版本与 tauri-plugin-notification 2.3.3 声明的 4.11 对齐，lock 已解析到 4.18.0。
-notify-rust = "4.11"
 rfd = "0.16"
 webview2-com = "0.38"
 windows-core = "0.61"

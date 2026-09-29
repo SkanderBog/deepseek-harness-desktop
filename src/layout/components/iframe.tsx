@@ -1,9 +1,15 @@
 /* eslint-disable react/dom-no-unsafe-iframe-sandbox */
 import type { CSSProperties, RefObject } from 'react'
+import {
+  onAction,
+  onNotificationClicked,
+  registerActionTypes,
+  sendNotification,
+} from '@choochmeque/tauri-plugin-notifications-api'
 import { CircleExclamation } from '@gravity-ui/icons'
 import { useEventListener } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
@@ -13,7 +19,6 @@ import { useDshStyle } from '@/hooks/use-dsh-style'
 import { useIframeMessage } from '@/hooks/use-iframe-message'
 import { useIframePost } from '@/hooks/use-iframe-post'
 import { useInvokeIframe } from '@/hooks/use-invoke-iframe'
-import { useListen } from '@/hooks/use-listen'
 import { useSyncVisibility } from '@/hooks/use-sync-visibility'
 import { useZoomFactor } from '@/hooks/use-zoom-factor'
 import { store } from '@/store'
@@ -71,6 +76,42 @@ export interface NotificationClickedPayload {
   action?: string | null
 }
 
+/**
+ * 系统通知的动作类型 id：插件声明的按钮（授权弹窗的「批准」）挂在它下面。
+ * 每次发送前都用插件给的本地化文案重新注册，按钮文案才能跟随界面语言。
+ */
+const NOTIFICATION_ACTION_TYPE = 'dsh-notification-approval'
+
+/** `tauri-plugin-notifications` 回传的会话标识（发送时写进 `extra`，点击时原样带回）。 */
+interface NotificationExtra {
+  sessionId?: string
+  title?: string
+  tag?: string
+}
+
+/** `onAction` 的事件体：`actionId` 为 `tap` 表示点了通知本体，否则是按钮 action id。 */
+interface NotificationActionEvent {
+  actionId?: string
+  notification?: { extra?: NotificationExtra } | null
+}
+
+/** `onNotificationClicked` 的事件体：`data` 就是发送时写进 `extra` 的对象。 */
+interface NotificationClickEvent {
+  id?: number
+  data?: NotificationExtra
+}
+
+/**
+ * 通知 id 必须是 32 位整数，这里取 tag 的稳定哈希：同一会话的同一条通知反复发送时
+ * 复用同一个 id（就地更新），而不是每次多堆一条。
+ */
+function notificationIdFor(tag: string | undefined): number {
+  let hash = 0
+  for (const char of tag ?? '')
+    hash = (hash * 31 + char.charCodeAt(0)) | 0
+  return (Math.abs(hash) % 0x7FFFFFFF) || 1
+}
+
 export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: IframeProps) {
   const { t } = useTranslation()
   const harness = useStore(store.harness)
@@ -100,11 +141,44 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   // 壳层快捷键（焦点在导航栏等壳层元素时；iframe 内由注入脚本经缩放桥转发）
   useEventListener('keydown', handleZoomKeyDown, { capture: true })
 
-  // 系统通知点击 → 让 iframe 聚焦对应会话
-  useListen<NotificationClickedPayload>(
-    'dsh-notification-clicked',
-    event => handleNotificationClicked(event.payload),
-  )
+  // 系统通知的点击 / 按钮动作 → 让 iframe 聚焦对应会话并回灌 onaction。
+  //
+  // 订阅 `onNotificationClicked` 不只是为了拿 payload：Windows 后端只有在它内部
+  // 调用 `set_click_listener_active(true)` 之后才会挂上 toast 的 Activated 回调，
+  // 否则按钮点击不会派发任何事件（见插件 src/windows.rs 的 show()）。
+  //
+  // 只订阅一次：`post` 每次渲染都是新函数，但它闭包里的 `iframeRef` 是稳定引用、
+  // 发送时实时读 `current`，因此首渲染捕获的实例一直有效。
+  useEffect(() => {
+    let disposed = false
+    const listeners: Array<{ unregister: () => Promise<void> }> = []
+    void (async () => {
+      try {
+        const actionListener = await onAction((event) => {
+          handleNotificationAction(event)
+        })
+        const clickListener = await onNotificationClicked((event) => {
+          handleNotificationClick(event)
+        })
+        if (disposed) {
+          void actionListener.unregister()
+          void clickListener.unregister()
+          return
+        }
+        listeners.push(actionListener, clickListener)
+      }
+      catch (error) {
+        console.error('[notification] failed to subscribe plugin events:', error)
+      }
+    })()
+    return () => {
+      disposed = true
+      for (const listener of listeners)
+        void listener.unregister()
+    }
+    // 依赖数组有意保持为空：两个回调每次渲染都是新函数，但订阅只做一次（见上）。
+    // eslint-disable-next-line react/exhaustive-deps -- 只在挂载时订阅一次
+  }, [])
 
   // iframe → 宿主：iframe 自身的桥共用一个监听器，按 `data.type` 分发
   useIframeMessage<IframeBridgeMessage>(iframeRef, (data) => {
@@ -164,18 +238,34 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   }
 
   function handleNativeNotification(data: IframeBridgeMessage) {
-    void invoke('show_native_notification', {
-      payload: {
-        title: data.title ?? '',
-        body: data.body ?? '',
-        tag: data.tag ?? null,
-        sessionId: data.sessionId ?? null,
-        requireInteraction: Boolean(data.requireInteraction),
-        // 按钮透传给 Rust：Windows 自建 toast 会渲染成系统通知按钮，
-        // 点击后以 `dsh-notification-clicked` 带 action 回来。
-        actions: Array.isArray(data.actions) ? data.actions : [],
-      },
-    }).catch(error => console.error('[notification] show_native_notification failed:', error))
+    const actions = Array.isArray(data.actions) ? data.actions : []
+    const primary = actions[0]
+    void (async () => {
+      try {
+        // 后端只在 `actionTypeId` 已注册时才往通知里写按钮，所以必须先注册再发送；
+        // 每次都用插件给的本地化文案重新注册，按钮文案才能跟随界面语言。
+        if (primary) {
+          await registerActionTypes([{
+            id: NOTIFICATION_ACTION_TYPE,
+            actions: [{ id: primary.action, title: primary.title, foreground: true }],
+          }])
+        }
+        await sendNotification({
+          id: notificationIdFor(data.tag),
+          title: data.title ?? '',
+          body: data.body ?? '',
+          actionTypeId: primary ? NOTIFICATION_ACTION_TYPE : undefined,
+          extra: {
+            sessionId: data.sessionId ?? '',
+            title: data.title ?? '',
+            tag: data.tag ?? '',
+          },
+        })
+      }
+      catch (error) {
+        console.error('[notification] sendNotification failed:', error)
+      }
+    })()
   }
 
   function handlePluginBoot(data: IframeBridgeMessage) {
@@ -222,7 +312,8 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       .catch(error => console.error('[frame-log] log_frontend failed:', error))
   }
 
-  function handleNotificationClicked(payload: NotificationClickedPayload) {
+  /** 把通知结果回灌给 iframe：聚焦对应会话，并触发帧内的 onclick / onaction。 */
+  function applyNotificationResult(payload: NotificationClickedPayload) {
     post({
       type: 'dsh://focus-session',
       sessionId: payload.sessionId || undefined,
@@ -235,6 +326,29 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       type: 'dsh://notification-clicked',
       tag: payload.tag || undefined,
       action: payload.action || undefined,
+    })
+  }
+
+  /** `onAction`：点通知本体（`actionId === 'tap'`）交给 `onNotificationClicked`，这里只管按钮。 */
+  function handleNotificationAction(event: unknown) {
+    const { actionId, notification } = (event ?? {}) as NotificationActionEvent
+    if (typeof actionId !== 'string' || actionId === '' || actionId === 'tap')
+      return
+    applyNotificationResult({
+      sessionId: notification?.extra?.sessionId ?? null,
+      title: notification?.extra?.title,
+      tag: notification?.extra?.tag,
+      action: actionId,
+    })
+  }
+
+  /** `onNotificationClicked`：点通知本体（前台与冷启动两条路径都会走到这里）。 */
+  function handleNotificationClick(event: unknown) {
+    const { data } = (event ?? {}) as NotificationClickEvent
+    applyNotificationResult({
+      sessionId: data?.sessionId ?? null,
+      title: data?.title,
+      tag: data?.tag,
     })
   }
 

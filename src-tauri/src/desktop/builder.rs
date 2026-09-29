@@ -1128,7 +1128,6 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::open_external_url,
         crate::bridge::read_clipboard_image,
         crate::bridge::write_clipboard_text,
-        crate::desktop::notification::show_native_notification,
         crate::desktop::window::create_app_window,
         crate::desktop::window::quit_app,
         crate::bridge::log_frontend,
@@ -1339,9 +1338,13 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
         )
         // Opener plugin
         .plugin(tauri_plugin_opener::init())
-        // Notification plugin（Windows 上以 tauri-winrt-notification 实现点击回调，
-        // 注册官方插件保留跨平台回退能力）
+        // Notification plugin（官方插件保留权限与兜底能力；壳层的原生通知不走它）
         .plugin(tauri_plugin_notification::init())
+        // tauri-plugin-notifications（Choochmeque fork）：壳层用它的 JS API 发通知，
+        // 带交互按钮与点击/动作事件。`default-features = false` 关掉 notify-rust 这个
+        // 跨平台后端，换取 Windows/macOS 的原生实现（actions / hero images / scheduling）；
+        // Linux、FreeBSD 上 notify-rust 是唯一后端，插件仍会启用它。
+        .plugin(tauri_plugin_notifications::init())
         // FS plugin
         .plugin(tauri_plugin_fs::init())
         // HTTP plugin：桌宠窗口拉取远端宠物素材时把 fetch 交给 Rust 发起，

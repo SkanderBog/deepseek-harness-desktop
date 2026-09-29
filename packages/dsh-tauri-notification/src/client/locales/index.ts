@@ -4,7 +4,7 @@ import { PLUGIN_ID } from '../../shared/constants'
 const zh = {
   nav: '通知',
   turnComplete: '轮次完成通知',
-  turnCompleteHint: '设置 ChatGPT 完成后何时提醒你',
+  turnCompleteHint: '设置 DSH 完成后何时提醒你',
   modeNever: '从不',
   modeBackground: '仅在未聚焦时',
   modeAlways: '始终',
@@ -34,7 +34,7 @@ const zh = {
 const en: Record<keyof typeof zh, string> = {
   nav: 'Notifications',
   turnComplete: 'Turn completion notification',
-  turnCompleteHint: 'Choose when to be reminded after ChatGPT finishes',
+  turnCompleteHint: 'Choose when to be reminded after DSH finishes',
   modeNever: 'Never',
   modeBackground: 'Only when unfocused',
   modeAlways: 'Always',

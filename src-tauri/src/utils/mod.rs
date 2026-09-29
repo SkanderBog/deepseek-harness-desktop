@@ -116,15 +116,6 @@ pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-pub fn app_icon_temp_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
-    let icon = app.default_window_icon()?;
-    let path = std::env::temp_dir().join(format!("dsh-notification-{}.png", std::process::id()));
-    let rgba = icon.rgba().to_vec();
-    let img = image::RgbaImage::from_raw(icon.width(), icon.height(), rgba)?;
-    img.save(&path).ok()?;
-    Some(path)
-}
-
 /// 解码子进程输出的一行。
 ///
 /// 中文 Windows 下子进程（cmd.exe、python MCP 服务器等）按 ANSI 代码页输出 GBK，

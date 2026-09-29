@@ -344,6 +344,9 @@ importers:
 
   .:
     dependencies:
+      '@choochmeque/tauri-plugin-notifications-api':
+        specifier: 0.5.0-rc.14
+        version: 0.5.0-rc.14
       '@genapi/pipeline':
         specifier: 'catalog:'
         version: 4.1.4
@@ -1341,6 +1344,9 @@ packages:
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
+
+  '@choochmeque/tauri-plugin-notifications-api@0.5.0-rc.14':
+    resolution: {integrity: sha512-kst+PhQ+vawT9rs6oRJoQZ5A/ljtIEN/A0/j/z1joCOPFRCR6X5l7LBRg3ChaZEk7FPk0TT+v7Z3FX1N2Wm+6g==}
 
   '@clack/core@1.4.3':
     resolution: {integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==}
@@ -7217,6 +7223,10 @@ snapshots:
       '@babel/helper-validator-identifier': 7.29.7
 
   '@bcoe/v8-coverage@1.0.2': {}
+
+  '@choochmeque/tauri-plugin-notifications-api@0.5.0-rc.14':
+    dependencies:
+      '@tauri-apps/api': 2.11.1
 
   '@clack/core@1.4.3':
     dependencies:
