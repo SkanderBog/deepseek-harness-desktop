@@ -80,6 +80,9 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
       tag: notificationTag(sessionId, kind, sequence),
       sessionId,
       requireInteraction,
+      // 提示音已在上面按设置播过（`none` 时就是静音），因此原生通知自己必须静音；
+      // 未打包的 Windows 应用也没法用 toast 播放仓库里的 wav，只能由帧内发声。
+      silent: true,
       actions,
       onAction,
       onClick: () => {

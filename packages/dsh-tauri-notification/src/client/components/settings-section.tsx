@@ -87,61 +87,68 @@ export function NotificationSettingsSection(): ReactElement {
   ]
 
   return (
-    <div className="flex flex-col gap-[8px]">
-      <div className="flex flex-col rounded-[12px] border border-border-weak">
-        <Row title={locale.text('turnComplete')} hint={locale.text('turnCompleteHint')}>
-          <Select
-            options={turnOptions}
-            value={turnComplete}
-            onChange={next => notificationSettings.setTurnComplete(next as TurnCompleteMode)}
-          />
-        </Row>
-        <Row title={locale.text('approval')} hint={locale.text('approvalHint')}>
-          <Checkbox
-            checked={approval}
-            aria-label={locale.text('approval')}
-            onChange={next => notificationSettings.setApproval(next)}
-          />
-        </Row>
-        <Row title={locale.text('question')} hint={locale.text('questionHint')}>
-          <Checkbox
-            checked={question}
-            aria-label={locale.text('question')}
-            onChange={next => notificationSettings.setQuestion(next)}
-          />
-        </Row>
-        <Row title={locale.text('sound')} hint={locale.text('soundHint')}>
-          <Select
-            options={soundOptions}
-            value={sound}
-            onChange={next => pickSoundOption(next as NotificationSound)}
-          />
-          {sound === 'custom'
-            ? (
-                <>
-                  <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
-                    {locale.text('soundCustomChoose')}
-                  </Button>
-                  {customSound
-                    ? (
-                        <Button type="button" variant="outline" size="sm" onClick={() => notificationSettings.setCustomSound(null)}>
-                          {locale.text('soundCustomClear')}
-                        </Button>
-                      )
-                    : null}
-                </>
-              )
-            : null}
-        </Row>
+    <div className="flex flex-col gap-[16px]">
+      {/* 官方分区只渲染注册项里的内容（壳层不画标题/描述），所以页头由分区自己给。 */}
+      <div className="flex flex-col gap-[4px]">
+        <h1 className="m-0 text-[24px] leading-[32px] font-semibold text-primary">{locale.text('sectionTitle')}</h1>
+        <p className="m-0 text-[13px] leading-[20px] text-secondary">{locale.text('sectionDescription')}</p>
       </div>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="audio/*"
-        hidden
-        onChange={(event) => { void pickSound(event) }}
-      />
-      {notice ? <div className="text-[12px] leading-[18px] text-error" role="alert">{notice}</div> : null}
+      <div className="flex flex-col gap-[8px]">
+        <div className="flex flex-col rounded-[12px] border border-border-weak">
+          <Row title={locale.text('turnComplete')} hint={locale.text('turnCompleteHint')}>
+            <Select
+              options={turnOptions}
+              value={turnComplete}
+              onChange={next => notificationSettings.setTurnComplete(next as TurnCompleteMode)}
+            />
+          </Row>
+          <Row title={locale.text('approval')} hint={locale.text('approvalHint')}>
+            <Checkbox
+              checked={approval}
+              aria-label={locale.text('approval')}
+              onChange={next => notificationSettings.setApproval(next)}
+            />
+          </Row>
+          <Row title={locale.text('question')} hint={locale.text('questionHint')}>
+            <Checkbox
+              checked={question}
+              aria-label={locale.text('question')}
+              onChange={next => notificationSettings.setQuestion(next)}
+            />
+          </Row>
+          <Row title={locale.text('sound')} hint={locale.text('soundHint')}>
+            <Select
+              options={soundOptions}
+              value={sound}
+              onChange={next => pickSoundOption(next as NotificationSound)}
+            />
+            {sound === 'custom'
+              ? (
+                  <>
+                    <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+                      {locale.text('soundCustomChoose')}
+                    </Button>
+                    {customSound
+                      ? (
+                          <Button type="button" variant="outline" size="sm" onClick={() => notificationSettings.setCustomSound(null)}>
+                            {locale.text('soundCustomClear')}
+                          </Button>
+                        )
+                      : null}
+                  </>
+                )
+              : null}
+          </Row>
+        </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="audio/*"
+          hidden
+          onChange={(event) => { void pickSound(event) }}
+        />
+        {notice ? <div className="text-[12px] leading-[18px] text-error" role="alert">{notice}</div> : null}
+      </div>
     </div>
   )
 }

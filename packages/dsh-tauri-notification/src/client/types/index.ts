@@ -123,6 +123,13 @@ export interface NativeNotificationInput {
   readonly tag: string
   readonly sessionId: string
   readonly requireInteraction?: boolean
+  /**
+   * Windows：让 toast 自己保持静音（`<audio silent="true">`）。
+   *
+   * 未打包的 Windows 应用不能让 toast 播放自定义音频（`<audio src>` 只认 `ms-winsoundevent:*`
+   * 系统音），所以提示音一律留在帧内播放；这个标志避免系统默认音再响一次（双声）。
+   */
+  readonly silent?: boolean
   readonly actions?: readonly NativeNotificationAction[]
   /** 用户点通知本体（非按钮）。 */
   readonly onClick?: () => void

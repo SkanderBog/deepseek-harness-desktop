@@ -19,6 +19,8 @@ interface ShimNotificationOptions {
   tag?: string
   sessionId?: string
   requireInteraction?: boolean
+  /** Windows：置 true 让 toast 自己保持静音（提示音由帧内播放，见 `NativeNotificationInput.silent`）。 */
+  silent?: boolean
   actions?: ShimAction[]
 }
 
@@ -51,6 +53,7 @@ export function showNativeNotification(input: NativeNotificationInput): void {
     tag: input.tag,
     sessionId: input.sessionId,
     requireInteraction: input.requireInteraction ?? false,
+    silent: input.silent ?? false,
   }
   if (input.actions && input.actions.length > 0) {
     options.actions = input.actions.map((action) => {

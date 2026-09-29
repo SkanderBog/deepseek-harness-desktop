@@ -3,6 +3,8 @@ import { PLUGIN_ID } from '../../shared/constants'
 
 const zh = {
   nav: '通知',
+  sectionTitle: '通知',
+  sectionDescription: 'DSH 完成轮次、请求权限或提问时如何提醒你',
   turnComplete: '轮次完成通知',
   turnCompleteHint: '设置 DSH 完成后何时提醒你',
   modeNever: '从不',
@@ -36,6 +38,8 @@ const zh = {
 
 const en: Record<keyof typeof zh, string> = {
   nav: 'Notifications',
+  sectionTitle: 'Notifications',
+  sectionDescription: 'How DSH alerts you when a turn finishes, a permission is requested, or a question is waiting',
   turnComplete: 'Turn completion notification',
   turnCompleteHint: 'Choose when to be reminded after DSH finishes',
   modeNever: 'Never',

@@ -47,6 +47,7 @@ pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
       body: String(options.body || ''),
       tag: this.tag,
       requireInteraction: !!options.requireInteraction,
+      silent: !!options.silent,
       sessionId: options.sessionId || sessionIdFromTag(this.tag),
       actions: Array.isArray(options.actions) ? options.actions : [],
       href: location.href,

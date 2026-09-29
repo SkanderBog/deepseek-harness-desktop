@@ -42,6 +42,8 @@ interface IframeBridgeMessage {
   tag?: string
   sessionId?: string | null
   requireInteraction?: boolean
+  /** 通知桥：置 true 让原生通知自己静音（提示音由帧内 `sound.play()` 播放，避免双声）。 */
+  silent?: boolean
   /** 通知桥：插件声明的系统通知按钮（`{ action, title, … }`；`input` 系列字段透传给 Windows toast 的输入框） */
   actions?: { action: string, title: string, input?: boolean, inputPlaceholder?: string, inputButtonTitle?: string }[]
   /** 插件异常桥 / 剪贴板图片桥：插件 id 或剪贴板请求 id */
@@ -327,6 +329,8 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
           id: notificationIdFor(data.tag),
           title,
           body,
+          // 帧内已经按设置播过提示音，这里让 toast 自己静音：Windows 上不静音就会额外响一次默认音。
+          silent: data.silent === true ? true : undefined,
           actionTypeId: actionsRegistered ? actionTypeId : undefined,
           extra: {
             sessionId: data.sessionId ?? '',
