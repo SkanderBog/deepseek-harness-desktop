@@ -151,8 +151,8 @@ pub async fn clear_service_logs(app_handle: AppHandle) -> Result<(), String> {
 /// app/dsh/node/os 之外补 `profile` 与 `plugins` 两块。
 ///
 /// `dsh_version` 缺失（核心未安装）时整行省略：`dsh: -` 会让用户误以为核心在
-/// 但版本不明。插件为空时写 `(none)`，与「读取失败」在文本上无法区分但语义一致
-/// （都是没有可报的插件），无需额外区分。
+/// 但版本不明。插件为 0 时只留 `plugins: 0 installed` 一行：计数本身已说明没有插件，
+/// 再补 `(none)` 反而与「读取失败」一样无法区分，徒增噪音。
 fn format_env_info(
     app_version: &str,
     dsh_version: Option<&str>,
@@ -169,12 +169,8 @@ fn format_env_info(
     lines.push(format!("node: {node_version}"));
     lines.push(format!("os: {os} ({arch})"));
     lines.push(format!("profile: {profile}"));
-    lines.push(format!("plugins: {}", plugins.len()));
-    if plugins.is_empty() {
-        lines.push("(none)".to_string());
-    } else {
-        lines.extend(plugins.iter().cloned());
-    }
+    lines.push(format!("plugins: {} installed", plugins.len()));
+    lines.extend(plugins.iter().map(|p| format!("  - {p}")));
     lines.join("\n")
 }
 
@@ -237,7 +233,11 @@ pub async fn read_run_logs(app_handle: AppHandle) -> Result<String, String> {
     // 及插件面板一致；版本解析不出时只留包名，避免出现读起来像被截断的 `name@`。
     let dsh_version =
         core::active_version(&app_handle).or_else(|| config::get_dsh_version(&app_handle));
-    let mut plugin_lines: Vec<String> = plugin::watch::list(&app_handle)
+    let mut plugins = plugin::watch::list(&app_handle);
+    // 稳定排序：插件面板按加载顺序展示，报障块按包名字典序，便于两次日志对比差异。
+    // 必须在拼上 `@version` 之前排，否则 `foo@1` 会排到 `foo-bar@1` 之后。
+    plugins.sort_by(|a, b| a.id.cmp(&b.id));
+    let plugin_lines: Vec<String> = plugins
         .iter()
         .map(|p| {
             if p.version.is_empty() {
@@ -247,8 +247,6 @@ pub async fn read_run_logs(app_handle: AppHandle) -> Result<String, String> {
             }
         })
         .collect();
-    // 稳定排序：插件面板按加载顺序展示，报障块按包名字典序，便于两次日志对比差异
-    plugin_lines.sort();
     let app_version = app_handle.package_info().version.to_string();
     let env_text = format_env_info(
         &app_version,
@@ -319,7 +317,7 @@ mod tests {
         );
         assert_eq!(
             text,
-            "app: 0.19.0\ndsh: 0.1.7-rc.2\nnode: 24.19.0\nos: windows (x86_64)\nprofile: web\nplugins: 2\ndshmarket@0.22.1\n@scope/tool@1.2.3"
+            "app: 0.19.0\ndsh: 0.1.7-rc.2\nnode: 24.19.0\nos: windows (x86_64)\nprofile: web\nplugins: 2 installed\n  - dshmarket@0.22.1\n  - @scope/tool@1.2.3"
         );
     }
 
@@ -328,13 +326,13 @@ mod tests {
         let text = format_env_info("0.19.0", None, "24.19.0", "linux", "aarch64", "tauri", &[]);
         assert_eq!(
             text,
-            "app: 0.19.0\nnode: 24.19.0\nos: linux (aarch64)\nprofile: tauri\nplugins: 0\n(none)"
+            "app: 0.19.0\nnode: 24.19.0\nos: linux (aarch64)\nprofile: tauri\nplugins: 0 installed"
         );
         assert!(!text.contains("dsh:"));
     }
 
     #[test]
-    fn env_info_marks_empty_plugin_list_explicitly() {
+    fn env_info_empty_plugin_list_is_just_a_count() {
         let text = format_env_info(
             "1.0.0",
             Some("0.1.7"),
@@ -344,8 +342,9 @@ mod tests {
             "web",
             &[],
         );
-        assert!(text.contains("plugins: 0"));
-        assert!(text.ends_with("(none)"));
+        // 计数行自身已表达「没有插件」，不再补 `(none)` 之类的占位行
+        assert!(text.ends_with("plugins: 0 installed"));
+        assert!(!text.contains("(none)"));
     }
 
     #[test]
