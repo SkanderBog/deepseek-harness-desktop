@@ -9,8 +9,13 @@ import type { PetSessionEvent, PetSessionPeer } from './session-stream.types'
 import { describe, expect, it } from 'vitest'
 import { createPetSessionReducer, PET_REASONING_PUSH_INTERVAL_MS, PET_REASONING_TAIL_WINDOW } from './session-stream.utils'
 
-function ev(type: string, data: Record<string, unknown>, seq: number): PetSessionEvent {
-  return { type, seq, time: Date.now(), data }
+function ev(
+  type: string,
+  data: Record<string, unknown>,
+  seq: number,
+  surfaceOp?: PetSessionEvent['surfaceOp'],
+): PetSessionEvent {
+  return { type, seq, time: Date.now(), data, surfaceOp }
 }
 
 const peer = (over: Partial<PetSessionPeer> = {}): PetSessionPeer => ({ id: 'a', ...over })
@@ -109,6 +114,28 @@ describe('petSessionReducer (host)', () => {
     expect(afterAnswer.payload.status).toBe('running')
     expect(afterAnswer.payload.phase).toBeUndefined()
     expect(afterAnswer.payload).toMatchObject({ workStatus: 'working' })
+  })
+
+  it('surfaceOp=replace 的用户消息（rewind 回退标记）不是新回合：空闲会话不得被翻成 running', () => {
+    const { reducer, pushes } = collect()
+    reducer.create(peer())
+    reducer.apply(peer(), ev('turn/start', { turn: 1 }, 1))
+    reducer.apply(peer(), ev('turn/end', { turn: 1, reason: { kind: 'aborted' } }, 2))
+
+    // rewind 在 cancel + waitForAgentIdle 之后追加替换标记，且回合外不再有 turn/end 收尾：
+    // 若照常置 running，会话永久停在「思考中」，桌宠气泡等不到收敛（回退后消不掉的残留气泡）。
+    const before = pushes.length
+    reducer.apply(peer(), ev('user/message', {
+      message: { role: 'user', content: [{ type: 'text', text: '回退' }] },
+    }, 3, { op: 'replace', startSeq: 0, endSeq: 2 }))
+    expect(pushes, '替换标记不产生任何展示态变化').toHaveLength(before)
+    expect(pushes.at(-1)!.payload).toMatchObject({ running: false })
+
+    // 真正的用户消息（append 标记或没有标记）仍视为新回合。
+    reducer.apply(peer(), ev('user/message', {
+      message: { role: 'user', content: [{ type: 'text', text: '继续' }] },
+    }, 4, 'append'))
+    expect(pushes.at(-1)!.payload).toMatchObject({ running: true })
   })
 
   it('turn/end(blocked) 让展示为 waiting(phase=blocked, workStatus=waiting)（等待用户处理非思考中）', () => {

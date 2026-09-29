@@ -12,6 +12,12 @@ export interface PetSessionEvent {
   seq: number
   time: number
   data?: Record<string, unknown>
+  /**
+   * 事件的表面（surface）标记：`'append'` 表示正常追加到会话表面，
+   * `{ op: 'replace', startSeq, endSeq }` 表示该事件只是替换既有事件区间的**记账标记**，
+   * 本身不开启新回合（如 rewind 回退、压缩 checkpoint）。
+   */
+  surfaceOp?: 'append' | { op?: string, startSeq?: number, endSeq?: number }
 }
 
 /** goal 自动续跑轮的收尾动作（`update_goal` 的 action）。 */

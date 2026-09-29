@@ -251,6 +251,20 @@ describe('createBubbleTracker', () => {
     })
   })
 
+  it('clears every tracked session and the component bubbles without forgetting future updates', () => {
+    const { bubble, calls } = createFakeBubble()
+    const tracker = createBubbleTracker(bubble)
+    tracker.apply({ id: 's1', workStatus: 'working' }, 'create')
+    tracker.apply({ id: 's2', workStatus: 'success' }, 'create')
+
+    tracker.clear()
+    expect(calls.at(-1)).toEqual({ type: 'clear' })
+
+    // clear 只作废已追踪的会话：清空后同一 id 再来事件仍要正常上气泡。
+    tracker.apply({ id: 's1', workStatus: 'thinking' }, 'create')
+    expect(shows(calls).at(-1)?.motion).toBe('thinking')
+  })
+
   it('drops host state and clears the component bubbles on dispose', () => {
     const { bubble, calls } = createFakeBubble()
     const tracker = createBubbleTracker(bubble)

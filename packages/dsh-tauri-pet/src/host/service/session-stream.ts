@@ -139,6 +139,7 @@ function asPetEvent(event: unknown): PetSessionEvent {
     seq: typeof e?.seq === 'number' ? e.seq : 0,
     time: typeof e?.time === 'number' ? e.time : 0,
     data: (e?.data ?? {}) as Record<string, unknown>,
+    surfaceOp: e?.surfaceOp,
   }
 }
 

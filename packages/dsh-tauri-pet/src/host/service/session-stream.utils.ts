@@ -228,6 +228,12 @@ function isGoalRoundEvent(data: Record<string, unknown>): boolean {
   return source?.kind === 'goal' && typeof source.round === 'number' && source.round > 0
 }
 
+/** 是否为「替换既有事件区间」的记账事件（`surfaceOp` 非 `'append'`），而非正常追加。 */
+function isReplaceSurfaceEvent(event: PetSessionEvent): boolean {
+  const op = event.surfaceOp
+  return op !== undefined && op !== 'append' && op.op === 'replace'
+}
+
 /** `update_goal` 调用声明的收尾动作；`edit`/`pause`/`resume` 不算收尾，参数不可解析时忽略。 */
 function goalClosingOf(name: string | undefined, args: string | undefined): PetGoalClosing | undefined {
   if (name !== 'update_goal')
@@ -412,6 +418,11 @@ function reduceSessionEvent(
       break
     }
     case 'user/message': {
+      // 替换标记（rewind 回退 / 压缩 checkpoint）是既有事件区间的记账，不是用户新回合：
+      // 它出现在 cancel + waitForAgentIdle 之后，且回合外不再追加 turn/end，若照常置
+      // running 会让会话永久停在「思考中」，气泡等不到收敛（回退后消不掉的残留气泡）。
+      if (isReplaceSurfaceEvent(event))
+        return null
       // 用户消息只标记会话活跃，不写入展示 message（避免把用户提示当成助手描述）。
       if (isGoalRoundEvent(data))
         state.goalRound = true

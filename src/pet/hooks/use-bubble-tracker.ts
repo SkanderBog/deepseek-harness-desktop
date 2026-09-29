@@ -22,6 +22,7 @@ type SessionAction = 'create' | 'remove' | 'update'
 export interface BubbleTracker {
   apply: (payload: unknown, action: SessionAction) => void
   flush: () => void
+  clear: () => void
   dispose: () => void
 }
 
@@ -39,6 +40,8 @@ export function useBubbleTracker(pet: PetRef, source?: PetSource | null) {
   useListen('session:create', event => tracker.apply(event.payload, 'create'))
   useListen('session:update', event => tracker.apply(event.payload, 'update'))
   useListen('session:remove', event => tracker.apply(event.payload, 'remove'))
+  // 宿主累计态归零后（应用重启、宿主热重载）不会再补发 remove：残留气泡只能靠这一帧整批作废。
+  useListen('session:clear', () => tracker.clear())
   useUnmount(() => tracker.dispose())
 }
 
@@ -52,6 +55,13 @@ export function createBubbleTracker(bubble: PetBubbleHandle): BubbleTracker {
     sessions.delete(id)
     previousMotion.delete(id)
     terminalShown.delete(id)
+  }
+
+  const reset = () => {
+    sessions.clear()
+    previousMotion.clear()
+    terminalShown.clear()
+    bubble.clear()
   }
 
   const sync = (session: BubbleSession) => {
@@ -120,11 +130,12 @@ export function createBubbleTracker(bubble: PetBubbleHandle): BubbleTracker {
       for (const session of [...sessions.values()]) sync(session)
     },
 
+    clear() {
+      reset()
+    },
+
     dispose() {
-      sessions.clear()
-      previousMotion.clear()
-      terminalShown.clear()
-      bubble.clear()
+      reset()
     },
   }
 }
