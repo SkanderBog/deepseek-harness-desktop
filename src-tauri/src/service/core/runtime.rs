@@ -377,21 +377,18 @@ fn prune_stale_core_packages(app_handle: &AppHandle, core_root: &Path) -> Result
         );
         return Ok(());
     };
-    prune_stale_core_entries(
-        &profile.join("node_modules"),
-        &core_root.join("node_modules"),
-        &declared,
-    )
+    prune_stale_core_entries(&profile, &core_root.join("node_modules"), &declared)
 }
 
 /// 逐个比对档案与锚点的同名核心包版本，清除版本错配且档案未声明的条目。
 fn prune_stale_core_entries(
-    profile_node_modules: &Path,
+    profile_root: &Path,
     anchor_node_modules: &Path,
     declared: &HashSet<String>,
 ) -> Result<(), String> {
+    let profile_node_modules = profile_root.join("node_modules");
     let scope = profile_node_modules.join(CORE_PACKAGE_SCOPE);
-    let Some(scope_root) = containment_root(&scope, profile_node_modules) else {
+    let Some(scope_root) = containment_root(&scope, profile_root) else {
         return Ok(());
     };
     let entries = match std::fs::read_dir(&scope) {
@@ -453,11 +450,13 @@ fn prune_stale_core_entries(
     Ok(())
 }
 
-/// 解析 scope 的真实位置，并确认它既不是重定向入口、也仍留在档案的 `node_modules` 内。
+/// 解析 scope 的真实位置，并确认它既不是重定向入口、也仍留在档案目录内。
 ///
-/// 返回 `None` 时整轮跳过扫描：顺着被重定向的 scope 递归删除，删除目标就会落到
-/// 档案之外的目录上，这比「这一轮没清干净」严重得多。
-fn containment_root(scope: &Path, profile_node_modules: &Path) -> Option<PathBuf> {
+/// 包含关系以**档案目录**（而非 `node_modules`）为锚点：`node_modules` 自身若被
+/// 重定向成一个外部目录，以它为根就等于把「档案之外」当成了内部。返回 `None` 时
+/// 整轮跳过扫描——顺着重定向递归删除会把删除目标落到档案之外，这比「这一轮没
+/// 清干净」严重得多。
+fn containment_root(scope: &Path, profile_root: &Path) -> Option<PathBuf> {
     let metadata = std::fs::symlink_metadata(scope).ok()?;
     let file_type = metadata.file_type();
     #[cfg(windows)]
@@ -472,7 +471,7 @@ fn containment_root(scope: &Path, profile_node_modules: &Path) -> Option<PathBuf
         return None;
     }
 
-    let root = std::fs::canonicalize(profile_node_modules).ok()?;
+    let root = std::fs::canonicalize(profile_root).ok()?;
     let real = std::fs::canonicalize(scope).ok()?;
     if !real.starts_with(&root) {
         log::warn!(
@@ -1979,7 +1978,12 @@ mod tests {
         write_package_version(&profile_modules, "dsh-settings", "0.1.5-rc.2");
         write_package_version(&anchor_modules, "dsh-settings", "0.1.7-rc.2");
 
-        prune_stale_core_entries(&profile_modules, &anchor_modules, &HashSet::new()).unwrap();
+        prune_stale_core_entries(
+            &root.join("profiles/tauri"),
+            &anchor_modules,
+            &HashSet::new(),
+        )
+        .unwrap();
 
         assert!(
             !profile_modules
@@ -2015,7 +2019,7 @@ mod tests {
         std::fs::create_dir_all(profile_modules.join("@deepseek-ai/dsh-orphan")).unwrap();
 
         let declared = HashSet::from(["@deepseek-ai/dsh-tools".to_string()]);
-        prune_stale_core_entries(&profile_modules, &anchor_modules, &declared).unwrap();
+        prune_stale_core_entries(&root.join("profiles/tauri"), &anchor_modules, &declared).unwrap();
 
         assert!(
             profile_modules
@@ -2057,7 +2061,12 @@ mod tests {
             write_package_version(&anchor_modules, name, "0.1.7-rc.2");
         }
 
-        prune_stale_core_entries(&profile_modules, &anchor_modules, &HashSet::new()).unwrap();
+        prune_stale_core_entries(
+            &root.join("profiles/tauri"),
+            &anchor_modules,
+            &HashSet::new(),
+        )
+        .unwrap();
 
         for name in ["schemastery", "cosmokit", "cordis", "dshmarket"] {
             assert!(
@@ -2088,7 +2097,12 @@ mod tests {
             .unwrap();
         write_package_version(&anchor_modules, "dsh-settings", "0.1.7-rc.2");
 
-        prune_stale_core_entries(&profile_modules, &anchor_modules, &HashSet::new()).unwrap();
+        prune_stale_core_entries(
+            &root.join("profiles/tauri"),
+            &anchor_modules,
+            &HashSet::new(),
+        )
+        .unwrap();
 
         assert!(
             !profile_modules.join("@deepseek-ai/dsh-settings").exists(),
@@ -2117,11 +2131,43 @@ mod tests {
         std::fs::create_dir_all(&profile_modules).unwrap();
         std::os::unix::fs::symlink(&outside, profile_modules.join("@deepseek-ai")).unwrap();
 
-        prune_stale_core_entries(&profile_modules, &anchor_modules, &HashSet::new()).unwrap();
+        prune_stale_core_entries(
+            &root.join("profiles/tauri"),
+            &anchor_modules,
+            &HashSet::new(),
+        )
+        .unwrap();
 
         assert!(
             outside.join("dsh-settings/package.json").is_file(),
             "a redirected scope must never be pruned through"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `node_modules` 自身被重定向成一个外部目录时，包含锚点必须是档案目录，
+    /// 否则外部目录会被当成「档案内部」而遭删除。
+    #[cfg(unix)]
+    #[test]
+    fn redirected_node_modules_is_skipped_entirely() {
+        let root = std::env::temp_dir().join(format!("dsh-stale-core-nm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let profile = root.join("profiles/tauri");
+        let anchor_modules = root.join("dependencies/dsh/node_modules");
+        let outside_modules = root.join("outside/node_modules");
+        write_package_version(&outside_modules, "dsh-settings", "0.1.5-rc.2");
+        write_package_version(&anchor_modules, "dsh-settings", "0.1.7-rc.2");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::os::unix::fs::symlink(&outside_modules, profile.join("node_modules")).unwrap();
+
+        prune_stale_core_entries(&profile, &anchor_modules, &HashSet::new()).unwrap();
+
+        assert!(
+            outside_modules
+                .join("@deepseek-ai/dsh-settings/package.json")
+                .is_file(),
+            "an external node_modules must never be pruned through"
         );
 
         let _ = std::fs::remove_dir_all(&root);
