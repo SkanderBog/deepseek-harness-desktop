@@ -10,8 +10,10 @@ export default antfu({
     'docs',
     'archive',
     // 技能目录：脚本与参考文档由技能作者维护（部分经 skills-lock.json 锁定上游哈希），
-    // 改动会偏离上游并破坏哈希校验，不参与本仓 lint 规约
+    // 改动会偏离上游并破坏哈希校验，不参与本仓 lint 规约。
+    // 插件包内的 skills/ 随包分发、由技能作者维护，同样按技能资产对待。
     'skills',
+    'packages/*/skills',
     // vendored 第三方 crate（含其 README/permissions 产物）：格式由上游决定，
     // 只保留本仓对其的 patch 说明（PATCH.md 由人读，不参与 lint）
     'src-tauri/vendor',

@@ -114,6 +114,13 @@ const ATTRIBUTION_BASENAMES = /^(?:licen[cs]e|notice|copying)/i
 const DOCUMENTATION_BASENAMES = /^(?:readme|changelog|changes|history|authors|contributors)/i
 const DOCUMENTATION_EXTENSIONS = /\.md$/i
 
+/**
+ * 技能目录段：插件随包分发的 `skills/<name>/SKILL.md` 是运行期资源，技能提供者
+ * （`@deepseek-ai/dsh-skill-filesystem` 的 customSkillDirs）在装载时扫描该子树，
+ * 因此整棵保留，不按文档扩展名裁剪。
+ */
+const SKILL_DIRECTORY_NAME = 'skills'
+
 /** 仅服务开发/测试/浏览器条件的目录段，需配合守护集判断。 */
 const PRUNE_SEGMENTS = new Set(['src', 'test', 'tests', '__tests__', 'browser'])
 
@@ -291,16 +298,24 @@ function collectFiles(dir: string, out: string[] = []): string[] {
   return out
 }
 
-/** 版权与许可声明必须随包分发，其余说明性文档与 sourcemap、类型声明一律可裁。 */
-function isNonRuntimeFile(rel: string): boolean {
+/** 版权与许可声明必须随包分发，技能子树同样整棵保留，其余说明性文档与 sourcemap、类型声明一律可裁。 */
+export function isNonRuntimeFile(rel: string): boolean {
   const name = basename(rel)
   if (ATTRIBUTION_BASENAMES.test(name)) {
+    return false
+  }
+  if (inSkillDirectory(rel)) {
     return false
   }
   if (DOCUMENTATION_BASENAMES.test(name) || DOCUMENTATION_EXTENSIONS.test(name)) {
     return true
   }
   return NON_RUNTIME_EXTENSIONS.some(pattern => pattern.test(rel))
+}
+
+/** 路径中任意一段为技能目录即属技能子树（`<pkg>/skills/<name>/SKILL.md`）。 */
+function inSkillDirectory(rel: string): boolean {
+  return rel.split(sep).includes(SKILL_DIRECTORY_NAME)
 }
 
 function removeEmptyDirectories(root: string): void {
@@ -404,6 +419,11 @@ function pruneNonRuntimeFiles(root: string): number {
   for (const dir of index.dirs) {
     for (const file of collectFiles(dir)) {
       const rel = relative(root, file)
+      // 技能子树是运行期资源（技能提供者在装载时扫描）：整棵保留，既不看扩展名，
+      // 也不按 src/test/browser 目录段裁剪。
+      if (inSkillDirectory(rel)) {
+        continue
+      }
       // 非运行期文件无条件裁剪：即便紧邻被守护的代码（如 require('.') 命中的包根），
       // Node 也不会去加载它们。
       if (isNonRuntimeFile(rel)) {

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { relativeSpecifiers } from '../scripts/build-plugins'
+import { isNonRuntimeFile, relativeSpecifiers } from '../scripts/build-plugins'
 
 describe('plugin deployment relative dependencies', () => {
   it('collects static imports and re-exports including side effects', () => {
@@ -48,5 +48,30 @@ describe('plugin deployment relative dependencies', () => {
     const source = readFileSync(join(root, 'cjs', file), 'utf8')
     expect(source).toContain('import(\'./MyComponent\')')
     expect(relativeSpecifiers(source)).not.toContain('./MyComponent')
+  })
+})
+
+describe('plugin deployment documentation pruning', () => {
+  it('prunes documentation, sourcemaps and type declarations', () => {
+    expect(isNonRuntimeFile(join('pkg', 'README.md'))).toBe(true)
+    expect(isNonRuntimeFile(join('pkg', 'CHANGELOG.md'))).toBe(true)
+    expect(isNonRuntimeFile(join('pkg', 'dist', 'index.js.map'))).toBe(true)
+    expect(isNonRuntimeFile(join('pkg', 'dist', 'index.d.ts'))).toBe(true)
+  })
+
+  it('keeps attribution files and runtime code', () => {
+    expect(isNonRuntimeFile(join('pkg', 'LICENSE'))).toBe(false)
+    expect(isNonRuntimeFile(join('pkg', 'NOTICE.md'))).toBe(false)
+    expect(isNonRuntimeFile(join('pkg', 'dist', 'index.js'))).toBe(false)
+  })
+
+  it('keeps skills packaged with a plugin for the skill provider to scan', () => {
+    expect(isNonRuntimeFile(join('dsh-tauri-pet', 'skills', 'hatch-dsh-pet', 'SKILL.md'))).toBe(false)
+    expect(isNonRuntimeFile(join('dsh-tauri-pet', 'skills', 'hatch-dsh-pet', 'README.md'))).toBe(false)
+    expect(isNonRuntimeFile(join('dsh-tauri-pet', 'skills', 'hatch-dsh-pet', 'references', 'sprite-atlas.md'))).toBe(false)
+  })
+
+  it('does not treat a lookalike segment as a skills directory', () => {
+    expect(isNonRuntimeFile(join('pkg', 'skills-extra', 'GUIDE.md'))).toBe(true)
   })
 })
