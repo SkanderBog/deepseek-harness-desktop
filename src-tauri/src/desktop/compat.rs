@@ -95,3 +95,28 @@ pub(crate) const ABORT_SIGNAL_ANY_SHIM_JS: &str = r#"(function () {
 /// iterator helpers，故该常量不参与 Windows 构建（与 `AbortSignal.any` 的理由一致）。
 #[cfg(not(windows))]
 pub(crate) const ITERATOR_HELPERS_SHIM_JS: &str = include_str!("compat_iterator.js.inc");
+
+/// 注入 `Promise.withResolvers` 垫片（Safari 17.4- / WebKit 缺失时启用，issue #761）。
+///
+/// 背景：dsh 宿主在 serve `index.html` 时于末尾内联一段启动握手脚本
+/// `(globalThis.__DSH_BOOT_READY__ ??= Promise.withResolvers()).resolve()`；
+/// `Promise.withResolvers` 是 Safari 17.4+ / WebKit 1691 才引入的标准 API，
+/// macOS 14.x 及更早的系统 WebKit 上不存在，脚本在解析期即抛
+/// `TypeError: Promise.withResolvers is not a function. (In 'Promise.withResolvers()',
+/// 'Promise.withResolvers' is undefined)`，启动握手失败、页面白屏。
+///
+/// 修法只能是壳层补齐——该内联脚本由 dsh 宿主在响应期注入，不在 dist 产物里，
+/// 桌面端无法重建其构建目标，也无法通过补丁改写磁盘文件。
+///
+/// 与 [`ABORT_SIGNAL_ANY_SHIM_JS`] 走同一套注入通道（Windows 在 FrameCreated →
+/// ContentLoading 时 ExecuteScript，其余平台 `initialization_script_for_all_frames`），
+/// 在页面脚本执行之前就位，主机框架与 iframe 每次重新加载都会自动重建。
+///
+/// 脚本本体放在 `compat_promise.js.inc`：与 iterator helpers 同理，
+/// 单列文件便于 `test/compat-promise.test.ts` 在 VM 里删掉原生 `Promise.withResolvers`
+/// 后做差分验证。
+///
+/// 仅在非 Windows 平台注入：Windows 用 WebView2（常青 Chromium ≥ 119）原生支持
+/// `Promise.withResolvers`，故该常量不参与 Windows 构建（与 `AbortSignal.any` 的理由一致）。
+#[cfg(not(windows))]
+pub(crate) const PROMISE_WITH_RESOLVERS_SHIM_JS: &str = include_str!("compat_promise.js.inc");

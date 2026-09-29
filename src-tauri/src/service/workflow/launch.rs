@@ -420,6 +420,13 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::service::patch::workspace_view::apply(&app_handle) {
         log::warn!("workspace view state patch failed: {e}");
     }
+    // dsh-web-frontend 的浏览器产物与按需加载的终端 / PDF 大 chunk 使用了 class static
+    // block（Safari 16.4+）。桌面端声明支持的 macOS 10.15+ 系统 WebKit 解析期即报
+    // `SyntaxError: Unexpected token '{'`，入口模块整体加载失败导致白屏（issue #761）。
+    // 降级为等价的静态字段初始化器；幂等，未命中静态块时安全跳过。
+    if let Err(e) = crate::service::patch::frontend_legacy::apply(&app_handle) {
+        log::warn!("frontend legacy syntax patch failed: {e}");
+    }
     // 预防性处理：pnpm 在无 TTY 环境（dsh-market 等子进程）下重装/更新插件时，
     // 清理/重建 node_modules 会触发交互确认并因无 TTY 直接中止
     // （ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY），表现为插件更新失败。

@@ -688,6 +688,7 @@ pub fn build_main_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::We
     let webview_builder = webview_builder
         .initialization_script_for_all_frames(crate::desktop::compat::ABORT_SIGNAL_ANY_SHIM_JS)
         .initialization_script_for_all_frames(crate::desktop::compat::ITERATOR_HELPERS_SHIM_JS)
+        .initialization_script_for_all_frames(crate::desktop::compat::PROMISE_WITH_RESOLVERS_SHIM_JS)
         .initialization_script_for_all_frames(crate::desktop::notification::NOTIFICATION_SHIM_JS)
         .initialization_script_for_all_frames(crate::desktop::paste::PASTE_SHIM_JS)
         .initialization_script_for_all_frames(crate::desktop::frame_log::FRAME_LOG_BRIDGE_JS)
@@ -783,6 +784,7 @@ pub fn build_shell_window(
     let webview_builder = webview_builder
         .initialization_script_for_all_frames(crate::desktop::compat::ABORT_SIGNAL_ANY_SHIM_JS)
         .initialization_script_for_all_frames(crate::desktop::compat::ITERATOR_HELPERS_SHIM_JS)
+        .initialization_script_for_all_frames(crate::desktop::compat::PROMISE_WITH_RESOLVERS_SHIM_JS)
         .initialization_script_for_all_frames(crate::desktop::notification::NOTIFICATION_SHIM_JS)
         .initialization_script_for_all_frames(crate::desktop::paste::PASTE_SHIM_JS)
         .initialization_script_for_all_frames(crate::desktop::frame_log::FRAME_LOG_BRIDGE_JS)
