@@ -274,20 +274,31 @@ pub(crate) fn repair_loader_state(app_handle: &AppHandle) -> Result<(), String> 
     Ok(())
 }
 
-/// 核对输入指纹：档案路径 + 档案清单内容 + 核心版本 + 内置插件的安装规格。
+/// 核对输入指纹：档案路径 + loader 状态修复的全部输入 + 核心版本 + 内置插件的安装规格。
 ///
 /// 只用于判断「这次调用与上次成功的那次是不是同一份输入」，因此取的都是廉价且必然
-/// 随状态变化而变化的量：清单内容一变（安装/卸载/去重/失效链接清理写回）指纹就变，
-/// 缓存随即失效。内置插件按元组排序后整体喂入，避免清单条目顺序抖动造成假失效。
+/// 随状态变化而变化的量。除了档案清单，还必须带上 `repair_loader_state` 会读写的另三个
+/// 文件（档案根 `cordis.yml` 与两层 patch 层）：只盯 `package.json` 的话，patch 被改或
+/// 根被写脏时指纹不变，复用就会连修复一起跳过，把脏状态留在档案里。内置插件按元组排序
+/// 后整体喂入，避免清单条目顺序抖动造成假失效。
 fn ensure_fingerprint(app_handle: &AppHandle, internal: &[PreinstallPluginInfo]) -> u64 {
     use std::hash::{Hash, Hasher};
 
     let profile = profile_dir(app_handle);
+    let dsh_home = config::get_dsh_data_path(app_handle);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     profile.to_string_lossy().as_ref().hash(&mut hasher);
     std::fs::read(profile.join("package.json"))
         .unwrap_or_default()
         .hash(&mut hasher);
+    std::fs::read(profile.join("cordis.yml"))
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    for patch_path in super::patch_layer_paths(&profile, &dsh_home) {
+        std::fs::read(patch_path)
+            .unwrap_or_default()
+            .hash(&mut hasher);
+    }
     crate::service::core::active_version(app_handle).hash(&mut hasher);
     let mut specs: Vec<(&str, &str, &str)> = internal
         .iter()

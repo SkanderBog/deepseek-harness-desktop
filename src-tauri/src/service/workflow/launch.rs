@@ -826,7 +826,9 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         }
     };
 
-    mark_phase("spawn_and_probe", &mut phase_started);
+    // 这一段包含 spawn、2.5s 存活探测与 `set_owned_process` 登记——登记写在 spawn 块
+    // 内部，无法单独切分，所以不再为「登记」另打一个只量到一行 log 的点。
+    mark_phase("spawn_probe_and_register", &mut phase_started);
 
     match spawn_result {
         Ok((stdout, stderr, pid)) => {
@@ -834,7 +836,6 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
                 "Harness process started successfully: pid={pid}, port={}",
                 setting.port
             );
-            mark_phase("registered", &mut phase_started);
             // 记录 PID+端口供下次启动清扫崩溃残留的孤儿实例（见 sweep_orphan_harness）
             persist_harness_pid(&app_handle, pid, setting.port);
             spawn_output_readers(stdout, stderr, log_path);
