@@ -416,7 +416,8 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // `sessionUpdatedAtByAccount`（persist key 仍是 dsh.workspace.view.v5）：先跑过新核心
     // 再切回 0.1.5-rc.1 / rc.2 时，旧核心的 retainAccountKeys 会
     // Object.entries(undefined) 抛错，sidebar.workspaces 整条槽崩掉且不会自愈。
-    // 补丁把该 action 的三处取值放宽为 `?? {}`；锚点缺失（新核心已删字段）安全跳过。
+    // 补丁把该 action 的取值放宽为 `?? {}`，逐条独立判定：0.1.7 起上游第三条改成了
+    // `delete`，前两条的放宽仍然生效；只有该 action 被整体改写才安全跳过。
     if let Err(e) = crate::service::patch::workspace_view::apply(&app_handle) {
         log::warn!("workspace view state patch failed: {e}");
     }
