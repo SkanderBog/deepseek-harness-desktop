@@ -11,7 +11,7 @@ import { skillCreatorPrefillFeature } from './register/skill-creator-prefill'
 
 export const name = PLUGIN_ID
 
-export const inject = ['slots', 'locale', 'sessions', 'workspaces']
+export const inject = ['slots', 'layout', 'locale', 'sessions', 'workspaces']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(locale.registerLocale, LOCALE_EFFECT)
