@@ -231,19 +231,6 @@ class FakeTransport implements SshTransport {
     _signal?: AbortSignal,
   ): Promise<SshSession> {
     this.connectCalls += 1
-    // TEMP DIAGNOSTIC (drop before review): trace every dial's call chain.
-    console.error(`[DIAL] #${this.connectCalls} m=${String(profile.id)} ${(new Error('dial').stack ?? '')
-      .split('\n')
-      .slice(1)
-      .map(line => line.trim())
-      .filter(line => line.includes('machine.ts:') || line.includes('machine.test.ts:'))
-      .map((line) => {
-        const open = line.indexOf('(')
-        const close = line.lastIndexOf(')')
-        const loc = open >= 0 && close > open ? line.slice(open + 1, close) : line.replace(/^at /, '')
-        return loc.slice(loc.lastIndexOf('/') + 1)
-      })
-      .join(' < ')}`)
     this.profiles.push(profile)
     const session = this.sessionFactory()
     this.sessions.push(session)
@@ -1340,6 +1327,27 @@ describe('sshManager install', () => {
     // Cancellation by an explicit disconnect is the documented no-terminal
     // case: the superseded attempt never publishes, not even a settle.
     expect(terminalsOf(events)).toHaveLength(0)
+  })
+
+  it('does not dial into the next runtime when a teardown lands mid-install', async () => {
+    let releaseInstall: (() => void) | undefined
+    const installGate = new Promise<void>((resolve) => {
+      releaseInstall = resolve
+    })
+    const session = new FakeSession(() => false)
+    session.missingResult = 'node\n'
+    session.execGate = command => command.includes('trap cleanup EXIT') ? installGate : undefined
+    const { manager } = boot({ sessionFactory: () => session, envCredentials: () => ({ apiKey: 'sk-test' }) })
+    const pending = manager.install(MachineId('m1'))
+    await until(() => session.commands.some(command => command.includes('trap cleanup EXIT')), 'install script')
+    // 下一个 runtime 已装配：在途 attempt 的续跑必须失效，否则它会读到新 runtime 的
+    // transport，把连接计到别人的账上（host 单例 + deps 延迟解析下的串场）。
+    const next = boot({ sessionFactory: () => new FakeSession(() => true) })
+    releaseInstall!()
+    await pending.catch(() => undefined)
+    // 无修复时这里是 1：在途 attempt 的续跑借用下一个 runtime 的 transport 拨号。
+    expect(next.transport.connectCalls).toBe(0)
+    await expect(pending).rejects.toMatchObject({ code: 'machine-install-failed' })
   })
 
   it('returns the install result without connecting once a disconnect superseded the finish', async () => {
