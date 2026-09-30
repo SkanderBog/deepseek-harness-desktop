@@ -3,7 +3,9 @@ import type { CSSProperties, RefObject } from 'react'
 import type { NotificationActionEvent } from '@/hooks/use-notification-action'
 import type { NotificationClickEvent } from '@/hooks/use-notification-clicked'
 import {
+  isPermissionGranted,
   registerActionTypes,
+  requestPermission,
   sendNotification,
 } from '@choochmeque/tauri-plugin-notifications-api'
 import { CircleExclamation } from '@gravity-ui/icons'
@@ -91,6 +93,23 @@ const registeredActionTypes = new Map<string, ActionTypeRegistration>()
 
 /** 注册表上限：实际只有「批准 / 拒绝」与「回复」两组，这里只是防止异常输入把表撑大。 */
 const ACTION_TYPE_LIMIT = 16
+
+let notificationPermissionRequest: Promise<boolean> | undefined
+
+function ensureNotificationPermission(): Promise<boolean> {
+  notificationPermissionRequest ??= (async () => {
+    try {
+      if (await isPermissionGranted())
+        return true
+      return await requestPermission() === 'granted'
+    }
+    catch (error) {
+      console.error('[notification] permission request failed:', error)
+      return false
+    }
+  })().finally(() => { notificationPermissionRequest = undefined })
+  return notificationPermissionRequest
+}
 
 /**
  * 合并同一次按钮点击的重复投递的窗口（毫秒）。
@@ -297,6 +316,8 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     const body = data.body ?? ''
 
     void (async () => {
+      if (!await ensureNotificationPermission())
+        return
       // 后端只在 `actionTypeId` 已注册时才往通知里写按钮，所以必须先注册再发送；
       // 每次都用插件给的本地化文案重新注册，按钮文案才能跟随界面语言。
       // 整组按钮一起注册（授权是「批准 / 拒绝」），带输入框的按钮把 input 系列字段一并透传，
