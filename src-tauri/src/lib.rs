@@ -15,8 +15,8 @@ pub fn patch_core_dir(core_dir: &std::path::Path) -> Result<(), String> {
     service::patch::apply_all_at(core_dir)
 }
 
-/// 应用入口：先做 Wayland 环境兼容（见 `should_apply_wayland_egl_workaround`），
-/// 再初始化日志、装配桌面端并进入事件循环。
+/// 应用入口：先做 Wayland 环境兼容（见 `should_apply_wayland_egl_workaround` 与
+/// `should_restore_wayland_backend`），再初始化日志、装配桌面端并进入事件循环。
 pub fn run() {
     // Wayland EGL workaround：仅 AppImage 需要（见 `should_apply_wayland_egl_workaround`）。
     if should_apply_wayland_egl_workaround(
@@ -37,13 +37,31 @@ pub fn run() {
         }
         if !applied.is_empty() {
             // 此处在 logger::init() 之前执行，log 宏尚无 subscriber，用 eprintln 输出
-            eprintln!("[wayland] set {} for WebKitGTK EGL", applied.join("="));
+            eprintln!("[wayland] set {} for WebKitGTK EGL", applied.join(" "));
         }
     }
     // 强制 XWayland（默认关闭的设置项，见 `should_force_xwayland`）。必须在此处执行：
     // GDK 只在初始化时读一次 GDK_BACKEND，建窗之后再改无效。
+    let force_xwayland =
+        config::force_xwayland_setting() || std::env::var_os("DSH_FORCE_XWAYLAND").is_some();
+    // AppImage 的 GTK 钩子把 GDK_BACKEND 强制成 x11（见 `should_restore_wayland_backend`）：
+    // 默认丢掉，让 GTK 与 WebKit 一起走原生 Wayland；用户显式要 XWayland 时不动它。
+    if should_restore_wayland_backend(
+        std::env::var_os("APPIMAGE").is_some(),
+        &std::env::var("WAYLAND_DISPLAY").unwrap_or_default(),
+        &std::env::var("GDK_BACKEND").unwrap_or_default(),
+    ) && !force_xwayland
+    {
+        std::env::remove_var("GDK_BACKEND");
+        // 同上，logger::init() 尚未执行，只能用 eprintln。这里是「原生 Wayland 反而起不来」
+        // 时唯一的提示位：那种情况下窗口不会出现，用户在应用内看不到任何日志或设置项。
+        eprintln!(
+            "[wayland] dropped the AppImage hook's GDK_BACKEND=x11 to use native Wayland (issue #789)"
+        );
+        eprintln!("[wayland] set DSH_FORCE_XWAYLAND=1 to keep XWayland instead");
+    }
     if should_force_xwayland(
-        config::force_xwayland_setting(),
+        force_xwayland,
         &std::env::var("WAYLAND_DISPLAY").unwrap_or_default(),
         &std::env::var("GDK_BACKEND").unwrap_or_default(),
         &std::env::var("DISPLAY").unwrap_or_default(),
@@ -105,6 +123,36 @@ pub fn run() {
 /// AppImage 运行时必带 `APPIMAGE` 环境变量（runtime 规范），以此判定打包形态。
 fn should_apply_wayland_egl_workaround(session_type: &str, appimage_present: bool) -> bool {
     session_type == "wayland" && appimage_present
+}
+
+/// AppImage 的 GTK 启动钩子强制出来的 XWayland 后端是否应被丢弃。
+///
+/// linuxdeploy-plugin-gtk 为绕开 tauri#8541（Ubuntu 20.04 构建的 AppImage 在 Fedora 39
+/// 上以 `GLib-GIO-ERROR … xsettings` 退出）无条件 `export GDK_BACKEND=x11`，于是 Wayland
+/// 会话下的 AppImage 永远以 XWayland 客户身份运行 GTK3，并按 AppImage 自带的 immodules
+/// 缓存选中 XIM 输入法模块。上游已认定这是缺陷：tauri#15781「钩子覆盖用户显式设置的
+/// GDK_BACKEND，静默降级到 XWayland 且不报错」，#11790 记下的结论是「hardcoded，需要时
+/// 从 Rust 侧覆盖」，PR #16062 已在 dev 分支删掉该行但尚未发布，linuxdeploy-plugin-gtk
+/// 的 master 也仍在使用它（`@tauri-apps/cli` 2.11.4 在 tools 目录缺失时直接下载 master）。
+///
+/// issue #789 的现场与该降级吻合：Wayland + AppImage 下点击内嵌 iframe 后整个 WebView
+/// 不再出帧（顶层 navbar 照常可点，拖窗口边框才刷出几帧，剪贴板为空）。丢掉强制值后
+/// GTK 与 WebKit 同样工作在 Wayland 上，不再出现 X11 窗口配 Wayland 加速面的错配。
+/// 判定用 `WAYLAND_DISPLAY` 而非 `XDG_SESSION_TYPE`：后者由 pam_systemd 设置，从 TTY
+/// 直接起的合成器下为空，而 GDK 照样连上 Wayland（与 [`pet_overlay_supported`] 同一理由）。
+///
+/// 只认裸 `x11`：`wayland` / `x11,wayland` 这类优先级列表只可能来自用户或启动脚本，不覆盖。
+///
+/// `force_xwayland` 的解析早于 `migrate_app_data_dir`（见 `config::force_xwayland_setting`）：
+/// 旧标识符升级来的用户首次启动读不到设置文件。但该设置 2026-09-23 才引入（38d7f01b），
+/// 标识符 2026-09-21 已改短（67f058c9），旧 store 里不可能存在 `force_xwayland`，
+/// 因此这条读取盲区不会让本判定丢掉任何已持久化的用户意图。
+fn should_restore_wayland_backend(
+    appimage_present: bool,
+    wayland_display: &str,
+    gdk_backend: &str,
+) -> bool {
+    appimage_present && !wayland_display.is_empty() && gdk_backend == "x11"
 }
 
 /// 桌宠窗口的置顶与绝对定位能力是否可用。
@@ -178,6 +226,28 @@ mod tests {
         assert!(!should_apply_wayland_egl_workaround("x11", true));
         assert!(!should_apply_wayland_egl_workaround("", true));
         assert!(!should_apply_wayland_egl_workaround("", false));
+    }
+
+    #[test]
+    fn appimage_hook_forced_x11_backend_is_dropped_on_wayland() {
+        // AppImage 自带钩子的强制值 + Wayland 套接字可用：丢弃，改走原生 Wayland。
+        assert!(should_restore_wayland_backend(true, "wayland-0", "x11"));
+        // 用户或启动脚本显式给的优先级列表不是钩子的裸 x11，保持权威。
+        assert!(!should_restore_wayland_backend(
+            true,
+            "wayland-0",
+            "wayland"
+        ));
+        assert!(!should_restore_wayland_backend(
+            true,
+            "wayland-0",
+            "x11,wayland"
+        ));
+        // 没有 Wayland 套接字（纯 X11 会话 / macOS / Windows）：GDK 自己挑后端。
+        assert!(!should_restore_wayland_backend(true, "", "x11"));
+        // 宿主安装包没有该钩子，变量来自用户，不动。
+        assert!(!should_restore_wayland_backend(false, "wayland-0", "x11"));
+        assert!(!should_restore_wayland_backend(false, "wayland-0", ""));
     }
 
     #[test]
