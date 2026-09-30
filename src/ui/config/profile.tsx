@@ -213,7 +213,7 @@ export function ConfigProfile() {
     }
     catch (err) {
       console.error('[ConfigProfile] create failed:', err)
-      toast(t('profiles.create_failed'), {})
+      toast(t('profiles.create_failed'), { description: String(err) })
     }
   }
 

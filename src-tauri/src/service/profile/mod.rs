@@ -186,10 +186,11 @@ pub(crate) fn profile_release_age_excluded(app_handle: &AppHandle, entry: &str) 
 
 /// 把用户明确授权过的精确 `包名@版本` 追加进档案的 `minimumReleaseAgeExclude`。
 ///
-/// pnpm 的发布时长策略（`minimumReleaseAge`，11 默认 24 小时）在解析与 lockfile 校验
-/// 两处都会拦下太新的版本；档案一旦声明了这样的版本，**每次**插件操作都会失败。用户
-/// 在界面上确认接受这些精确版本后走这里：写的是精确条目，只让列出的版本过闸，其余
-/// 解析照旧受窗口约束；已存在的条目不会重复写。
+/// pnpm 的发布时长策略（`minimumReleaseAge`，11 默认 24 小时）只被**解析**阶段采信：
+/// 写进豁免清单能让 pnpm 解析到这个版本，也能让此后 `pnpm install` 的 lockfile 校验
+/// 放行**豁免清单里的精确条目**（实测：无豁免时校验阶段硬失败，补上豁免后通过）。
+/// 用户授权与「太新条目早已在 lock 里」的自愈（`install::heal_locked_release_age`）都走
+/// 这里：写的是精确条目，只让列出的版本过闸，其余解析照旧受窗口约束；已存在的不重复写。
 pub(crate) fn allow_profile_release_age(
     app_handle: &AppHandle,
     entries: &[String],
@@ -377,7 +378,15 @@ pub fn create(app_handle: &AppHandle, name: &str) -> Result<Profile, String> {
     if dir.is_dir() {
         return Err(format!("PROFILE_EXISTS: profile {id} already exists"));
     }
-    init_profile_dir(&dir, &id)?;
+    if let Err(error) = init_profile_dir(&dir, &id) {
+        // 初始化中途失败会留下半成品目录，此后同名档案永远撞上 `PROFILE_EXISTS`：用户
+        // 反复看到的只有「创建档案失败」，真实原因再也复现不出来。目录是本函数刚刚
+        // 创建的（上面已确认不存在），因此整体回滚，让重试与首次尝试完全等价。
+        if let Err(cleanup) = fs::remove_dir_all(&dir) {
+            log::warn!("failed to roll back the half-initialized profile {id}: {cleanup}");
+        }
+        return Err(error);
+    }
     Ok(Profile {
         id,
         name: trimmed.to_string(),
