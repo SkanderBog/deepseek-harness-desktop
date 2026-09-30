@@ -1,6 +1,6 @@
-export interface SessionListSnapshot {
-  ids: string[]
-  current?: string
+import type { SessionListSnapshot as SessionSwitchSnapshot } from './session-switch.types'
+
+export interface SessionListSnapshot extends SessionSwitchSnapshot {
   phase?: 'pending' | 'ready'
 }
 

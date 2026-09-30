@@ -210,26 +210,12 @@ export function ArchivePanel(props: ArchivePanelProps): ReactElement | null {
       </div>
 
       <Modal
-        open={confirm?.kind === 'single'}
+        open={confirm !== null}
         onClose={() => setConfirm(null)}
-        title={locale.text('deleteSingleTitle')}
-        description={locale.text('deleteSingleBody')}
-        footer={footer}
-        closeLabel={locale.text('close')}
-      />
-      <Modal
-        open={confirm?.kind === 'all'}
-        onClose={() => setConfirm(null)}
-        title={locale.text('deleteAllTitle')}
-        description={locale.text('deleteAllBody')}
-        footer={footer}
-        closeLabel={locale.text('close')}
-      />
-      <Modal
-        open={confirm?.kind === 'workspace'}
-        onClose={() => setConfirm(null)}
-        title={locale.text('deleteProjectTitle')}
-        description={confirm?.kind === 'workspace' ? locale.text('deleteProjectBody', { count: confirm.sessionIds.length, workspace: confirm.workspaceTitle }) : ''}
+        title={locale.text(confirm?.kind === 'single' ? 'deleteSingleTitle' : confirm?.kind === 'all' ? 'deleteAllTitle' : 'deleteProjectTitle')}
+        description={confirm?.kind === 'workspace'
+          ? locale.text('deleteProjectBody', { count: confirm.sessionIds.length, workspace: confirm.workspaceTitle })
+          : locale.text(confirm?.kind === 'single' ? 'deleteSingleBody' : 'deleteAllBody')}
         footer={footer}
         closeLabel={locale.text('close')}
       />

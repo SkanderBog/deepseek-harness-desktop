@@ -59,7 +59,6 @@
     "dsh-tauri": "workspace:*",
     "lodash-es": "catalog:utils",
     "pathe": "catalog:utils",
-    "simple-git": "catalog:utils",
     "unstorage": "catalog:utils"
   },
   "devDependencies": {

@@ -1,6 +1,5 @@
 import type { ArchivedListPayload } from './ledger.types'
 import { defineService } from 'dsh-tauri'
-import { compact, difference, isEmpty, uniq } from 'lodash-es'
 import { getCurrentHostInstance } from '../config/runtime'
 import { archiveHooks } from '../events'
 import { ledger } from './ledger'
@@ -58,11 +57,12 @@ export const archive = defineService({
  */
 async function permanentlyDelete(rawIds: readonly string[]): Promise<{ ok: true }> {
   const host = getCurrentHostInstance()
-  const ids = uniq(compact(rawIds.map(String)))
-  if (isEmpty(ids))
+  const ids = [...new Set(rawIds.map(String).filter(Boolean))]
+  if (ids.length === 0)
     throw new Error('缺少 sessionIds')
 
-  const missing = difference(ids, ledger.list())
+  const archived = new Set(ledger.list())
+  const missing = ids.filter(id => !archived.has(id))
   if (missing.length > 0)
     throw new Error(`会话 '${missing[0]}' 不在归档集合中，拒绝删除`)
 

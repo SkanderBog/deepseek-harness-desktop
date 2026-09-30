@@ -634,16 +634,10 @@ importers:
       hookable:
         specifier: catalog:utils
         version: 6.1.1
-      lodash-es:
-        specifier: catalog:utils
-        version: 4.18.1
       pathe:
         specifier: catalog:utils
         version: 2.0.3
     devDependencies:
-      '@types/lodash-es':
-        specifier: catalog:types
-        version: 4.17.12
       dsh-tauri-tsdown:
         specifier: workspace:*
         version: link:../dsh-tauri-tsdown
@@ -1082,9 +1076,6 @@ importers:
       pathe:
         specifier: catalog:utils
         version: 2.0.3
-      simple-git:
-        specifier: catalog:utils
-        version: 3.36.0
       unstorage:
         specifier: catalog:utils
         version: 1.17.5(idb-keyval@6.3.0)

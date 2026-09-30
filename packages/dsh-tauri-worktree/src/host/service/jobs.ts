@@ -1,7 +1,7 @@
 import type { DiscardJob } from '../types'
 import { readFileSync } from 'node:fs'
 import { defineService, DSH_HOME } from 'dsh-tauri'
-import { compact, get, isPlainObject, map } from 'lodash-es'
+import { get, isPlainObject } from 'lodash-es'
 import { join } from 'pathe'
 import { WORKTREES_DIR } from '../config/constants'
 import { storage } from '../storage'
@@ -35,8 +35,8 @@ export const jobs = defineService({
 function parseJobs(raw: string): DiscardJob[] {
   try {
     const parsed: unknown = JSON.parse(raw)
-    const list = get(parsed, 'jobs')
-    return Array.isArray(list) ? compact(map(list, entry => parseJob(entry))) : []
+    const list: unknown = get(parsed, 'jobs')
+    return Array.isArray(list) ? list.map(parseJob).filter(job => job !== null) : []
   }
   catch {
     return []

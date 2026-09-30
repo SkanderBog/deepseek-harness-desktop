@@ -2,7 +2,6 @@ import type { SessionLike } from '../types'
 import type { OpenSessionDirectoryResult } from './session.types'
 import { rmSync } from 'node:fs'
 import { defineService, openDirectory } from 'dsh-tauri'
-import { compact } from 'lodash-es'
 import { dirname, resolve } from 'pathe'
 import { getCurrentHostInstance } from '../config/runtime'
 import { findSessionDataDir, isWithinRoot, readDirectory, sessionsRoot } from './session.utils'
@@ -24,7 +23,7 @@ export const session = defineService({
    */
   remove(ids: readonly string[]): string[] {
     const sessions = getCurrentHostInstance().sessions
-    const live = compact(ids.map(id => (sessions.get?.(id) ? id : null)))
+    const live = ids.filter(id => sessions.get?.(id) && id)
     if (live.length > 0 && !sessions.remove)
       throw new Error('宿主未提供 SessionStore.remove，请先更新桌面壳')
     return live.filter(id => !sessions.remove?.(id))

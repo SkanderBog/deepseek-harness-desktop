@@ -57,3 +57,13 @@
 ## net: -490 lines, -4 deps possible.
 
 > Lead 复核修正：原 net 的 -5 deps 含 pet 的 `@deepseek-ai/dsh-skill-filesystem`（实为 `cordis.patch.yml:3` 字符串通道引用，已降级 `keep:`）。当前 -4 deps = worktree `hookable` + worktree/archive 的 `lodash-es` 原生化 + worktree `simple-git` → `node:child_process`。
+
+## 执行复核（2026-10-01）
+
+- **已实施**：handoff 仅共享创建 agent 的步骤，保留 pending 捕获的 sourceAgent、不同 workspace 挂接路径、标题登记与 followup/失败清理；复用 prompt provider、loadJobStatus（两个导出路径均保留）、textBlock、worktreeKey 与包内 session 快照类型；删除重复 cwd 判空及未发布的 Ledger/CheckoutContexts 内部类型。
+- **已实施**：worktree Git 调用改用原生 execFile，保留参数数组、stdout trim、无小容量输出限制、Windows 隐藏窗口及取消/超时选项。预取消信号不启动命令，运行中取消必须等待子进程 close 后返回，避免回滚与仍在执行的 Git 并发。静默非零退出现在明确返回失败，而非 simple-git 的空输出成功；调用方已复核并由真实临时仓库回归覆盖。
+- **已实施**：archive 六个 handler 共享运行时校验，readBody 泛型、400 状态、错误文本与原先 String 转换/重复项/顺序均保留；删除确认合为一个 Modal；三处宿主 lodash 使用改原生集合操作。pet 合并同语义动作错误处理、内联私有 invoke 层、共享设置 busy 流程与 Chat/Codex 卡片映射，仅删除内部 firstSeqAt。
+- **不实施**：cleaner 退避并不等同每五分钟巡检，删除会延迟失败恢复；hydration 节流还负责末次请求补发和取消，时间戳 Map 不等价；三个 JSON loader 的非缺失 I/O 错误处理不同；session 重试的刷新/探测时序不同；filesystem 的依赖注入用于隔离故障回归，均保留。
+- **协议保留**：WorktreeParams 两种拼写、link 选项、pet toolActivity/activity/liveActivity 字段、archive delete/deleteSelected 服务与 DTO、已有公开类型/常量/方法、所有路由与生命周期注册；store 聚合入口是客户端规范要求，不删除。不同插件的快照类型不引入跨插件依赖。
+- **依赖实绩**：移除 worktree simple-git、archive lodash-es 及其 @types/lodash-es 三个声明；worktree 仍需 lodash 的 isPlainObject/isString/uniqBy 等非简单等价语义。hookable 已在先前依赖 PR 删除，不重复计数；pet skill provider 与仍被其他包使用的 catalog/锁文件依赖保留。
+- **验证**：三包真实源码别名回归五轮乱序各 350 项通过，取消时序补强后另五轮各 29 文件 / 352 项通过；完整根 TypeScript、三包源码 TypeScript 与 ESLint 通过（仅三条既有 warning）；冻结锁文件校验通过。Git 失败吞掉、取消提前返回、archive 400→200、pet enable 条件反转的变异均被回归捕获，随后恢复实现。未执行本地插件构建。

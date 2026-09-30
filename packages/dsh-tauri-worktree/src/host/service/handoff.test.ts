@@ -159,6 +159,37 @@ describe('handoff.inherit', () => {
 })
 
 describe('handoff.complete', () => {
+  it('uses the pending source agent even when it is no longer registered', async () => {
+    const followup = vi.fn()
+    const create = vi.fn(async (_options: any) => ({ agent: { followup } }))
+    const sourceContext = { preset: 'source' }
+    const composeFrom = vi.fn()
+    const composedPreset = vi.fn(() => 'composed')
+    const attachSession = vi.fn(async () => {})
+    setCurrentHostInstance({
+      agents: { get: () => undefined, create },
+      get: () => ({ composedPreset, composeFrom }),
+      workspaceRegistry: { resolveByPath: async () => ({ attachSession }) },
+    })
+    await handoff.complete({
+      sourceAgent: { ...(sourceAgent() as object), ctx: sourceContext, options: { model: 'inherited' } },
+      targetSessionId: 'session-target',
+      binding: { worktreePath: 'C:/worktrees/w1', projectPath: 'C:/project' } as Binding,
+    })
+    expect(create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      sessionId: 'session-target',
+      seed: conversationEvents,
+      meta: expect.objectContaining({ cwd: 'C:/worktrees/w1', agentPreset: 'composed' }),
+      agentOptions: { model: 'inherited' },
+    }))
+    expect(composedPreset).toHaveBeenCalledWith(sourceContext)
+    const targetContext = { preset: 'target' }
+    create.mock.calls[0]![0].setup(targetContext)
+    expect(composeFrom).toHaveBeenCalledExactlyOnceWith(targetContext, sourceContext)
+    expect(attachSession).toHaveBeenCalledWith('session-target')
+    expect(followup).toHaveBeenCalledTimes(1)
+  })
+
   it('hands the inherited log to the worktree agent', async () => {
     const followup = vi.fn()
     const { created } = setup({ create: async () => ({ agent: { followup } }) })

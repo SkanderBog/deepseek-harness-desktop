@@ -1,7 +1,7 @@
 import type { Binding } from '../types'
 import { readdirSync, readFileSync } from 'node:fs'
 import { defineService, DSH_HOME } from 'dsh-tauri'
-import { compact, filter, isPlainObject } from 'lodash-es'
+import { isPlainObject } from 'lodash-es'
 import { join } from 'pathe'
 import { storage } from '../storage'
 
@@ -22,7 +22,7 @@ export const ledger = defineService({
 
   list(): Binding[] {
     const dir = join(DSH_HOME, LEDGER_DIR)
-    return compact(readJsonNames(dir).map(name => readBinding(join(dir, name))))
+    return readJsonNames(dir).map(name => readBinding(join(dir, name))).filter(binding => binding !== null)
   },
 })
 
@@ -34,7 +34,7 @@ function keyOf(sessionId: string): string {
 
 function readJsonNames(dir: string): string[] {
   try {
-    return filter(readdirSync(dir), name => name.endsWith('.json'))
+    return readdirSync(dir).filter(name => name.endsWith('.json'))
   }
   catch {
     return []

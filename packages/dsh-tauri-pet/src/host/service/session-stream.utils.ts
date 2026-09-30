@@ -163,7 +163,6 @@ function createPetSessionState(id: string, peer: PetSessionPeer): PetSessionStat
     openTools: new Map(),
     reasoningTail: '',
     assistantText: '',
-    firstSeqAt: 0,
   }
 }
 
