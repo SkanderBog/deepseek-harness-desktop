@@ -6,10 +6,10 @@
  * `data-theme` 提供明暗两套取值，多写反而会让组件外观偏离官方。这里把「只改
  * accent、其余语义变量一律不覆盖」钉死。取值同源：官方 design-platform.css。
  */
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { readSource } from './setup/read-source'
 
-const css = readFileSync(new URL('../src/styles/main.css', import.meta.url), 'utf8')
+const css = readSource('src/styles/main.css')
 const [darkTheme = '', lightTheme = ''] = css.split(/^html\[data-theme="light"\] \{/m)
 
 const herouiSemanticTokens = [
@@ -66,7 +66,7 @@ describe('壳层主题对齐 dsh alias token', () => {
   })
 
   it('tailwind.config 把同名颜色指向 HeroUI 语义变量，业务蓝改走 info', () => {
-    const config = readFileSync(new URL('../tailwind.config.js', import.meta.url), 'utf8')
+    const config = readSource('tailwind.config.js')
     expect(config).toContain('\'muted\': \'var(--muted)\'')
     expect(config).toContain('\'accent\': \'var(--accent)\'')
     expect(config).toContain('\'danger\': \'var(--danger)\'')

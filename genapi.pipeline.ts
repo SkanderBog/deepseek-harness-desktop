@@ -130,13 +130,11 @@ function operationName(method: string, segments: string[]): string {
     : `${method}${toIdentifier(segments)}`
 }
 
-function splitTopLevel(input: string): string[] {
-  const parts: string[] = []
+function* scan(source: string, start: number, options: { open: string, close: string, stopOnClose?: boolean, stopOn?: (index: number) => boolean }): Generator<number, undefined> {
   let depth = 0
-  let start = 0
   let quote: string | undefined
-  for (let index = 0; index < input.length; index++) {
-    const char = input[index]
+  for (let index = start; index < source.length; index++) {
+    const char = source[index]
     if (quote) {
       if (char === '\\') {
         index++
@@ -150,22 +148,29 @@ function splitTopLevel(input: string): string[] {
       quote = char
       continue
     }
-    if (char === '{' || char === '[' || char === '(' || char === '<') {
+    if (options.open.includes(char)) {
       depth++
       continue
     }
-    if (char === '}' || char === ']' || char === ')' || char === '>') {
+    if (options.close.includes(char)) {
       depth--
+      if (depth === 0 && options.stopOnClose)
+        yield index
       continue
     }
-    if ((char === ';' || char === '|') && depth === 0) {
-      parts.push(input.slice(start, index))
-      start = index + 1
-    }
+    if (depth === 0 && options.stopOn?.(index))
+      yield index
   }
-  const tail = input.slice(start)
-  if (tail.trim().length > 0)
-    parts.push(tail)
+}
+
+function splitTopLevel(input: string): string[] {
+  const parts: string[] = []
+  let start = 0
+  for (const index of scan(input, 0, { open: '{[(<', close: '}])>', stopOn: index => input[index] === ';' || input[index] === '|' })) {
+    parts.push(input.slice(start, index))
+    start = index + 1
+  }
+  parts.push(input.slice(start))
   return parts.map(part => part.trim()).filter(Boolean)
 }
 
@@ -180,37 +185,10 @@ function unwrap(input: string): string {
 
 function splitMembers(input: string): string[] {
   const parts: string[] = []
-  let depth = 0
   let start = 0
-  let quote: string | undefined
-  for (let index = 0; index < input.length; index++) {
-    const char = input[index]
-    if (quote) {
-      if (char === '\\') {
-        index++
-        continue
-      }
-      if (char === quote)
-        quote = undefined
-      continue
-    }
-    if (char === '\'' || char === '"' || char === '`') {
-      quote = char
-      continue
-    }
-    if (char === '{' || char === '[' || char === '(' || char === '<') {
-      depth++
-      continue
-    }
-    if (char === '}' || char === ']' || char === ')' || char === '>') {
-      depth--
-      continue
-    }
-    const boundary = depth === 0 && (char === ';' || char === ',' || (char === '\n' && !/^\s*\|/.test(input.slice(index + 1))))
-    if (boundary) {
-      parts.push(input.slice(start, index))
-      start = index + 1
-    }
+  for (const index of scan(input, 0, { open: '{[(<', close: '}])>', stopOn: index => input[index] === ';' || input[index] === ',' || (input[index] === '\n' && !/^\s*\|/.test(input.slice(index + 1))) })) {
+    parts.push(input.slice(start, index))
+    start = index + 1
   }
   const tail = input.slice(start)
   if (tail.trim().length > 0)
@@ -233,34 +211,8 @@ function genericArgs(input: string): string[] {
   const start = input.indexOf('<')
   if (start < 0)
     return []
-  let depth = 0
-  let quote: string | undefined
-  for (let index = start; index < input.length; index++) {
-    const char = input[index]
-    if (quote) {
-      if (char === '\\') {
-        index++
-        continue
-      }
-      if (char === quote)
-        quote = undefined
-      continue
-    }
-    if (char === '\'' || char === '"' || char === '`') {
-      quote = char
-      continue
-    }
-    if (char === '<') {
-      depth++
-      continue
-    }
-    if (char === '>') {
-      depth--
-      if (depth === 0)
-        return splitMembers(input.slice(start + 1, index))
-    }
-  }
-  return []
+  const index = scan(input, start, { open: '<', close: '>', stopOnClose: true }).next().value
+  return index === undefined ? [] : splitMembers(input.slice(start + 1, index))
 }
 
 function genericOf(source: string, name: string): string | undefined {
@@ -268,99 +220,21 @@ function genericOf(source: string, name: string): string | undefined {
   if (!found)
     return undefined
   const start = found.index + found[0].length
-  let depth = 0
-  let quote: string | undefined
-  for (let index = start; index < source.length; index++) {
-    const char = source[index]
-    if (quote) {
-      if (char === '\\') {
-        index++
-        continue
-      }
-      if (char === quote)
-        quote = undefined
-      continue
-    }
-    if (char === '\'' || char === '"' || char === '`') {
-      quote = char
-      continue
-    }
-    if (char === '<') {
-      depth++
-      continue
-    }
-    if (char === '>') {
-      if (depth === 0)
-        return source.slice(start, index).trim()
-      depth--
-    }
-  }
-  return undefined
+  const index = scan(source, start - 1, { open: '<', close: '>', stopOnClose: true }).next().value
+  return index === undefined ? undefined : source.slice(start, index).trim()
 }
 
 function sliceBalanced(source: string, openIndex: number): string | undefined {
-  let depth = 0
-  let quote: string | undefined
-  for (let index = openIndex; index < source.length; index++) {
-    const char = source[index]
-    if (quote) {
-      if (char === '\\') {
-        index++
-        continue
-      }
-      if (char === quote)
-        quote = undefined
-      continue
-    }
-    if (char === '\'' || char === '"' || char === '`') {
-      quote = char
-      continue
-    }
-    if (char === '{' || char === '[' || char === '(') {
-      depth++
-      continue
-    }
-    if (char === '}' || char === ']' || char === ')') {
-      depth--
-      if (depth === 0)
-        return source.slice(openIndex + 1, index)
-    }
-  }
-  return undefined
+  const index = scan(source, openIndex, { open: '{[(', close: '}])', stopOnClose: true }).next().value
+  return index === undefined ? undefined : source.slice(openIndex + 1, index)
 }
 
 function sliceDeclaration(source: string, start: number): string | undefined {
-  let depth = 0
-  let quote: string | undefined
-  for (let index = start; index < source.length; index++) {
-    const char = source[index]
-    if (quote) {
-      if (char === '\\') {
-        index++
-        continue
-      }
-      if (char === quote)
-        quote = undefined
-      continue
-    }
-    if (char === '\'' || char === '"' || char === '`') {
-      quote = char
-      continue
-    }
-    if (char === '{' || char === '[' || char === '(' || char === '<') {
-      depth++
-      continue
-    }
-    if (char === '}' || char === ']' || char === ')' || char === '>') {
-      depth--
-      continue
-    }
-    if (char === '\n' && depth === 0) {
-      const collected = source.slice(start, index).trimEnd()
-      const next = source.slice(index + 1).replace(/^\s+/, '')[0]
-      if (!/[|&]$/.test(collected) && next !== '|' && next !== '&')
-        return source.slice(start, index).trim()
-    }
+  for (const index of scan(source, start, { open: '{[(<', close: '}])>', stopOn: index => source[index] === '\n' })) {
+    const collected = source.slice(start, index).trimEnd()
+    const next = source.slice(index + 1).replace(/^\s+/, '')[0]
+    if (!/[|&]$/.test(collected) && next !== '|' && next !== '&')
+      return source.slice(start, index).trim()
   }
   return source.slice(start).trim()
 }
@@ -670,7 +544,7 @@ function handlerParameters(source: string, operation: string, index: TypeIndex, 
       }
     }
     else {
-      const schema = declaration ? parameterSchema(queryType, declaration, index, file, definitions, referenced) : { type: 'object', additionalProperties: { type: 'string' } }
+      const schema = declaration ? parameterSchema(queryType, declaration, index, definitions, referenced) : { type: 'object', additionalProperties: { type: 'string' } }
       parameters.push({ name: 'query', location: 'query', required: false, schema })
     }
   }
@@ -684,14 +558,14 @@ function handlerParameters(source: string, operation: string, index: TypeIndex, 
       return parameters
     }
     const declaration = lookup(index, bodyType, file)
-    const schema = declaration ? parameterSchema(bodyType, declaration, index, file, definitions, referenced) : { type: 'object', additionalProperties: { type: 'string' } }
+    const schema = declaration ? parameterSchema(bodyType, declaration, index, definitions, referenced) : { type: 'object', additionalProperties: { type: 'string' } }
     parameters.push({ name: 'body', location: 'body', required: true, schema })
   }
   return parameters
 }
 
 /** 请求体/查询参数的顶层具名类型：登记为 definition（函数签名需要 `Types.` 前缀）。 */
-function parameterSchema(name: string, declaration: Declaration, index: TypeIndex, file: string, definitions: Record<string, Schema>, referenced: Set<string>): Schema {
+function parameterSchema(name: string, declaration: Declaration, index: TypeIndex, definitions: Record<string, Schema>, referenced: Set<string>): Schema {
   const objectLike = declaration.kind === 'interface' || declaration.body.trim().startsWith('{')
   if (!objectLike)
     return toSchema(declaration.body, index, declaration.file, definitions, referenced)
@@ -700,35 +574,8 @@ function parameterSchema(name: string, declaration: Declaration, index: TypeInde
 }
 
 function scanArrow(input: string): string | undefined {
-  let depth = 0
-  let quote: string | undefined
-  for (let index = 0; index < input.length; index++) {
-    const char = input[index]
-    if (quote) {
-      if (char === '\\') {
-        index++
-        continue
-      }
-      if (char === quote)
-        quote = undefined
-      continue
-    }
-    if (char === '\'' || char === '"' || char === '`') {
-      quote = char
-      continue
-    }
-    if (char === '{' || char === '[' || char === '(') {
-      depth++
-      continue
-    }
-    if (char === '}' || char === ']' || char === ')') {
-      depth--
-      continue
-    }
-    if (char === '=' && input[index + 1] === '>' && depth === 0)
-      return input.slice(0, index).trim()
-  }
-  return undefined
+  const index = scan(input, 0, { open: '{[(', close: '}])', stopOn: index => input[index] === '=' && input[index + 1] === '>' }).next().value
+  return index === undefined ? undefined : input.slice(0, index).trim()
 }
 
 function unwrapPromise(value: string): string {

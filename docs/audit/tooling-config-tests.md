@@ -45,3 +45,13 @@ Also spotted, below the noise floor of the ranking (listed for completeness, no 
 ## net: -496 lines, -0 deps possible.
 
 > Lead 复核后修正：probe-wdio 实际 212 行（-251 → -212），故小计由 -535 修正为 -496。
+
+## 执行复核（2026-10-01）
+
+- **保留人工确认项**：probe-wdio 是明确保留的最小诊断通道；postcss.config.js 会被 Vite 隐式加载。没有作者删除确认，也不执行本地构建来替代确认，均不删除。
+- **配置**：三个 Vitest project 的执行环境、并发、初始化及超时并不相同，不引入配置工厂，不移动根专属覆盖率。只共享 Vite/根 Vitest/unit 的绝对路径别名，保留 project、收集与排除规则。
+- **类型检查**：合并根 TypeScript 配置与 node 配置，保留全部严格检查，将 scripts、根 *.config.ts 与 genapi*.ts 纳入 noEmit 检查。JS/MJS 保持原有未启用 checkJs 的边界；不扩张为包级构建配置迁移。
+- **测试契约**：共享仓库相对源码/语言读取器，删除六个单消费者 reader 包装；未证明同等 runtime 门禁的源码断言全部保留，独立字面量 oracle 不变。mask 的否定断言增加正向存在契约，避免不存在的层误判为通过。
+- **生成器**：七个扫描器共享私有参数化 quote/depth walker，保留 angle-only 泛型、忽略 angle 的 balanced/arrow、scalar depth 及既有箭头截断行为、反斜杠/反引号与跨行 union/intersection。未迁移 TypeScript AST，也未修改 schema/验证或生成协议；删除新严格检查发现的无用私有参数。19 项隔离夹具覆盖真实 config/parser/compiler/generate 和字节级输出，只抑制目的文件写入，没有重生成生产 API。
+- **验证**：扩展后的完整根 TypeScript 与变更文件 ESLint 通过；最终 12 文件/86 项集成回归按 7101/7202/7303/7404/7505 五个种子独立乱序均通过。反引号识别、共享 alias、SSH 排除与 locale key 变异均被独立 oracle 捕获并恢复。只读复核的两个类型门禁问题已修复；扫描器与原实现的 140,000 次差分比较一致，配置与读取契约无行为问题。
+- **环境边界**：本机全量 unit 在三个未改动 SSH suite 出现 16 项 Windows/POSIX/部署资源基线失败（2150 项通过），没有跳过、放宽或修补这些跨域用例；全量结果交由 CI 的既定 Ubuntu unit 环境验证。未运行插件构建或生产生成命令，没有改依赖或协议。

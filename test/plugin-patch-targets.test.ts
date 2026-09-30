@@ -1,5 +1,6 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { readSource } from './setup/read-source'
 
 /**
  * issue #763：插件包内的 `cordis.patch.yml` 用顶层 `- id: <官方 id>` 关掉官方入口，
@@ -15,7 +16,7 @@ const OFFICIAL_ROW_DISABLES = ['dsh-tauri-model → ui-settings-models']
 const PACKAGES_ROOT = new URL('../packages/', import.meta.url)
 
 function readPatchLayer(pkg: string): string {
-  return readFileSync(new URL(`${pkg}/cordis.patch.yml`, PACKAGES_ROOT), 'utf8')
+  return readSource(`packages/${pkg}/cordis.patch.yml`)
 }
 
 function packageNames(): string[] {
@@ -50,7 +51,7 @@ describe('插件 patch 层的官方目标', () => {
   })
 
   it('dsh-tauri-archive 的第三方声明不再声称禁用了官方入口', () => {
-    const notices = readFileSync(new URL('../packages/dsh-tauri-archive/THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8')
+    const notices = readSource('packages/dsh-tauri-archive/THIRD_PARTY_NOTICES.md')
 
     expect(notices).not.toContain('ui-settings-unarchive-sessions')
     expect(notices).not.toContain('Official row disabled')
