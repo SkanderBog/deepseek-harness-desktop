@@ -5,7 +5,7 @@
 
 ## Findings (ranked, biggest cut first)
 
-`shrink: controller 用 hookable 事件总线只为承载一个 dispose 钩子；`add()` 的返回注销 = `Set.delete`，`dispose()` 的顺序触发 = 迭代，`removeAllHooks` = `clear`。换成 `const disposers = new Set<() => void>()`，删掉 `LifecycleHooks` 类型与 `createHooks` 接线。公开 API（`add/timeout/interval/listen/observe/isDisposed/dispose`）逐字不变。 [packages/dsh-tauri/src/client/controller/index.ts:9,12-14,58,62-75,140-153] (-10 LOC)`
+`shrink: controller 用 hookable 事件总线只为承载一个 dispose 钩子；`add()` 的返回注销 = `Set.delete`，`dispose()` 的顺序触发 = 迭代，`removeAllHooks` = `clear`。换成 `Set` 清理队列，删掉 `createHooks` 接线；`LifecycleHooks` 经客户端入口导出，属于协议面，必须保留。迭代前取快照，保留回调执行中注销其他回调时的既有清理语义。公开 API（`add/timeout/interval/listen/observe/isDisposed/dispose`）逐字不变。 [packages/dsh-tauri/src/client/controller/index.ts:9,12-14,58,62-75,140-153] (-10 LOC)`
   - rg `createHooks` → `controller/index.ts:9`、`modules/hookable.ts:1`；`controller/index.ts` 直连 `'hookable'`，不经自己的 shim。
   - rg `callHook|removeAllHooks|hooks\.hook` → 仅 `controller/index.ts`，唯一钩子名 `'dispose'`。
 

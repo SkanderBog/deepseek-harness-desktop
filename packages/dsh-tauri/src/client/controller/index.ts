@@ -1,12 +1,4 @@
-/**
- * client/controller.ts — 基于 hookable 的生命周期控制器（全 workspace 客户端共享）。
- *
- * Controller 化统一方案：observer / timer / listener / disposer 全部登记进统一清理队列；
- * dispose 保证幂等，异步续接以 isDisposed() 守护，业务代码无需各自维护 disposed 标志。
- */
-
 import { noop } from '@reause/core'
-import { createHooks } from 'hookable'
 
 /** 控制器注册的命名生命周期钩子（dispose 为统一清理点）。 */
 export interface LifecycleHooks {
@@ -55,9 +47,9 @@ const DEFAULT_MUTATION_OPTIONS: MutationObserverInit = { childList: true, subtre
 
 /** 创建生命周期控制器 */
 export function createLifecycleController(): LifecycleController {
-  const hooks = createHooks<LifecycleHooks>()
   let isDisposed = false
   const activeTimeouts = new Set<ReturnType<typeof setTimeout>>()
+  const disposers = new Set<LifecycleHooks['dispose']>()
   const controller: LifecycleController = {
     add(disposer) {
       if (isDisposed)
@@ -71,7 +63,11 @@ export function createLifecycleController(): LifecycleController {
         }
       }
 
-      return hooks.hook('dispose', safeDisposer)
+      disposers.add(safeDisposer)
+
+      return () => {
+        disposers.delete(safeDisposer)
+      }
     },
 
     timeout(fn, ms) {
@@ -147,9 +143,9 @@ export function createLifecycleController(): LifecycleController {
         clearTimeout(timer)
       activeTimeouts.clear()
 
-      // 2. 统一触发所有通过 controller.add / interval / listen / observe 挂载的资源销毁函数
-      void hooks.callHook('dispose')
-      hooks.removeAllHooks()
+      for (const disposer of [...disposers])
+        disposer()
+      disposers.clear()
     },
   }
 

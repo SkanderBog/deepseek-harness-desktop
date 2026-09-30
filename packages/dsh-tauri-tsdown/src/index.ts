@@ -12,8 +12,8 @@ const isWatchMode = process.argv.includes('--watch') || process.argv.includes('-
 export interface DshConfigOptions {
   /** 宿主 entry 的 tsdown 选项（覆盖 common）。 */
   server?: TsdownOptions
-  /** client entry 的 tsdown 选项（覆盖 common；noExternal 并入默认内联表）；`false` 表示纯宿主插件。 */
-  client?: TsdownOptions | false
+  /** client entry 的 tsdown 选项（覆盖 common；noExternal 并入默认内联表）。 */
+  client?: TsdownOptions
   /** 是否对 server entry 跑 publint（默认 true）。 */
   publint?: boolean
 }
@@ -69,7 +69,7 @@ export const dshExternal: Array<string | RegExp> = [
  * 消费者），只有真正直接 import 这两个包的 client bundle 才需要内联。
  */
 const dshClientInline: Array<string | RegExp> = [
-  /^(unstorage|hookable|ofetch|pathe|date-fns|lodash-es)([/-].*)?$/,
+  /^(unstorage|hookable|ofetch|date-fns|lodash-es)([/-].*)?$/,
   /^@gravity-ui\/icons([/-].*)?$/,
   /^css-render([/-].*)?$/,
   /^@css-render\/plugin-bem([/-].*)?$/,
@@ -77,7 +77,7 @@ const dshClientInline: Array<string | RegExp> = [
 ]
 
 export function defineDshConfig(options: DshConfigOptions = {}) {
-  const { noExternal: clientNoExternal, ...clientOptions } = options.client === false ? {} : options.client ?? {}
+  const { noExternal: clientNoExternal, ...clientOptions } = options.client ?? {}
   const common: TsdownOptions = {
     outDir: 'dist',
     format: 'esm',
@@ -94,11 +94,6 @@ export function defineDshConfig(options: DshConfigOptions = {}) {
     sourcemap: false,
     clean: true,
   }
-  // 纯宿主插件没有浏览器半区：`client: false` 时只产出宿主 entry，不写 `src/client/`。
-  if (options.client === false) {
-    return [server]
-  }
-
   return [
     server,
     {
