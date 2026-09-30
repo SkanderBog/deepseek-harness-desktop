@@ -62,16 +62,15 @@ beforeEach(() => {
   plugins.logs = []
   plugins.activeGroupId = null
   plugins.cancelling = false
-  plugins.presenterCount = 0
   plugins.installedSource = []
   plugins.installedLoaded = false
   plugins.progressKey = null
   plugins.progressDetail = ''
+  plugins.queueResults = []
 })
 
 describe('plugins manager progress toast', () => {
   it('opens the shared bubble in the loading state with the single plugin title', async () => {
-    plugins.attachPresenter()
     invoke.mockImplementation(() => new Promise(() => {}))
 
     void plugins.enqueue('upgrade', ['aaa'], RUNTIME)
@@ -82,7 +81,6 @@ describe('plugins manager progress toast', () => {
   })
 
   it('switches to the aggregate title as soon as another plugin joins the queue', async () => {
-    plugins.attachPresenter()
     invoke.mockImplementation(() => new Promise(() => {}))
 
     void plugins.enqueue('upgrade', ['aaa'], RUNTIME)
@@ -98,7 +96,6 @@ describe('plugins manager progress toast', () => {
   })
 
   it('falls back to the generic title when the queue mixes process types', async () => {
-    plugins.attachPresenter()
     invoke.mockImplementation(() => new Promise(() => {}))
 
     void plugins.enqueue('upgrade', ['aaa'], RUNTIME)
@@ -113,7 +110,6 @@ describe('plugins manager progress toast', () => {
   })
 
   it('renders the newest install log line as the description', async () => {
-    plugins.attachPresenter()
     invoke.mockImplementation(() => new Promise(() => {}))
 
     void plugins.enqueue('install', ['aaa'], RUNTIME)
@@ -126,7 +122,6 @@ describe('plugins manager progress toast', () => {
   })
 
   it('hides the loading bubble while an approval is pending and restores it after the grant', async () => {
-    plugins.attachPresenter()
     let installCalls = 0
     invoke.mockImplementation(async (command: string) => {
       if (command !== 'install_plugin_specs')
@@ -150,8 +145,7 @@ describe('plugins manager progress toast', () => {
     expect(plugins.progressKey).toBeNull()
   })
 
-  it('rebuilds the shared bubble after the previous one was evicted by result toasts', async () => {
-    plugins.attachPresenter()
+  it('rebuilds the shared bubble once the previous one is no longer active', async () => {
     let submissions = 0
     invoke.mockImplementation(async (command: string) => {
       if (command !== 'update_dsh_plugins')
@@ -161,7 +155,7 @@ describe('plugins manager progress toast', () => {
         await new Promise(() => {})
       return undefined
     })
-    // 第一组结算时（结果 Toast 之前）标记共享气泡已被挤出可见限额
+    // 第一组结算时把共享气泡标记为已消失（结果提示改到队列排空后才出现，这里模拟授权等其他气泡把它挤掉）
     plugins.on('completed', () => {
       isActive.mockReturnValue(false)
     })
@@ -171,7 +165,7 @@ describe('plugins manager progress toast', () => {
     void plugins.enqueue('upgrade', ['bbb'], RUNTIME)
     await first
 
-    await vi.waitFor(() => expect(toast.mock.calls.length).toBeGreaterThanOrEqual(3))
+    await vi.waitFor(() => expect(toast.mock.calls.length).toBeGreaterThanOrEqual(2))
 
     plugins.setProgressDetail('added 1 package')
     expect(plugins.progressDetail).toBe('')

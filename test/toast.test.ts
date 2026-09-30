@@ -56,4 +56,31 @@ describe('toast lifecycle', () => {
     expect(queues['bottom end'].visibleToasts.some(item => item.key === otherKey)).toBe(true)
     expect(onClose).toHaveBeenCalledOnce()
   })
+
+  it('never discards an actionable notification when the queue overflows', async () => {
+    const keys = [1, 2, 3, 4].map(index => toast(`Authorise ${index}`, { timeout: 0, sticky: true }))
+    const queue = queues['bottom end']
+
+    // 超出可见上限的那条不能被悄悄销毁：它只是暂时不渲染，旧气泡关闭后必须复现
+    // （授权按钮一旦被淘汰，用户再也点不到，队列会永远停在等待授权上）
+    await Promise.resolve()
+    expect(toast.isActive(keys[0])).toBe(true)
+
+    toast.close(keys[3])
+    await Promise.resolve()
+    expect(queue.visibleToasts.map(item => item.key)).toEqual([keys[2], keys[1], keys[0]])
+  })
+
+  it('still evicts the oldest ordinary notification when the queue overflows', async () => {
+    const onClose = vi.fn()
+    const first = toast('Result 1', { timeout: 0, onClose })
+    toast('Result 2', { timeout: 0 })
+    toast('Result 3', { timeout: 0 })
+    toast('Result 4', { timeout: 0 })
+
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(onClose).toHaveBeenCalledWith('evicted')
+    expect(toast.isActive(first)).toBe(false)
+  })
 })

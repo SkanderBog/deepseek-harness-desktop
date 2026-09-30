@@ -32,9 +32,9 @@ function resetStore() {
   plugins.logs = []
   plugins.activeGroupId = null
   plugins.cancelling = false
-  plugins.presenterCount = 0
   plugins.installedSource = []
   plugins.installedLoaded = false
+  plugins.queueResults = []
 }
 
 beforeEach(resetStore)

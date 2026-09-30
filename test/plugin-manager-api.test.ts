@@ -32,9 +32,9 @@ beforeEach(() => {
   plugins.logs = []
   plugins.activeGroupId = null
   plugins.cancelling = false
-  plugins.presenterCount = 0
   plugins.installedSource = []
   plugins.installedLoaded = false
+  plugins.queueResults = []
 })
 
 describe('plugins manager ref normalization', () => {
@@ -91,13 +91,13 @@ describe('plugins manager idempotency', () => {
     ])
   })
 
-  it('reports an upgrade of an uninstalled plugin as not installed', async () => {
+  it('sends an upgrade of an unknown plugin to the host instead of pre-skipping it', async () => {
     plugins.setInstalled([])
 
     const results = await plugins.enqueue('upgrade', ['ghost'], RUNTIME)
 
-    expect(invoke).not.toHaveBeenCalled()
-    expect(results.map(result => [result.ok, result.reason])).toEqual([[false, 'not-installed']])
+    expect(invoke).toHaveBeenCalledWith('update_dsh_plugins', { ids: ['ghost'] })
+    expect(results.map(result => [result.ok, result.reason])).toEqual([[true, undefined]])
   })
 
   it('routes a broken plugin through the upgrade repair path despite having no update', async () => {
@@ -125,6 +125,65 @@ describe('plugins manager idempotency', () => {
 
     expect(invoke).toHaveBeenCalledWith('update_dsh_plugins', { ids: ['aaa'] })
     expect(results.map(result => [result.process.name, result.ok])).toEqual([['aaa', true]])
+  })
+
+  it('passes the target version the panel is showing to the host', async () => {
+    plugins.setInstalled([
+      {
+        id: 'aaa',
+        name: 'aaa',
+        version: '1.0.0',
+        description: '',
+        repo_url: '',
+        bundled: false,
+        disabled: false,
+        patchDisabled: false,
+        recommended: false,
+        fix: false,
+        internal: false,
+        updateAvailable: true,
+        hasSnapshot: false,
+        error: null,
+      },
+    ])
+    invoke.mockResolvedValue(undefined)
+
+    await plugins.enqueue('upgrade', [{ spec: 'aaa', version: '2.0.0' }], RUNTIME)
+
+    expect(invoke).toHaveBeenCalledWith('update_dsh_plugins', { ids: ['aaa@2.0.0'] })
+  })
+
+  it('hands every clicked upgrade to the host even when the local snapshot says there is no update', async () => {
+    // 面板点得动的插件必须交给宿主：本地快照（`installedSource`）可能刚被安装/刷新改过，按它判
+    // 「没有更新」会把点击悄悄丢掉——用户只看到「1 个成功」，别的插件毫无动静。
+    plugins.setInstalled(
+      ['aaa', 'bbb', 'ccc'].map(name => ({
+        id: name,
+        name,
+        version: '1.0.0',
+        description: '',
+        repo_url: '',
+        bundled: false,
+        disabled: false,
+        patchDisabled: false,
+        recommended: false,
+        fix: false,
+        internal: false,
+        updateAvailable: false,
+        hasSnapshot: false,
+        error: null,
+      })),
+    )
+    invoke.mockResolvedValue(undefined)
+
+    const results = await plugins.enqueue('upgrade', ['aaa', 'bbb', 'ccc'], RUNTIME)
+
+    expect(invoke).toHaveBeenCalledWith('update_dsh_plugins', { ids: ['aaa', 'bbb', 'ccc'] })
+    expect(results.map(result => [result.process.name, result.ok])).toEqual([
+      ['aaa', true],
+      ['bbb', true],
+      ['ccc', true],
+    ])
   })
 
   it('reports a disable of an already disabled plugin as already absent', async () => {

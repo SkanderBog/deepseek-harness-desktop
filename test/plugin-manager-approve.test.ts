@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 interface ToastCallOptions {
   timeout?: number
+  variant?: string
+  isLoading?: boolean
   onClose?: (reason: string) => void
 }
 
@@ -39,9 +41,9 @@ beforeEach(() => {
   plugins.logs = []
   plugins.activeGroupId = null
   plugins.cancelling = false
-  plugins.presenterCount = 0
   plugins.installedSource = []
   plugins.installedLoaded = false
+  plugins.queueResults = []
 })
 
 describe('plugins manager approval', () => {
@@ -153,8 +155,6 @@ describe('plugins manager approval', () => {
         throw new Error(`PLUGIN_VERSION_INCOMPATIBLE: ${JSON.stringify(BLOCKED)}`)
       return undefined
     })
-    plugins.attachPresenter()
-
     const done = plugins.enqueue('install', ['b'], { toast: true, restartOnSettle: false })
     await vi.waitFor(() => expect(plugins.pendingApprovals).toHaveLength(1))
 
@@ -172,8 +172,6 @@ describe('plugins manager approval', () => {
         throw new Error(`PLUGIN_VERSION_INCOMPATIBLE: ${JSON.stringify(BLOCKED)}`)
       return undefined
     })
-    plugins.attachPresenter()
-
     const done = plugins.enqueue('install', ['b'], { toast: true, restartOnSettle: false })
     await vi.waitFor(() => expect(plugins.pendingApprovals).toHaveLength(1))
 
@@ -192,8 +190,6 @@ describe('plugins manager approval', () => {
         throw new Error(`PLUGIN_VERSION_INCOMPATIBLE: ${JSON.stringify(BLOCKED)}`)
       return undefined
     })
-    plugins.attachPresenter()
-
     const done = plugins.enqueue('install', ['b'], { toast: true, restartOnSettle: false })
     await vi.waitFor(() => expect(plugins.pendingApprovals).toHaveLength(1))
 
@@ -205,5 +201,9 @@ describe('plugins manager approval', () => {
     ])
     expect(plugins.pendingApprovals).toHaveLength(0)
     expect(toast.close).toHaveBeenCalled()
+    // 拒绝是用户自己的选择：不再补一条「失败」提示追问他。
+    expect(
+      toast.mock.calls.filter(call => call[1]?.variant === 'danger' && call[1]?.onClose === undefined),
+    ).toHaveLength(0)
   })
 })

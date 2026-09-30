@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 interface ToastCallOptions {
   timeout?: number
+  isLoading?: boolean
   onClose?: (reason: string) => void
+  actionProps?: { onPress?: () => void }
 }
 
 const { invoke, restart, toast } = vi.hoisted(() => {
@@ -32,18 +34,36 @@ beforeEach(() => {
   plugins.logs = []
   plugins.activeGroupId = null
   plugins.cancelling = false
-  plugins.presenterCount = 0
   plugins.installedSource = []
   plugins.installedLoaded = false
+  plugins.queueResults = []
 })
 
 describe('plugins manager settle', () => {
-  it('restarts the harness once when a group succeeds with restartOnSettle enabled', async () => {
+  it('asks before restarting instead of restarting a succeeding group on its own', async () => {
     invoke.mockResolvedValue(undefined)
 
-    const results = await plugins.enqueue('install', ['a', 'b'], { toast: false, restartOnSettle: true })
+    const results = await plugins.enqueue('install', ['a', 'b'], { toast: true, restartOnSettle: true })
 
     expect(results.every(result => result.ok)).toBe(true)
+    expect(restart).not.toHaveBeenCalled()
+    const prompt = toast.mock.calls.find(call => call[1]?.actionProps !== undefined)
+    expect(prompt?.[1]?.timeout).toBe(0)
+    prompt?.[1]?.actionProps?.onPress?.()
+    expect(toast.close).toHaveBeenCalled()
+    expect(restart).toHaveBeenCalledTimes(1)
+  })
+
+  it('folds the restart button into the single result toast instead of adding a second one', async () => {
+    invoke.mockResolvedValue(undefined)
+
+    await plugins.enqueue('install', ['a'], { toast: true, restartOnSettle: true })
+
+    const toasts = toast.mock.calls.filter(call => call[1]?.isLoading !== true)
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0][1]?.timeout).toBe(0)
+    toasts[0][1]?.actionProps?.onPress?.()
+    expect(toast.close).toHaveBeenCalled()
     expect(restart).toHaveBeenCalledTimes(1)
   })
 
@@ -53,28 +73,31 @@ describe('plugins manager settle', () => {
     await plugins.enqueue('install', ['a'], RUNTIME)
 
     expect(restart).not.toHaveBeenCalled()
+    expect(toast.mock.calls.some(call => call[1]?.actionProps !== undefined)).toBe(false)
   })
 
   it('does not restart when every process of the group failed', async () => {
     invoke.mockRejectedValue('REGISTRY_DOWN: registry unreachable')
 
-    const results = await plugins.enqueue('install', ['a'], { toast: false, restartOnSettle: true })
+    const results = await plugins.enqueue('install', ['a'], { toast: true, restartOnSettle: true })
 
     expect(results.map(result => [result.ok, result.code, result.reason])).toEqual([
       [false, 'REGISTRY_DOWN', undefined],
     ])
     expect(restart).not.toHaveBeenCalled()
+    expect(toast.mock.calls.some(call => call[1]?.actionProps !== undefined)).toBe(false)
   })
 
   it('does not restart when every process was skipped before reaching the host', async () => {
     invoke.mockResolvedValue(undefined)
     plugins.setInstalled([])
 
-    const results = await plugins.enqueue('uninstall', ['a'], { toast: false, restartOnSettle: true })
+    const results = await plugins.enqueue('uninstall', ['a'], { toast: true, restartOnSettle: true })
 
     expect(results.map(result => [result.ok, result.reason])).toEqual([[false, 'already-absent']])
     expect(invoke).not.toHaveBeenCalled()
     expect(restart).not.toHaveBeenCalled()
+    expect(toast.mock.calls.some(call => call[1]?.actionProps !== undefined)).toBe(false)
   })
 
   it('emits completed, error and allcompleted around a failing group', async () => {
