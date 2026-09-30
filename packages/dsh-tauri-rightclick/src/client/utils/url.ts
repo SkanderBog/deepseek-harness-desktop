@@ -1,10 +1,8 @@
-import { includes } from 'dsh-tauri/client'
-
 /** 只接受 http/https 的 URL 校验（用于外链打开 / 选中文本里的网址）。 */
 export function externalUrl(value: string): string | null {
   try {
     const url = new URL(value)
-    return includes(['http:', 'https:'], url.protocol) ? url.href : null
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : null
   }
   catch {
     return null

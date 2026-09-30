@@ -15,7 +15,6 @@ import { join } from 'pathe'
 import { getCurrentHostInstance } from '../config/runtime'
 import { loadSchedulerRuntimeModules, resolveSetupAgent } from '../utils/agent-runtime'
 import { applyUnattendedPermission } from '../utils/permission'
-import { schedulerSessionTitle } from '../utils/session-title'
 import { decideRunOutcome, isPluginUnloadError, summarizeCollectedRun, waitForTurnStart, watchSessionEvents } from './executor.utils'
 import { runs } from './runs'
 
@@ -234,7 +233,7 @@ async function createAgent(
 async function pinTitle(ctx: HostContext, session: unknown, taskName: string): Promise<void> {
   try {
     const title = ctx.get?.('sessionTitle') as { rename?: (target: unknown, value: string) => unknown } | undefined
-    title?.rename?.(session, schedulerSessionTitle(taskName))
+    title?.rename?.(session, taskName)
   }
   catch (error) {
     ctx.logger?.warn?.(`dsh-tauri-scheduler: failed to pin session title: ${error instanceof Error ? error.message : String(error)}`)

@@ -6,7 +6,6 @@ import type {
   WorkspaceViewLike,
 } from '../types'
 import type { MenuComposer } from './context-menu.types'
-import { reject } from 'dsh-tauri/client'
 import { confirmDialog } from '../components/confirm-dialog'
 import { locale } from '../locales'
 import {
@@ -119,7 +118,7 @@ export function buildSessionMenu(
   })
 
   const visible = current
-    ? reject(extensions, entry => entry.visible?.({ session: current, row }) === false)
+    ? extensions.filter(entry => entry.visible?.({ session: current, row }) !== false)
     : []
   if (visible.length) {
     composer.split()

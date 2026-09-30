@@ -73,3 +73,14 @@ rightclick 小计：**-10 行**（2 条），另 -2 deps。
 - 另：`packages/dsh-tauri-ssh/package.json` 把 `yaml`（被 `host/service/allowlist.ts:21` 运行时 import）声明在 `catalog:testing` 分组——这是依赖归属问题，不是行数问题，交给 `dependencies.md` 口径处理。
 
 net: -452 lines, -4 deps possible.
+
+## scheduler / notification / rightclick 执行复核（2026-09-30）
+
+以下结论覆盖原审计的对应建议；SSH 单独提交，不混入此批次。
+
+- 已执行：删除 notification 的写后不读变量 `statusAttached`；scheduler 私有 `merge` 就地调用 `defaults({}, patch, current)`，恢复扫描改用原生数组过滤；删除仅内部消费的 `useScheduler`、恒等 `schedulerSessionTitle`、`isTaskPaused`，并将 `PrefillState` 就地声明。
+- 已执行：rightclick 的 URL 协议白名单、扩展可见性过滤与会话排除改用原生数组/Set，保留顺序、重复项、不修改快照和 `visible(...) !== false`；宿主 URL 入口仍由 `safeWebUrl` 校验。
+- `keep:` 持久化/线上的 `SchedulerTask.module`、`agentPreset`、notification 结构字段、rightclick 类型别名及路由/事件出口。已有配置的 agent preset 仍可覆盖默认值，不因 UI 无写入口删掉协议字段。
+- `keep:` scheduler DTO 的接口与 readonly 约束、公开 recommendation.form 和 locale 词典；hydrate 注册仍承载生命周期，入口规范禁止把初始化请求移到 client entry。
+- `keep:` lodash 的深比较、默认值合并、形状校验及其余仍使用的方法与依赖。`Object.is` 不等价于 `isEqual`，对象展开不等价于跳过 undefined 的 `defaults`；原 -4 deps 预估不作为本次结果。
+- 验证：新增任务更新/恢复与快照顺序回归；三包 22 文件 / 203 用例连续六次乱序通过，深比较变异被测试拒绝。合并内部包装精简后，与 UI/extension 一起运行 52 文件 / 386 用例通过，限定源码别名类型检查通过，Lint 零错误。

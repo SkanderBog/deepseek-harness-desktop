@@ -235,6 +235,17 @@ describe('loadUngroupedSessions', () => {
 })
 
 describe('loadWorkspaceSessions', () => {
+  it('preserves order and duplicates without mutating either snapshot', async () => {
+    const sessionIds = [sid('b'), sid('a'), sid('b'), sid('archived')]
+    const archivedSessionIds = [sid('archived')]
+    const workspaces = { list: { getSnapshot: () => ({ archivedSessionIds }) } } as unknown as WorkspacesRuntimeLike
+    const workspace = { sessionIds } as unknown as WorkspaceViewLike
+
+    await expect(loadWorkspaceSessions({ workspaces, workspace })).resolves.toEqual(['b', 'a', 'b'])
+    expect(sessionIds).toEqual(['b', 'a', 'b', 'archived'])
+    expect(archivedSessionIds).toEqual(['archived'])
+  })
+
   it('removes archived sessions from the workspace listing', async () => {
     const workspaces = {
       list: { getSnapshot: () => ({ items: [], archivedSessionIds: ['s2'] }) },

@@ -36,7 +36,7 @@ export const task = defineService({
     const current = await findTask(id)
     if (current === null)
       return { ok: false, error: '任务不存在' }
-    const merged = merge(current, patch)
+    const merged: TaskInput = defaults({}, patch, current)
     const invalid = validateInput(merged)
     if (invalid !== null)
       return { ok: false, error: invalid }
@@ -156,10 +156,6 @@ function build(input: TaskInput): SchedulerTask {
     updatedAt: now.toISOString(),
     nextRunAt: next === undefined ? undefined : new Date(next).toISOString(),
   }
-}
-
-function merge(current: SchedulerTask, patch: Partial<TaskInput>): TaskInput {
-  return defaults({}, patch, current)
 }
 
 function validateInput(input: unknown): string | null {
