@@ -50,7 +50,7 @@
 | **3** | 授权命令重复调用 | 两处不同模块分别调用后端同一对授权命令 | 收口至 `manager.approve` 统一处理 |
 | **4** | Busy 状态分散 | `plugin.tsx` busy、`preinstall` 状态与 `recovery.busy` 互相独立 | 统一收口至管理器单一队列与 `PluginProcessStatus` 状态机 |
 | **5** | 插件列表重复查询 | 3 处 UI 组件各自独立维护 `get_dsh_plugins` 逻辑 | 统一通过 `manager.installed` 进行集中数据投影 |
-| **6** | 服务重启高频触发 | 各操作独立调用 `store.harness.restart()`，导致多次无谓重启 | 组结算后统一评估并执行**一次**重启 |
+| **6** | 服务重启高频触发 | 各操作独立调用 `store.harness.restart()`，导致多次无谓重启与「装到一半服务没了」 | 插件操作不停服；组结算后统一评估并**询问一次**是否重启 |
 | **7** | 工具函数反向依赖 | `parseBlockedRefusal` 挂在预装模块，导致面板反向依赖 | 迁移至 `src/store/modules/plugins/utils.ts` |
 | **8** | 引导逻辑重复 | 两处入口分散处理「打开预设引导」 | 统一收口为 `preinstall.open()` |
 | **9** | 面板缺乏安装入口 | 无法在面板直接输入 Spec 安装新插件 | 新增标准的插件安装与兼容性检查入口 |
@@ -212,7 +212,6 @@ interface PluginsState {
   logs: PluginManagerLog[]
   activeGroupId: string | null
   cancelling: boolean
-  presenterCount: number
 }
 
 ```
@@ -271,8 +270,10 @@ interface PluginsState {
 * 宿主返回授权拦截码（如 `PLUGIN_VERSION_INCOMPATIBLE`）时，通过 `parseBlockedRefusal` 匹配目标进程。
 * 匹配成功的进程切换为 `unauthorized` 并挂载 `refusal` 载荷；同组其他未被拦截的进程**重置回 `pending**`。
 * 隐藏当前组的加载 Toast，暂停队列推进，等待用户决策。
-* 例外：升级返回 `PLUGIN_UPDATE_NO_CHANGE` 且 `retryable === false`（不存在可授权的动作：该精确版本已授权过仍未生效，或探测缓存里没有可比较的 registry 目标），说明档案把来源钉死了（catalog / git / link 或精确版本）、`--latest` 越不过声明范围，插件本身没有损坏。此时不进入 `unauthorized`，也不产生常驻 Toast：被拦截项直接以 `ok: false, reason: 'update-hold'` 结算，宿主本次已核验通过的其余进程按成功结算，队列继续推进。
-* 注意：**已授权过的精确版本必须真的装得上**。pnpm 的发布时长豁免（`minimumReleaseAgeExclude`）只被解析阶段采信，lockfile 校验阶段照旧按默认窗口拦截，因此宿主在升级调用里为「本批可升级目标全部已授权」的情况追加 `--config.minimumReleaseAge=0`（见 §8.1）。缺了这一步，用户在界面上点了授权，重跑依旧只得到 `PLUGIN_UPDATE_NO_CHANGE`——「没有可授权的新版本」是假象。
+* 例外：升级返回 `PLUGIN_UPDATE_NO_CHANGE` 时按「有没有可安装的 registry 目标」分流，**不允许把可升级的插件判成「保持原样」**。载荷里带版本（面板此刻显示着目标版本，或探测缓存里有）说明这个目标必须装上：`retryable === true` 的先走授权流程（宿主按我们自己请求的目标合成 `PLUGIN_POLICY_BLOCKED`，前端照常挂 `unauthorized`）；`retryable === false`（该精确版本已授权过）由宿主的显式安装重跑兜底。两条路都没装上就是**真实失败**——`ok: false` 且 `error` 带上原因，结果提示用 `danger` 并把原因放进 `description`（用户抱怨过「没有任何授权和信息」）。只有载荷里根本没有候选版本的条目（git 提交 / 本地目录 / 探测不到的 registry 目标）才以 `ok: false, reason: 'update-hold'` 静默结算，且不计入汇总的失败数。
+* 注意：**授权过的精确版本必须真的装得上**。pnpm 的发布时长豁免（`minimumReleaseAgeExclude`）只被解析阶段采信，lockfile 校验阶段照旧按默认窗口拦截，因此宿主在「本批可升级目标全部已授权」时追加 `--config.minimumReleaseAge=0`（见 §8.1）。缺了这一步，用户在界面上点了授权，重跑依旧只得到 `PLUGIN_UPDATE_NO_CHANGE`——「没有可授权的新版本」是假象。
+* 注意：**把来源钉死的声明要由显式安装推平**。`catalog:` 条目、git ref、`link:` 本地目录、精确版本这些被 pnpm 在 `update --latest` 时原样保留（git spec 甚至不会被退化成 semver 范围），于是即使用户已经授权过那个精确版本，升级核验仍是「没有变化」。因此**面板知道目标版本的升级一律走确定性显式安装**：`PluginRef` 归一化成 `{ spec: id, version: plugin.latest }`，`update_dsh_plugins` 的条目变成 `id@version`，宿主直接 `dsh plugin add <id>@<version>`（不再靠 `--latest` 去猜），随后按该版本核验；只有没带版本的老式条目才退回 `update --latest` + `force_upgrade_spec` 兜底。`latest` 不是 registry 版本（git 提交 / 本地目录）时没有可安装的版本，按上一条静默结算。
+* 注意：**lock 里的太新条目会让此后每一次插件操作都失败**。放宽窗口装上的那一次会把太新的版本写进 `pnpm-lock.yaml`，而豁免清单不在 lock 里，于是 lockfile 校验阶段每次都拦它（现象：面板里一堆「升级插件 X 失败」且没有任何授权信息，`单个升级` 却正常；启动期内置插件安装失败则直接报 `INTERNAL_PLUGIN_INSTALL_FAILED`）。宿主因此加一步**自愈**：失败输出里被拦的条目**全部已在 lock 中**（说明早就装到本机，不是本次要审的新版本）就补写豁免并放宽窗口重跑一次；只要有一个不在 lock 中（真·新版本）就保持默认窗口，交本节的授权流程处理。批量安装（§8.1 `install_plugin_specs`）与升级/卸载走同一判据。
 
 
 3. **重新提交剩余集合**：
@@ -284,7 +285,7 @@ interface PluginsState {
 
 当组内全部进程达到终态（成功、失败或拒绝）后：
 
-1. **统一重启**：若组内发生了实际变更（至少 1 项成功）且 `restartOnSettle === true`，触发**一次** `store.harness.restart()`。
+1. **询问是否重启（并进结果提示）**：结算**不**立即重启。若组内发生了实际变更（至少 1 项成功）且 `restartOnSettle === true`，则把「重启」按钮并进随后那条结果／汇总 Toast（`variant: 'accent'`、`timeout: 0`）——点按钮才执行**一次** `store.harness.restart()`，直接关闭即「暂不重启」。插件操作本身不停服，改动要等重启后生效。一次入队只留**一条**消息：单结果时结果 Toast 本身就是那条「已完成＋重启」，多结果时是队列汇总那条，都不再另弹常驻重启气泡。
 2. **事件分发**：触发 `completed` 与 `error`（若存在失败项）事件。
 3. **清理与推进**：移除当前 `PluginGroup`，重置 `activeGroupId` 为 `null`，并递归调用 `drain()` 推进下一队列组。若队列为空，触发 `allcompleted`。
 
@@ -325,7 +326,7 @@ interface PluginsState {
 
 ## 七、Toast UI 状态映射
 
-管理器的 Toast 采用**声明式状态投影**，在 `presenterCount > 0` 时生效：
+管理器的 Toast 采用**声明式状态投影**，在入队时的 `toast: true` 生效（与「面板是否挂载」无关：关闭插件面板不该让仍在跑的队列失去进度气泡与授权入口）：
 
 ```
                               ┌─── n = 1 : 显示 "正在安装 {{name}}..."
@@ -336,9 +337,16 @@ interface PluginsState {
 │
 ├─── 进程授权等待 ─────────────► 为每个待授权项弹出独立的常驻 Toast (timeout: 0)
 │
-└─── 组结算完成 ───────────────► 依次触发结果 Toast，多项失败时追加汇总 Toast
-                                （`reason: 'update-hold'` 例外：用一条自动消失的中性提示
-                                 呈现"没有可授权的新版本"，不计入失败汇总）
+└─── 队列排空 ────────────────► 整条队列（一次入队的所有组）跑完后**只汇报一次**：
+                                「{{name}} 升级完成」＋是否重启（失败时 `danger`
+                                并把 `error` 放进 `description`）；
+                                用户自己取消／拒绝授权的结果不补提示；
+                                没有任何候选版本的 `update-hold` 也不出声；
+                                多结果弹**一条**队列汇总「插件操作已完成」，描述为
+                                「x 个成功 · x 个失败 · x 个无需变更」（非零项才出现）。
+                                需要重启时「重启」按钮就挂在这条汇总（或单结果那条）
+                                上（`timeout: 0`），不额外再弹常驻重启提示。
+                                授权／拒绝等中途提示照旧即时出现，不受此推迟影响。
 
 ```
 
@@ -353,9 +361,9 @@ interface PluginsState {
 | 命令 (Command) | 参数类型 | 返回类型 | 修改说明 |
 | --- | --- | --- | --- |
 | `install_plugin_specs` | `specs: Vec<String>` | `Result<(), String>` | **新增**：支持传入多个 Spec，合并为单次 `dsh plugin add` 执行 |
-| `update_dsh_plugins` | `ids: Vec<String>` | `Result<(), String>` | **变更**：替代原 `update_dsh_plugin`，支持批量更新；拿到授权过的精确版本时追加 `--config.minimumReleaseAge=0`（见下） |
+| `update_dsh_plugins` | `ids: Vec<String>` | `Result<(), String>` | **变更**：替代原 `update_dsh_plugin`，支持批量更新；每一项可以是 `<id>` 或 `<id>@<版本>`（参数名保留 `ids` 以免改动前端载荷键） |
 
-> `update_dsh_plugins` 的发布时长放宽：档案的 `minimumReleaseAgeExclude` 只被 pnpm 的解析阶段采信，lockfile 校验阶段照旧按默认窗口拦截，授权过的精确版本因此「退出 0 但版本没动」。因此当**本批每个可升级的 registry 目标都已在豁免清单里**时，该次 `dsh plugin update <ids> --latest` 追加 `--config.minimumReleaseAge=0`；批里混进未授权的可升级目标就保持默认窗口，界面照旧先请用户授权（放宽是全调用生效的，不能让未授权的包顺带越过窗口）。
+> `update_dsh_plugins` 的两条路径：升级**不再靠 `--latest` 猜**。面板此刻显示着目标版本，因此前端传 `id@version`，宿主对这些条目直接 `dsh plugin add <id>@<version>`（一条 CLI 调用装一批，装完按该精确版本核验；「已经就是这个版本」也算成功）。没带版本的条目才退回 `dsh plugin update --latest`。发布时长门禁拦住显式安装时，宿主按**我们自己请求的目标**合成 `PLUGIN_POLICY_BLOCKED: [{"name","version"}]` 交给授权流程——pnpm 在解析阶段报的文本不含精确发布时间，`diagnose::policy_blocked_versions` 有意不认它，所以这份载荷必须由升级路径自己给出。用户授权后目标进入 `minimumReleaseAgeExclude`，重跑时该批**每个 registry 目标都已豁免**才追加 `--config.minimumReleaseAge=0`（放宽是全调用生效的，不能让未授权的包顺带越过窗口），于是授权过的精确版本必然装上。
 | `remove_dsh_plugins` | `ids: Vec<String>` | `Result<(), String>` | **变更**：替代原 `remove_dsh_plugin`，支持批量移除 |
 | `inspect_plugin_specs` | `specs: Vec<String>, dsh: Option<String>` | `Result<Vec<PluginInspect>, String>` | **新增**：只读检查 Spec 兼容性，不改动本地 Profile |
 | `cancel_plugin_processes` | 无 | `Result<(), String>` | **重命名**：由 `cancel_preinstall_plugins` 重命名，提升为通用方法 |
@@ -447,6 +455,15 @@ src/
 4. `test/plugin-manager-api.test.ts`
 * 验证 Ref 归一化纯函数的边界输入。
 * 验证幂等性判断（如卸载未安装插件返回 `already-absent`）。
+* 验证面板显示的目标版本以 `id@版本` 形式传给宿主（`{ ids: ['aaa@2.0.0'] }`）。
+
+
+5. `test/plugin-manager-update-hold.test.ts`
+* 验证批处理载荷的逐项归因：未被点名的成员按成功结算、被点名且可授权的进授权流程、已授权却仍未装上的按**真实失败**上报（`danger` + 原因），没有任何候选版本的条目静默结算（不出提示、不计失败）。
+
+
+6. `test/plugin-manager-summary.test.ts`
+* 验证一次入队多个组时只在队列排空后弹**一条**汇总（计数正确、失败时 `danger`、需要重启时按钮挂在这条上并只触发一次 `restart`）。
 
 
 
@@ -454,3 +471,8 @@ src/
 
 1. `src-tauri/src/service/plugin/compat.rs`
 * 覆盖 Workspace 语法解析、预发布版本匹配、非法 Range 兼容性降级及合并 `dependencies` 与 `peerDependencies` 的断言测试。
+
+
+2. `src-tauri/src/service/plugin/install/single.rs`
+* 覆盖 `split_upgrade_spec`（scoped 包、`id@next`、git spec 的切分）、`update_failure_payload`（多条 hold 合并成一个数组、真失败优先）、`force_upgrade_spec`（只有已授权的 registry 目标才补显式安装）与 `policy_refusal_from_specs`（按请求目标合成拒绝载荷）。
+* 覆盖 `install/mod.rs` 的 `locked_release_age_exemptions`（被拦条目必须全部已在 lock 中才自愈）。
