@@ -50,6 +50,11 @@ export function allowTurnNotification(input: TurnGateInput): boolean {
  * 提问就在眼前，再弹一条系统通知纯属打扰（参考实现 `source/dsh-notification/src/client/index.ts`
  * 的 pending runner 调的就是同一个 `shouldShow`）。窗口在后台、或用户已经切到别的会话时照旧
  * 提醒；当前会话读不到时同样按「未聚焦」处理。
+ *
+ * 用户的「提醒时机」选到 `always` 时这层抑制整体让位：既然连「我正看着这个会话」都要提醒，
+ * 挂起交互当然也照提醒（参考实现里完成通知与 pending runner 共用同一个 `backgroundOnly`
+ * 开关，移植成三态后只有 `always` 明确表示「不必替我省略」）。`never` 只管轮次完成，
+ * 挂起交互仍按「看着就不打扰」抑制——宁可少弹一条，也不要在用户明确要求安静时打扰他。
  */
 export function allowPendingNotification(
   settings: NotificationSettings,
@@ -58,6 +63,8 @@ export function allowPendingNotification(
 ): boolean {
   if (kind === 'approval' ? !settings.approval : !settings.question)
     return false
+  if (settings.turnComplete === 'always')
+    return true
   return !watchingSession(gate)
 }
 

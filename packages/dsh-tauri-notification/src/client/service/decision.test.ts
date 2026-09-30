@@ -62,6 +62,20 @@ describe('allowPendingNotification', () => {
     expect(allowPendingNotification({ ...settings, approval: true }, 'approval', gate)).toBe(false)
   })
 
+  it('「始终」时窗口在前台也提醒：用户明确要求不必省这一条', () => {
+    const always = { ...settings, turnComplete: 'always' as const, question: true }
+    expect(allowPendingNotification(always, 'question', gate)).toBe(true)
+    expect(allowPendingNotification({ ...always, approval: true }, 'approval', gate)).toBe(true)
+    // 「始终」只解除位置抑制，不越过各自的开关。
+    expect(allowPendingNotification({ ...always, question: false }, 'question', gate)).toBe(false)
+  })
+
+  it('「从不」只管轮次完成，挂起交互仍遵循「看着就不打扰」', () => {
+    const never = { ...settings, turnComplete: 'never' as const, question: true }
+    expect(allowPendingNotification(never, 'question', gate)).toBe(false)
+    expect(allowPendingNotification(never, 'question', { ...gate, hostHidden: true })).toBe(true)
+  })
+
   it('窗口在后台时提醒', () => {
     expect(allowPendingNotification({ ...settings, question: true }, 'question', background)).toBe(true)
   })
