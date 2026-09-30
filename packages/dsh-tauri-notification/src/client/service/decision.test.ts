@@ -46,11 +46,37 @@ describe('allowTurnNotification', () => {
 })
 
 describe('allowPendingNotification', () => {
+  const gate = { hostHidden: false, sessionId: 's1', currentSessionId: 's1' }
+  /** 一定不抑制的位置（窗口在后台），用来单纯验证开关。 */
+  const background = { ...gate, hostHidden: true }
+
   it('按类别读取各自的开关', () => {
-    expect(allowPendingNotification(settings, 'approval')).toBe(true)
-    expect(allowPendingNotification(settings, 'question')).toBe(false)
-    expect(allowPendingNotification({ ...settings, approval: false, question: true }, 'approval')).toBe(false)
-    expect(allowPendingNotification({ ...settings, approval: false, question: true }, 'question')).toBe(true)
+    expect(allowPendingNotification(settings, 'approval', background)).toBe(true)
+    expect(allowPendingNotification(settings, 'question', background)).toBe(false)
+    expect(allowPendingNotification({ ...settings, approval: false, question: true }, 'approval', background)).toBe(false)
+    expect(allowPendingNotification({ ...settings, approval: false, question: true }, 'question', background)).toBe(true)
+  })
+
+  it('窗口在前台且就停在这个会话上时不提醒：审批框 / 提问就在眼前', () => {
+    expect(allowPendingNotification({ ...settings, question: true }, 'question', gate)).toBe(false)
+    expect(allowPendingNotification({ ...settings, approval: true }, 'approval', gate)).toBe(false)
+  })
+
+  it('窗口在后台时提醒', () => {
+    expect(allowPendingNotification({ ...settings, question: true }, 'question', background)).toBe(true)
+  })
+
+  it('用户切到别的会话时提醒', () => {
+    expect(allowPendingNotification({ ...settings, question: true }, 'question', { ...gate, currentSessionId: 's2' })).toBe(true)
+  })
+
+  it('拿不到当前会话时仍提醒：只有确知「就停在这个会话上」才抑制', () => {
+    expect(allowPendingNotification({ ...settings, question: true }, 'question', { ...gate, currentSessionId: undefined })).toBe(true)
+  })
+
+  it('开关关掉时任何位置都不提醒', () => {
+    expect(allowPendingNotification({ ...settings, approval: false }, 'approval', background)).toBe(false)
+    expect(allowPendingNotification({ ...settings, approval: false }, 'approval', { ...gate, currentSessionId: 's2' })).toBe(false)
   })
 })
 

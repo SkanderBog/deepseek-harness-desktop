@@ -1,4 +1,5 @@
 import type { ClientContext } from 'dsh-tauri/client'
+import type { FocusGateInput } from '../service/decision'
 import type { NativeNotificationAction, NotificationKind, PendingInteractionFace, SessionsFace, UiSessionFace } from '../types'
 import { defineRegister } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../../shared/constants'
@@ -55,6 +56,20 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
   const sessionTitle = (sessionId: string): string => {
     const summary = readSessions()?.list.getSnapshot().byId[sessionId]
     return summary?.displayTitle?.trim() || summary?.title?.trim() || locale.text('sessionFallback')
+  }
+
+  /**
+   * 通知门控看的位置：宿主窗口在不在后台，以及用户正在看哪个会话。
+   *
+   * `document.visibilityState` 已被宿主补丁（`NOTIFICATION_SHIM_JS`）映射成宿主窗口状态，
+   * 这里读标准 API 即可；当前会话取会话列表投影，读不到就当「不知道用户在看哪」。
+   */
+  function focusGate(sessionId: string): FocusGateInput {
+    return {
+      hostHidden: typeof document !== 'undefined' && document.visibilityState === 'hidden',
+      sessionId,
+      currentSessionId: adapter.sessionList()?.current,
+    }
   }
 
   const focusSession = (sessionId: string, attempt = 0): void => {
@@ -192,7 +207,7 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
       const kind = pendingNotificationKind(current)
       if (!kind)
         return
-      if (!allowPendingNotification(notificationSettings.$state, kind))
+      if (!allowPendingNotification(notificationSettings.$state, kind, focusGate(sessionId)))
         return
       const detail = pendingDetail(current)
       const fallback = kind === 'approval' ? locale.text('bodyApproval') : locale.text('bodyQuestion')
@@ -246,9 +261,7 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
       if (status ? status.running === true : summary?.running === true)
         return
       const mode = notificationSettings.$state.turnComplete
-      const hostHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
-      const currentSessionId = adapter.sessionList()?.current
-      if (!allowTurnNotification({ mode, hostHidden, sessionId, currentSessionId }))
+      if (!allowTurnNotification({ ...focusGate(sessionId), mode }))
         return
       // 「用户手动中断」和「跑完了」在客户端看到的是同一个 `running: false`：结束原因只在宿主
       // 的 `turn/end` 里，所以弹之前问一次宿主；是中断就什么都不做（用户自己掐断的，不需要提醒）。
