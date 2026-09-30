@@ -47,7 +47,7 @@ const searchProblemKeys: Record<PluginSearchProblem, string> = {
  * 「插件」面板：已安装插件的安装/升级/卸载/禁用/启用全部经 `useDshPluginsManager` 收口
  * （队列、授权、Toast、组结算重启由管理器统一负责），面板只保留确认对话框与行内 busy。
  *
- * 快照（创建/还原/删除）不在管理器范围内（`docs/todos/use-plugins-manager.md` §1.2），
+ * 快照（创建/还原/删除）不在管理器范围内
  * 仍由面板直接调用宿主命令；这些操作同样会改写插件状态，因此成功后失效插件列表查询。
  */
 export function ConfigPlugin() {
@@ -570,7 +570,7 @@ export function ConfigPlugin() {
         <div className="flex flex-col gap-4">
           {/* 安装入口：接受 npm spec（可逗号/空白分隔多个），先经管理器只读预检再入队 */}
           <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 px-1">
               <Input
                 variant="secondary"
                 className="h-8 flex-1 rounded-md font-mono text-xs"
