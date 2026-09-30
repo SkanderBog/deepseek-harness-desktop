@@ -35,6 +35,7 @@ pub struct WindowsConfig {
     /// and `<com:Class Id>` entries. Accepts the `xxxxxxxx-xxxx-...` form
     /// with or without surrounding braces.
     pub toast_activator_clsid: Option<String>,
+    pub icon_path: Option<std::path::PathBuf>,
 }
 
 pub use models::*;

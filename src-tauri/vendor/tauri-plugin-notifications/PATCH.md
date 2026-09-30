@@ -75,8 +75,11 @@ twice.
   - `register_unpackaged_app_id()` — writes `HKCU\Software\Classes\AppUserModelId\<app_id>`
     (`DisplayName`, `IconUri`, `CustomActivator={CLSID}`) and
     `HKCU\Software\Classes\CLSID\{CLSID}\LocalServer32` = the current executable, which is the
-    AUMID mapping an unpackaged build needs. Best-effort: failures are logged and the
-    in-process path still works while the app is running.
+    AUMID mapping an unpackaged build needs. `IconUri` uses the resolved PNG resource
+    configured by `plugins.notifications.windows.iconPath`; Windows does not extract
+    the toast header icon from an EXE. The resource is explicitly included in
+    `bundle.resources`. Best-effort: failures are logged and the in-process path
+    still works while the app is running.
   - `spawn_toast_activator()` — register `ToastActivatorFactory` on a dedicated
     single-threaded-apartment thread that then blocks in `GetMessageW` /
     `TranslateMessage` / `DispatchMessageW` for the life of the process, and is registered

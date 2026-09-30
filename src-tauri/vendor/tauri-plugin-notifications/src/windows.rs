@@ -631,7 +631,21 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
                 .product_name
                 .clone()
                 .unwrap_or_else(|| plugin.app_id.clone());
-            if let Err(e) = register_unpackaged_app_id(&display_name, &plugin.app_id, clsid_str) {
+            let icon_path = windows_config.icon_path.as_ref().and_then(|path| {
+                match app.path().resolve(path, BaseDirectory::Resource) {
+                    Ok(resolved) if resolved.is_file() => Some(resolved),
+                    result => {
+                        log::warn!("Cannot resolve notification icon {path:?}: {result:?}");
+                        None
+                    }
+                }
+            });
+            if let Err(e) = register_unpackaged_app_id(
+                &display_name,
+                &plugin.app_id,
+                clsid_str,
+                icon_path.as_deref(),
+            ) {
                 log::error!(
                     "Failed to register AUMID {} for toast activation: {e}; \
                      Action Center clicks will fall back to shortcut launch without payload",
@@ -691,6 +705,7 @@ fn register_unpackaged_app_id(
     display_name: &str,
     app_id: &str,
     clsid_str: &str,
+    icon_path: Option<&std::path::Path>,
 ) -> windows::core::Result<()> {
     let exe = std::env::current_exe().map_err(|e| {
         windows::core::Error::new(E_FAIL, format!("cannot resolve current executable: {e}"))
@@ -717,7 +732,10 @@ fn register_unpackaged_app_id(
         return Err(status.into());
     }
     let result = write_registry_string(aumid_key, Some("DisplayName"), display_name)
-        .and_then(|()| write_registry_string(aumid_key, Some("IconUri"), &exe))
+        .and_then(|()| match icon_path {
+            Some(path) => write_registry_string(aumid_key, Some("IconUri"), &path.to_string_lossy()),
+            None => Ok(()),
+        })
         .and_then(|()| {
             write_registry_string(
                 aumid_key,
