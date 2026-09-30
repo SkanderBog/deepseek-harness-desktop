@@ -16,7 +16,6 @@ export * from './modules/hookable'
 export * from './modules/lodash-es'
 export * from './modules/reause'
 export * from './modules/tailwind-variants'
-export * from './modules/unstorage'
 export * from './modules/valtio-define'
 
 export * from './panel'

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('dsh-tauri/client', async () => ({
   ...await import('tailwind-variants'),
+  ...await import('../../../../../dsh-tauri/src/client/modules/valtio-define'),
   ofetch: mocks.ofetch,
   defineLocale: (_namespace: string, dicts: { zh: Record<string, string>, en: Record<string, string> }) => {
     mocks.dicts = dicts
