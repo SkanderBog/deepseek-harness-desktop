@@ -69,8 +69,8 @@ fn patch_plugin_manager(source: &str) -> PatchOutcome {
 /// 末项没有尾逗号（单行数组，或末项没写逗号的多行数组）时先补一个逗号，保证生成的字面
 /// 量始终合法。按名字逐个判定是否已存在，因此插件增减后再次启动会自动补齐（不做
 /// 「整体已打过」的粗判，否则新增的 `dsh-tauri-*` 永远进不了名单）；名字全在名单里则
-/// 返回 [`PatchOutcome::AlreadyPatched`]。找不到字面量时返回
-/// [`PatchOutcome::AnchorMissing`]。
+/// 返回 [`PatchOutcome::AlreadyPatched`]。找不到字面量、或本体里出现行注释（补出的分隔符
+/// 会被注释吞掉）时返回 [`PatchOutcome::AnchorMissing`]。
 fn patch_inbox_bundles(source: &str, names: &[String]) -> PatchOutcome {
     let Some(start) = source.find(INBOX_ANCHOR) else {
         return PatchOutcome::AnchorMissing;
@@ -87,6 +87,12 @@ fn patch_inbox_bundles(source: &str, names: &[String]) -> PatchOutcome {
         .collect();
     if missing.is_empty() {
         return PatchOutcome::AlreadyPatched;
+    }
+
+    // 名单本体里的行注释会让补出的分隔符被注释吞掉（`['a' // note` 这类形态），不解析 JS
+    // 无法安全插入，按未知布局就地失效。
+    if body.contains("//") {
+        return PatchOutcome::AnchorMissing;
     }
 
     let multiline = body.contains('\n');
@@ -306,6 +312,18 @@ mod tests {
             "export const INBOX_BUNDLES = new Set([\n    '@deepseek-ai/dsh-base',\n    'dsh-tauri',\n    'dsh-tauri-ui',\n]);\n"
         );
         assert_eq!(patch_inbox_bundles(&patched, &names()), PatchOutcome::AlreadyPatched);
+    }
+
+    /// 名单本体里有行注释时无法安全补分隔符（补出的逗号会被注释吞掉），就地失效。
+    #[test]
+    fn market_patch_skips_body_with_line_comment() {
+        assert_eq!(
+            patch_inbox_bundles(
+                "export const INBOX_BUNDLES = new Set([\n    '@deepseek-ai/dsh-base' // note\n]);\n",
+                &names()
+            ),
+            PatchOutcome::AnchorMissing
+        );
     }
 
     #[test]
