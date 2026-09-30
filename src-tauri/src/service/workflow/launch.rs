@@ -441,6 +441,12 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::service::patch::workspace_view::apply(&app_handle) {
         log::warn!("workspace view state patch failed: {e}");
     }
+    // 内置插件（dsh-tauri-*）只在壳的插件弹窗里可见：官方侧边栏 Plugins 页与插件市场
+    // 都按各自的硬编码内置/inbox 名单判断 bundle 归属，上游没有可配置开关，因此对这两个
+    // 前端做幂等补丁。最佳努力且幂等：锚点缺失（上游改写布局）时安全跳过。
+    if let Err(e) = crate::service::patch::plugin_visibility::apply(&app_handle) {
+        log::warn!("plugin visibility patch failed: {e}");
+    }
     mark_phase("core_patches", &mut phase_started);
     // 预防性处理：pnpm 在无 TTY 环境（dsh-market 等子进程）下重装/更新插件时，
     // 清理/重建 node_modules 会触发交互确认并因无 TTY 直接中止
