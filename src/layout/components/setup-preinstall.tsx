@@ -236,11 +236,12 @@ export function PreinstallSetup() {
 
   /**
    * 汇总一组进程结果里的失败明细，供错误面板展示。
-   * `already-absent` 是卸载的「已达成的目标」（插件本就不在 profile），不算失败。
+   * `already-absent` 是卸载的「已达成的目标」（插件本就不在 profile），`cancelled` 是用户
+   * 自己按下的取消，两者都不是需要用户重试的失败。
    */
   function collectFailures(results: Awaited<ReturnType<typeof manager.install>>): string[] {
     return results
-      .filter(result => !result.ok && result.reason !== 'already-absent')
+      .filter(result => !result.ok && result.reason !== 'already-absent' && result.reason !== 'cancelled')
       .map(result => `${result.process.name}: ${result.error ?? ''}`)
   }
 
@@ -313,8 +314,10 @@ export function PreinstallSetup() {
   const toInstallCount = preinstall.plugins.filter(p => effectiveSelected.has(p.id) && !p.installed).length
   const toUninstallCount = preinstall.plugins.filter(p => p.installed && !effectiveSelected.has(p.id) && !p.unsupported).length
   const hasChanges = toInstallCount > 0 || toUninstallCount > 0
-  // 有进程在排队/执行中即视为安装中；被拒（unauthorized）时转为授权视图
-  const installing = manager.processes.some(process => process.status !== 'unauthorized')
+  // 有进程在排队/执行中即视为安装中；但只要有待授权项就必须切到授权视图：整批被拒时
+  // 未被点名的进程会回到 pending 等授权，若仍按「存在非 unauthorized 进程」判定，授权
+  // 界面永远不会出现，用户只能取消。
+  const installing = approvals.length === 0 && manager.processes.length > 0
   const blocked = approvals.length > 0
   const failing = failures.length > 0
 

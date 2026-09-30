@@ -1,4 +1,4 @@
-import type { Plugin, PluginSearchProblem, PluginSearchResult } from '@/store/modules/plugins'
+import type { Plugin, PluginProcess, PluginSearchProblem, PluginSearchResult } from '@/store/modules/plugins'
 import { ChevronRight, CircleExclamation } from '@gravity-ui/icons'
 import { Button, Chip, Input, Label, Spinner, Switch, Tooltip } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
@@ -120,8 +120,14 @@ export function ConfigPlugin() {
     return busy.includes(`${id}:${action}`)
   }
 
+  /** 该插件在管理器队列里的进程类型（不在队列里为 null）。 */
+  function queuedType(id: string): PluginProcess['type'] | null {
+    return manager.processes.find(process => process.name === id)?.type ?? null
+  }
+
+  /** 队列里已有该插件的进程时整行禁点：再点只会把它作为新组塞进同一个队列。 */
   function rowBusy(id: string): boolean {
-    return busy.some(item => item.startsWith(`${id}:`))
+    return queuedType(id) !== null || busy.some(item => item.startsWith(`${id}:`))
   }
 
   function markBusy(id: string, action: string): void {
@@ -147,8 +153,11 @@ export function ConfigPlugin() {
     }
   }
 
-  async function onUpgrade(id: string) {
-    await runAction(id, 'update', () => manager.upgrade(id))
+  async function onUpgrade(id: string, latest: string | null) {
+    // 面板此刻显示着目标版本，把它一起交给管理器：宿主据此核验「装的到底是不是这个版本」，
+    // 并在来源被钉死时用显式安装兜底（见 `update_dsh_plugins`）。
+    const ref = latest === null ? id : { spec: id, version: latest }
+    await runAction(id, 'update', () => manager.upgrade(ref))
   }
 
   async function onRemove(id: string, name: string) {
@@ -416,10 +425,10 @@ export function ConfigPlugin() {
                 variant="primary"
                 color="accent"
                 size="sm"
-                onClick={() => onUpgrade(plugin.id)}
+                onClick={() => onUpgrade(plugin.id, plugin.latest)}
               >
                 <span className="flex items-center gap-1">
-                  <If cond={busyWith(plugin.id, 'update')} then={<Spinner size="sm" color="current" />} />
+                  <If cond={busyWith(plugin.id, 'update') || queuedType(plugin.id) === 'upgrade'} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.upgrade')}
                   <If cond={plugin.latest != null && plugin.error == null}>
                     <span className="font-mono text-[10px] opacity-80 max-w-[80px] truncate">
@@ -440,7 +449,7 @@ export function ConfigPlugin() {
                 onClick={() => onEnable(plugin.id, plugin.patchDisabled)}
               >
                 <span className="flex items-center gap-1">
-                  <If cond={busyWith(plugin.id, 'enable')} then={<Spinner size="sm" color="current" />} />
+                  <If cond={busyWith(plugin.id, 'enable') || queuedType(plugin.id) === 'enable'} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.enable')}
                 </span>
               </Chip>
@@ -452,7 +461,7 @@ export function ConfigPlugin() {
                 onClick={() => onDisable(plugin.id)}
               >
                 <span className="flex items-center gap-1">
-                  <If cond={busyWith(plugin.id, 'disable')} then={<Spinner size="sm" color="current" />} />
+                  <If cond={busyWith(plugin.id, 'disable') || queuedType(plugin.id) === 'disable'} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.disable')}
                 </span>
               </Chip>
@@ -506,7 +515,7 @@ export function ConfigPlugin() {
                 onClick={() => onRemove(plugin.id, plugin.name)}
               >
                 <span className="flex items-center gap-1">
-                  <If cond={busyWith(plugin.id, 'remove')} then={<Spinner size="sm" color="current" />} />
+                  <If cond={busyWith(plugin.id, 'remove') || queuedType(plugin.id) === 'uninstall'} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.uninstall')}
                 </span>
               </Chip>
