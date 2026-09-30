@@ -14,11 +14,14 @@ export function useSyncVisibility(iframeRef: React.RefObject<HTMLIFrameElement |
     void (async () => {
       try {
         const appWindow = getCurrentWindow()
-        const [minimized, visible] = await Promise.all([
+        const [minimized, visible, focused] = await Promise.all([
           appWindow.isMinimized(),
           appWindow.isVisible(),
+          appWindow.isFocused(),
         ])
-        post({ type: 'dsh://visibility-state', hidden: minimized || !visible })
+        // 未聚焦也必须算后台：窗口还开着但用户切去别的应用时，只看 visible
+        // 会把「仅未聚焦时通知」直接判成前台，会话就再也收不到完成提醒。
+        post({ type: 'dsh://visibility-state', hidden: minimized || !visible || !focused })
       }
       catch (error) {
         console.error('[notification] sync visibility failed:', error)

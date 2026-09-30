@@ -26,7 +26,34 @@ vi.mock('dsh-tauri/client', () => ({
     },
 }))
 
+interface MatchMediaHost {
+  window?: { matchMedia?: (query: string) => { matches: boolean } }
+}
+
+const host = globalThis as unknown as MatchMediaHost
+const originalWindow = host.window
+
+/** 手机端才有三条设备查询全部成立；触屏为主但另接鼠标的设备缺 `(any-hover: none)`。 */
+const MOBILE_DEVICE = {
+  '(hover: none)': true,
+  '(any-pointer: coarse)': true,
+  '(any-hover: none)': true,
+}
+const TOUCHSCREEN_WITH_MOUSE = {
+  '(hover: none)': true,
+  '(any-pointer: coarse)': true,
+  '(any-hover: none)': false,
+}
+
+function stubDevice(answers: Record<string, boolean>): void {
+  host.window = {
+    ...host.window,
+    matchMedia: (query: string) => ({ matches: answers[query] ?? false }),
+  }
+}
+
 afterEach(() => {
+  host.window = originalWindow
   mocks.settings.launcherAvailable = false
   mocks.settings.launcherShortcut = undefined
 })
@@ -72,6 +99,42 @@ describe('registerSettings launcher seat', () => {
 
     expect(registered).toContain('shell.overlay')
     expect(registered).toContain('sidebar.settings')
+  })
+
+  /** 手机端把 `sidebar.settings` 交还官方：自有侧栏与触发器都不许抢座位。 */
+  it('leaves every settings seat to the official dialog on mobile', () => {
+    stubDevice(MOBILE_DEVICE)
+
+    const { injected, registered } = activate()
+
+    expect(injected).toEqual([])
+    expect(registered).toEqual([])
+  })
+
+  /** 触屏为主但接了鼠标的设备仍有鼠标可用：不能被手机端判据误伤。 */
+  it('keeps the own sidebar on a touchscreen with a secondary mouse', () => {
+    stubDevice(TOUCHSCREEN_WITH_MOUSE)
+
+    const { injected } = activate()
+
+    expect(injected.map(entry => entry.key)).toEqual([
+      'shell.overlay',
+      'sidebar.settings',
+      'settings.launcher',
+    ])
+  })
+
+  /** 桌面端仍走自有侧栏，手机端判据不误伤。 */
+  it('keeps the own sidebar on a touchscreen desktop', () => {
+    stubDevice({ '(hover: none)': false, '(any-pointer: coarse)': true, '(any-hover: none)': false })
+
+    const { injected } = activate()
+
+    expect(injected.map(entry => entry.key)).toEqual([
+      'shell.overlay',
+      'sidebar.settings',
+      'settings.launcher',
+    ])
   })
 
   /** 官方账号菜单落在 `settings.launcher`：声明前必须退回自有触发器，声明后由官方条目渲染。 */

@@ -12,6 +12,7 @@ import {
   openExternalUrl,
   openInExplorer,
   renameSession,
+  startWorkspaceSession,
   supportsSessionPin,
   togglePinSession,
 } from './menu'
@@ -375,5 +376,46 @@ describe('session pin (official 0.1.7 capability)', () => {
     await expect(togglePinSession({ workspaces, sessionId: sid('s-1'), pinned: false }))
       .resolves
       .toEqual({ ok: false, error: 'archive-conflict' })
+  })
+})
+
+describe('startWorkspaceSession', () => {
+  it('reports the missing navigation capability instead of silently doing nothing', async () => {
+    // legacy 投影在两份候选服务都没有 startSession 时把该属性读为 undefined（不是抛错）；
+    // 旧实现用 `startSession?.()` 可选链，点击菜单项后完全没有反馈（issue #780）。
+    const workspaces = {
+      list: { getSnapshot: () => ({ items: [], archivedSessionIds: [] }) },
+    } as unknown as WorkspacesRuntimeLike
+
+    await expect(startWorkspaceSession({ workspaces, workspaceId: WORKSPACE_ID }))
+      .resolves
+      .toEqual({ ok: false, error: 'newSessionUnavailable' })
+  })
+
+  it('starts the session in the requested workspace with the service as receiver', async () => {
+    const seen: unknown[] = []
+    const startSession = vi.fn(function (this: unknown, workspaceId: WorkspaceId) {
+      seen.push(this)
+      expect(workspaceId).toBe(WORKSPACE_ID)
+    })
+    const workspaces = { startSession } as unknown as WorkspacesRuntimeLike
+
+    await expect(startWorkspaceSession({ workspaces, workspaceId: WORKSPACE_ID }))
+      .resolves
+      .toEqual({ ok: true })
+    expect(startSession).toHaveBeenCalledWith(WORKSPACE_ID)
+    expect(seen[0]).toBe(workspaces)
+  })
+
+  it('awaits an async official implementation and surfaces its rejection', async () => {
+    const workspaces = {
+      startSession: async () => {
+        throw new Error('workspace-locked')
+      },
+    } as unknown as WorkspacesRuntimeLike
+
+    await expect(startWorkspaceSession({ workspaces, workspaceId: WORKSPACE_ID }))
+      .resolves
+      .toEqual({ ok: false, error: 'workspace-locked' })
   })
 })

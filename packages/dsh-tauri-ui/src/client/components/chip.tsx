@@ -2,8 +2,9 @@
 import type { VariantProps } from 'dsh-tauri/client'
 import type { ComponentProps, ReactElement, ReactNode } from 'react'
 import { tv } from 'dsh-tauri/client'
+import { forwardRef } from 'react'
 
-export interface ChipProps extends Omit<ComponentProps<'button'>, 'children'> {
+export interface ChipProps extends Omit<ComponentProps<'button'>, 'children' | 'ref'> {
   variant: ChipVariant
   icon?: ReactNode
   badge?: ReactNode
@@ -53,12 +54,16 @@ const chip = tv({
 
 export type ChipVariant = NonNullable<VariantProps<typeof chip>['variant']>
 
-export function Chip({ variant, icon, badge, chevron, open, className, children, ...rest }: ChipProps): ReactElement {
+// eslint-disable-next-line react/no-forward-ref -- 部署端前端内置 React 18（issue #783）：普通函数组件会静默丢弃 ref
+export const Chip = forwardRef<HTMLButtonElement, ChipProps>((
+  { variant, icon, badge, chevron, open, className, children, ...rest },
+  ref,
+): ReactElement => {
   // 官方 PermissionRow.selector 不包 icon/label/badge，其余两个 variant 按 PermissionSelect/AgentPresetSeat 包裹。
   const wraps = variant !== 'selector'
   const styles = chip({ variant, hasIcon: wraps && icon != null, className })
   return (
-    <button type="button" className={styles.base()} {...rest}>
+    <button type="button" className={styles.base()} {...rest} ref={ref}>
       {wraps && icon != null ? <span className={styles.icon()} aria-hidden>{icon}</span> : icon}
       {wraps && children != null ? <span className={styles.label()}>{children}</span> : children}
       {wraps && badge != null ? <span className={styles.badge()} aria-hidden>{badge}</span> : badge}
@@ -67,4 +72,4 @@ export function Chip({ variant, icon, badge, chevron, open, className, children,
         : <span className={styles.chevron()} aria-hidden data-open={open === true ? 'true' : undefined}>{chevron}</span>}
     </button>
   )
-}
+})

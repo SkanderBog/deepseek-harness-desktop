@@ -5,7 +5,7 @@ import { contextMenuFeature } from './register/context-menu'
 
 export const name = PLUGIN_ID
 
-export const inject = ['locale', 'sessions', 'workspaces']
+export const inject = ['locale', 'sessions', 'workspaces', 'uiWorkspace']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(locale.registerLocale, LOCALE_EFFECT)

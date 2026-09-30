@@ -1,6 +1,6 @@
 [package]
 name = "deepseek-harness-desktop"
-version = "0.19.0"
+version = "0.19.1"
 description = "Desktop application for DeepSeek Harness (dsh)"
 authors = [ "deepseek-harness-desktop contributors" ]
 edition = "2021"
@@ -39,6 +39,13 @@ tauri-plugin-opener = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-store = "2"
 tauri-plugin-notification = "2"
+# 壳层原生通知（带交互按钮 + 点击 / 动作事件）走 Choochmeque fork：官方插件在桌面端
+# `show()` 之后即丢弃 handle，拿不到点击与按钮动作，所以 fork 是必需依赖。
+# `default-features = false` 关掉它的 notify-rust 后端，改用它自带的 Windows toast /
+# macOS 通知中心实现——那才是带按钮与事件的那条通路。
+# macOS 上它会用 swift-bridge 编译自己的 Swift 后端，源码用了 Swift 6 的 typed throws
+# （`throws(FFIResult)`），因此 macOS 构建需要 Xcode 16+（CI 见 ci.yml 的 Select Xcode 16）。
+tauri-plugin-notifications = { version = "0.5.0-rc.14", default-features = false }
 tauri-plugin-autostart = "2"
 # 桌宠素材直连远端：插件版 HTTP 从 Rust 发起请求，绕开 githubusercontent 的 CORS。
 # 版本须与 package.json 的 @tauri-apps/plugin-http（catalog:tauri，^2.6.0）保持同一 minor：
@@ -127,6 +134,12 @@ tray-icon = { version = "0.25", default-features = false, features = [ "ksni" ] 
 # （上游 issue: https://github.com/webdriverio/desktop-mobile/issues/665）。
 [patch.crates-io]
 tauri-plugin-wdio-webdriver = { path = "vendor/tauri-plugin-wdio-webdriver" }
+# 上游 0.5.0-rc.14 的 Windows 后端有三处缺口：不发 `<input>`、动作 `arguments` 只写裸
+# action id（冷启动 COM 回调看不到 launch=，会话身份丢失）、且只有 MSIX 打包应用才注册
+# COM 激活器。本地副本补齐输入框、把 arguments 改写成携带 extra 的 JSON、并为未打包的
+# DSH 写入 AUMID + CLSID 注册表项并在独立 STA 线程上跑消息泵。详见 vendor 目录内
+# PATCH.md（上游 issue: https://github.com/Choochmeque/tauri-plugin-notifications/issues）。
+tauri-plugin-notifications = { path = "vendor/tauri-plugin-notifications" }
 
 # 行号表而非完整调试信息：panic 与回溯仍能定位到行，target 体积与链接耗时都随之下降
 [profile.dev]

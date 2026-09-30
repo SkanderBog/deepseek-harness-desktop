@@ -233,6 +233,26 @@ jobs:
         with:
           toolchain: stable
 
+      # tauri-plugin-notifications 的 macOS 后端用 Swift 6 的 typed throws
+      # （`throws(FFIResult)`），macos-14 镜像默认的 Xcode 15 / Swift 5.10 解析不了，
+      # 构建前必须切到镜像里自带的 Xcode 16；镜像里没有 Xcode 16 时只告警，不让 job 直接挂掉
+      # （`xcode-select -s ""` 会失败）。
+      - name: Select Xcode 16
+        if: runner.os == 'macOS'
+        run: |
+          XCODE_APP="$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$XCODE_APP" ]; then
+            echo "::warning::镜像里没有 Xcode 16，沿用默认 Xcode；Swift 6 构建可能失败"
+            swift --version
+            exit 0
+          fi
+          sudo xcode-select -s "$XCODE_APP"
+          swift --version
+          # 该插件的 macOS 后端经 swift-build 产出 dylib，测试二进制运行时按 @rpath 找 Swift 并发
+          # 运行库；dyld 默认只搜 target/、$HOME/lib、/usr/local/lib、/usr/lib，工具链里的
+          # libswift_Concurrency.dylib 不在其中，实测报 `Library not loaded: @rpath/libswift_Concurrency.dylib`。
+          echo "DYLD_FALLBACK_LIBRARY_PATH=$XCODE_APP/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx:/usr/lib/swift" >> "$GITHUB_ENV"
+
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:

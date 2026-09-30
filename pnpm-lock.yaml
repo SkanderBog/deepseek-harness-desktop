@@ -41,6 +41,9 @@ catalogs:
       specifier: ~5.8.3
       version: 5.8.3
   default:
+    '@choochmeque/tauri-plugin-notifications-api':
+      specifier: 0.5.0-rc.14
+      version: 0.5.0-rc.14
     '@genapi/core':
       specifier: ^4.1.4
       version: 4.1.4
@@ -344,6 +347,9 @@ importers:
 
   .:
     dependencies:
+      '@choochmeque/tauri-plugin-notifications-api':
+        specifier: 'catalog:'
+        version: 0.5.0-rc.14
       '@genapi/pipeline':
         specifier: 'catalog:'
         version: 4.1.4
@@ -710,6 +716,9 @@ importers:
       dsh-tauri-model:
         specifier: workspace:*
         version: link:../dsh-tauri-model
+      dsh-tauri-notification:
+        specifier: workspace:*
+        version: link:../dsh-tauri-notification
       dsh-tauri-pet:
         specifier: workspace:*
         version: link:../dsh-tauri-pet
@@ -851,6 +860,25 @@ importers:
       react-if-lite:
         specifier: catalog:runtime
         version: 0.1.0(react@19.2.8)
+      tsdown:
+        specifier: catalog:cli
+        version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
+      vitest:
+        specifier: catalog:testing
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/dsh-tauri-notification:
+    dependencies:
+      dsh-tauri:
+        specifier: workspace:*
+        version: link:../dsh-tauri
+      dsh-tauri-ui:
+        specifier: workspace:*
+        version: link:../dsh-tauri-ui
+    devDependencies:
+      dsh-tauri-tsdown:
+        specifier: workspace:*
+        version: link:../dsh-tauri-tsdown
       tsdown:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
@@ -1319,6 +1347,9 @@ packages:
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
+
+  '@choochmeque/tauri-plugin-notifications-api@0.5.0-rc.14':
+    resolution: {integrity: sha512-kst+PhQ+vawT9rs6oRJoQZ5A/ljtIEN/A0/j/z1joCOPFRCR6X5l7LBRg3ChaZEk7FPk0TT+v7Z3FX1N2Wm+6g==}
 
   '@clack/core@1.4.3':
     resolution: {integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==}
@@ -7195,6 +7226,10 @@ snapshots:
       '@babel/helper-validator-identifier': 7.29.7
 
   '@bcoe/v8-coverage@1.0.2': {}
+
+  '@choochmeque/tauri-plugin-notifications-api@0.5.0-rc.14':
+    dependencies:
+      '@tauri-apps/api': 2.11.1
 
   '@clack/core@1.4.3':
     dependencies:

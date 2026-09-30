@@ -1,8 +1,6 @@
 #[cfg(windows)]
 use tauri::Manager;
 
-use crate::{desktop::payload::NativeNotificationPayload, utils::app_icon_temp_path};
-
 /// 如果 DSH 插件仍有兜底走浏览器 Notification，则保持“已授权”假象，
 /// 并让每次 `new Notification(...)` 转成发给宿主窗口的 postMessage。
 pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
@@ -36,6 +34,7 @@ pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
     this.options = options;
     this.tag = options.tag || '';
     this.onclick = null;
+    this.onaction = null;
     this.onclose = null;
     this.onerror = null;
     this.onshow = null;
@@ -48,7 +47,9 @@ pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
       body: String(options.body || ''),
       tag: this.tag,
       requireInteraction: !!options.requireInteraction,
+      silent: !!options.silent,
       sessionId: options.sessionId || sessionIdFromTag(this.tag),
+      actions: Array.isArray(options.actions) ? options.actions : [],
       href: location.href,
       origin: location.origin
     });
@@ -59,7 +60,10 @@ pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
     return Promise.resolve('granted');
   };
   DshNativeNotification.prototype.close = function () {
-    if (this.tag) send({ type: 'dsh://close-notification', tag: this.tag });
+    if (!this.tag) return;
+    // 关掉后不会再回灌点击：及时释放实例，避免 pendingOnClicks 无限增长。
+    delete pendingOnClicks[this.tag];
+    send({ type: 'dsh://close-notification', tag: this.tag });
   };
 
   window.Notification = DshNativeNotification;
@@ -79,7 +83,10 @@ pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
     });
   })();
 
-  window.addEventListener('blur', function () { setHostHidden(true); });
+  // 宿主状态只认壳层推送（`dsh://visibility-state`）与「帧内拿到焦点」这一条正向证据。
+  // 以前这里还有 `blur → 隐藏`，但帧失焦 ≠ 窗口隐藏：点壳层标题栏、设置面板都会让
+  // 帧 blur，而窗口仍在前台；那条误判会让「仅在未聚焦时」在用户正盯着会话时弹通知。
+  // 帧拿到焦点则窗口必然在前台（最小化的窗口给不了焦点），所以 focus 可以安全地纠正。
   window.addEventListener('focus', function () { setHostHidden(false); });
 
   // 查找并聚焦对应的 Session
@@ -120,38 +127,21 @@ pub(crate) const NOTIFICATION_SHIM_JS: &str = r#"(function () {
         break;
       case 'dsh://notification-clicked':
         var instance = pendingOnClicks[data.tag];
-        if (instance && typeof instance.onclick === 'function') {
+        if (!instance) break;
+        // 一次点击只回灌一次；用完即弃，避免长时间运行后字典持续增长。
+        delete pendingOnClicks[data.tag];
+        // 按钮点击走 onaction（动作 id 由前端约定），点通知本体走 onclick。
+        // 带输入框的按钮（如「回复」）把用户填的文本一并回灌；没填时给空串。
+        if (data.action && typeof instance.onaction === 'function') {
+          var inputValue = typeof data.inputValue === 'string' ? data.inputValue : '';
+          try { instance.onaction({ action: String(data.action), tag: data.tag, inputValue: inputValue }); } catch (_) {}
+        } else if (typeof instance.onclick === 'function') {
           try { instance.onclick(new Event('click')); } catch (_) {}
         }
         break;
     }
   });
 })();"#;
-
-/// 在 Rust 侧显示一条系统原生通知。
-#[tauri::command]
-pub fn show_native_notification(
-    app: tauri::AppHandle,
-    payload: NativeNotificationPayload,
-) -> Result<(), String> {
-    use tauri_plugin_notification::NotificationExt;
-
-    let mut builder = app
-        .notification()
-        .builder()
-        .title(payload.title)
-        .body(payload.body);
-
-    if let Some(icon_path) = app_icon_temp_path(&app) {
-        builder = builder.icon(icon_path.to_string_lossy().into_owned());
-    }
-
-    if let Some(id) = payload.tag.as_deref().and_then(|t| t.parse::<i32>().ok()) {
-        builder = builder.id(id);
-    }
-
-    builder.show().map_err(|e| e.to_string())
-}
 
 /// 在 Windows WebView2 中接管 iframe 内的通知请求并注入原生通知桥。
 #[cfg(windows)]

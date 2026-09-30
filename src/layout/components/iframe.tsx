@@ -1,9 +1,16 @@
 /* eslint-disable react/dom-no-unsafe-iframe-sandbox */
 import type { CSSProperties, RefObject } from 'react'
+import type { NotificationActionEvent } from '@/hooks/use-notification-action'
+import type { NotificationClickEvent } from '@/hooks/use-notification-clicked'
+import {
+  registerActionTypes,
+  sendNotification,
+} from '@choochmeque/tauri-plugin-notifications-api'
 import { CircleExclamation } from '@gravity-ui/icons'
 import { useEventListener } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
-import { useState } from 'react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
@@ -13,7 +20,8 @@ import { useDshStyle } from '@/hooks/use-dsh-style'
 import { useIframeMessage } from '@/hooks/use-iframe-message'
 import { useIframePost } from '@/hooks/use-iframe-post'
 import { useInvokeIframe } from '@/hooks/use-invoke-iframe'
-import { useListen } from '@/hooks/use-listen'
+import { useNotificationAction } from '@/hooks/use-notification-action'
+import { useNotificationClicked } from '@/hooks/use-notification-clicked'
 import { useSyncVisibility } from '@/hooks/use-sync-visibility'
 import { useZoomFactor } from '@/hooks/use-zoom-factor'
 import { store } from '@/store'
@@ -34,6 +42,10 @@ interface IframeBridgeMessage {
   tag?: string
   sessionId?: string | null
   requireInteraction?: boolean
+  /** 通知桥：置 true 让原生通知自己静音（提示音由帧内 `sound.play()` 播放，避免双声）。 */
+  silent?: boolean
+  /** 通知桥：插件声明的系统通知按钮（`{ action, title, … }`；`input` 系列字段透传给 Windows toast 的输入框） */
+  actions?: { action: string, title: string, input?: boolean, inputPlaceholder?: string, inputButtonTitle?: string }[]
   /** 插件异常桥 / 剪贴板图片桥：插件 id 或剪贴板请求 id */
   id?: string
   error?: string
@@ -65,6 +77,105 @@ export interface NotificationClickedPayload {
   sessionId?: string | null
   title?: string
   tag?: string
+  /** 命中的系统通知按钮 action id；点通知本体时为空。 */
+  action?: string | null
+  /** 带输入框的按钮：用户在系统通知里填的文本。 */
+  inputValue?: string | null
+}
+
+/** 插件的动作类型载荷（它的 `ActionType` 没有从 JS API 导出，这里从函数签名反推）。 */
+type ActionTypeRegistration = Parameters<typeof registerActionTypes>[0][number]
+
+/** 已注册过的按钮集合，按 action type id 索引。 */
+const registeredActionTypes = new Map<string, ActionTypeRegistration>()
+
+/** 注册表上限：实际只有「批准 / 拒绝」与「回复」两组，这里只是防止异常输入把表撑大。 */
+const ACTION_TYPE_LIMIT = 16
+
+/**
+ * 合并同一次按钮点击的重复投递的窗口（毫秒）。
+ *
+ * 一次点击会同时走「应用内 `Activated` 事件」与「进程外 COM 激活回调」两条通路，两条都
+ * 带着同一份 `arguments`，但用户输入文本往往只有其中一条有；两条到达间隔在 1ms 量级，
+ * 250ms 足够把它们并成一次投递（见 `handleNotificationAction`）。
+ */
+const ACTION_COALESCE_MS = 250
+
+/**
+ * 一组按钮对应一个 action type id，由动作 id 拼出来；同一组按钮永远映射到同一个 id。
+ *
+ * 插件的 `registerActionTypes` 是「按 id 覆盖」的（Windows 存一张 id → 动作表，macOS 的
+ * `setNotificationCategories` 更是整表替换）。复用同一个 id 会让后注册的集合顶掉先注册的：
+ * 两个会话同时挂起时，授权通知的按钮会变成提问通知的「回复」。
+ */
+function actionTypeIdFor(actions: readonly { action: string }[]): string {
+  return `dsh-notification-${actions.map(action => action.action).join('-')}`
+}
+
+/**
+ * 把当前按钮集合并入注册表，并返回**全部**已注册集合。
+ *
+ * macOS 侧 `setNotificationCategories` 整表替换，只注册当前集合会把已经发出去的通知上的
+ * 按钮抹掉；所以每次都把用过的集合一起注册回去。
+ */
+function actionTypesToRegister(current: ActionTypeRegistration): ActionTypeRegistration[] {
+  registeredActionTypes.delete(current.id)
+  registeredActionTypes.set(current.id, current)
+  while (registeredActionTypes.size > ACTION_TYPE_LIMIT) {
+    const oldest = registeredActionTypes.keys().next().value
+    if (oldest === undefined)
+      break
+    registeredActionTypes.delete(oldest)
+  }
+  return [...registeredActionTypes.values()]
+}
+
+/**
+ * 通知 id 必须是 32 位整数，这里取 tag 的稳定哈希：同一会话的同一条通知反复发送时
+ * 复用同一个 id（就地更新），而不是每次多堆一条。
+ */
+function notificationIdFor(tag: string | undefined): number {
+  let hash = 0
+  for (const char of tag ?? '')
+    hash = (hash * 31 + char.charCodeAt(0)) | 0
+  return (Math.abs(hash) % 0x7FFFFFFF) || 1
+}
+
+/** 内置提示音：壳层 `public/` 下的资源，名字与插件侧的 `BuiltinNotificationSound` 对齐。 */
+const NOTIFICATION_SOUND_FILES: ReadonlyArray<readonly [string, string]> = [
+  ['default', '/notification.wav'],
+  ['classic', '/classic.wav'],
+]
+
+/** 已读到的内置提示音（data URL）；插件在 iframe 里取不到壳层同源文件，只能这样送过去。 */
+let notificationSoundAssets: Record<string, string> | undefined
+
+function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string')
+        resolve(reader.result)
+      else
+        reject(new Error('FileReader returned a non-string result'))
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+/** 读取内置提示音并转成 data URL（读一次缓存住，除非其中任何一个读取失败）。 */
+async function loadNotificationSounds(): Promise<Record<string, string>> {
+  if (notificationSoundAssets)
+    return notificationSoundAssets
+  const entries = await Promise.all(NOTIFICATION_SOUND_FILES.map(async ([name, url]) => {
+    const response = await fetch(url)
+    if (!response.ok)
+      throw new Error(`${url}: HTTP ${response.status}`)
+    return [name, await readBlobAsDataUrl(await response.blob())] as const
+  }))
+  notificationSoundAssets = Object.fromEntries(entries)
+  return notificationSoundAssets
 }
 
 export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: IframeProps) {
@@ -81,6 +192,9 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
 
   const post = useIframePost(iframeRef)
 
+  /** 待合并的按钮动作，按「tag + actionId」索引（见 `handleNotificationAction`）。 */
+  const pendingActionsRef = useRef(new Map<string, { payload: NotificationClickedPayload, timer: ReturnType<typeof setTimeout> }>())
+
   const [, setDshStyle] = useDshStyle()
 
   // 转发 iframe 消息给 Tauri Rust 命令
@@ -96,11 +210,11 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   // 壳层快捷键（焦点在导航栏等壳层元素时；iframe 内由注入脚本经缩放桥转发）
   useEventListener('keydown', handleZoomKeyDown, { capture: true })
 
-  // 系统通知点击 → 让 iframe 聚焦对应会话
-  useListen<NotificationClickedPayload>(
-    'dsh-notification-clicked',
-    event => handleNotificationClicked(event.payload),
-  )
+  // 系统通知的点击 / 按钮动作 → 让 iframe 聚焦对应会话并回灌 onaction。
+  // 订阅细节（含「必须先订阅 onNotificationClicked，Windows 才会派发点击 / 按钮事件」）
+  // 收在 hooks 里，与 `useListen` 同一套 latest-ref + 卸载注销语义。
+  useNotificationAction(handleNotificationAction)
+  useNotificationClicked(handleNotificationClick)
 
   // iframe → 宿主：iframe 自身的桥共用一个监听器，按 `data.type` 分发
   useIframeMessage<IframeBridgeMessage>(iframeRef, (data) => {
@@ -143,6 +257,10 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       case 'dsh://style':
         setDshStyle(data)
         break
+      // 内置提示音：插件客户端在 iframe 里取不到壳层 `public/` 的同源文件，读成 data URL 送过去
+      case 'dsh://notification-sounds:request':
+        pushNotificationSounds()
+        break
       // 帧内日志：iframe 跨源、帧内 console.* 没有宿主侧通路，由注入脚本转回来后
       // 直写 desktop.frontdesk.log，随「复制运行日志」的前台日志一并提供
       case 'dsh://frame-log':
@@ -159,16 +277,72 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     setting.zoom(action)
   }
 
+  /**
+   * 把内置提示音（`public/*.wav`）读成 data URL 交给 iframe。
+   *
+   * 插件客户端跑在 iframe 里，与壳层 `public/` 不同源，直接 `new Audio('/notification.wav')`
+   * 只会 404；帧内已有用户激活且 iframe 显式 `allow="autoplay"`，播放留在帧内最稳。
+   * 读取失败只记日志：帧内会退回合成音，通知本身不受影响。
+   */
+  function pushNotificationSounds() {
+    void loadNotificationSounds()
+      .then(sounds => post({ type: 'dsh://notification-sounds', sounds }))
+      .catch(error => console.error('[notification] failed to load notification sounds:', error))
+  }
+
   function handleNativeNotification(data: IframeBridgeMessage) {
-    void invoke('show_native_notification', {
-      payload: {
-        title: data.title ?? '',
-        body: data.body ?? '',
-        tag: data.tag ?? null,
-        sessionId: data.sessionId ?? null,
-        requireInteraction: Boolean(data.requireInteraction),
-      },
-    }).catch(error => console.error('[notification] show_native_notification failed:', error))
+    const actions = Array.isArray(data.actions) ? data.actions : []
+    const hasActions = actions.length > 0
+    const title = data.title ?? ''
+    const body = data.body ?? ''
+
+    void (async () => {
+      // 后端只在 `actionTypeId` 已注册时才往通知里写按钮，所以必须先注册再发送；
+      // 每次都用插件给的本地化文案重新注册，按钮文案才能跟随界面语言。
+      // 整组按钮一起注册（授权是「批准 / 拒绝」），带输入框的按钮把 input 系列字段一并透传，
+      // Windows 靠它们生成 toast 里的文本框与提交按钮。
+      const actionTypeId = hasActions ? actionTypeIdFor(actions) : undefined
+      let actionsRegistered = false
+      if (actionTypeId) {
+        try {
+          await registerActionTypes(actionTypesToRegister({
+            id: actionTypeId,
+            actions: actions.map(action => ({
+              id: action.action,
+              title: action.title,
+              foreground: true,
+              input: action.input === true,
+              inputPlaceholder: action.inputPlaceholder,
+              inputButtonTitle: action.inputButtonTitle,
+            })),
+          }))
+          actionsRegistered = true
+        }
+        catch (error) {
+          // 注册失败不能连通知一起丢掉：Linux/FreeBSD 的 notify-rust 明确不支持动作，抛错时
+          // 退化成没有按钮的通知，用户至少还能点回对应会话。
+          console.warn('[notification] registerActionTypes failed, sending without actions:', error)
+        }
+      }
+      try {
+        await sendNotification({
+          id: notificationIdFor(data.tag),
+          title,
+          body,
+          // 帧内已经按设置播过提示音，这里让 toast 自己静音：Windows 上不静音就会额外响一次默认音。
+          silent: data.silent === true ? true : undefined,
+          actionTypeId: actionsRegistered ? actionTypeId : undefined,
+          extra: {
+            sessionId: data.sessionId ?? '',
+            title,
+            tag: data.tag ?? '',
+          },
+        })
+      }
+      catch (error) {
+        console.error('[notification] sendNotification failed:', error)
+      }
+    })()
   }
 
   function handlePluginBoot(data: IframeBridgeMessage) {
@@ -215,13 +389,115 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       .catch(error => console.error('[frame-log] log_frontend failed:', error))
   }
 
-  function handleNotificationClicked(payload: NotificationClickedPayload) {
+  /**
+   * 点通知本体：先把窗口拉回前台，再让帧内聚焦对应会话。
+   *
+   * 窗口这一步是必需的：点通知时窗口多半在后台（最小化 / 被别的窗口盖住），
+   * 只回灌 iframe 消息的话用户看不到任何变化。失败只记录日志——窗口 API 报错不该
+   * 阻断帧内的会话切换与按钮回调。
+   */
+  async function activateApplication(payload: NotificationClickedPayload) {
+    try {
+      const appWindow = getCurrentWindow()
+      if (await appWindow.isMinimized())
+        await appWindow.unminimize()
+      await appWindow.show()
+      await appWindow.setFocus()
+    }
+    catch (error) {
+      console.error('[notification] focus window failed:', error)
+    }
     post({
       type: 'dsh://focus-session',
       sessionId: payload.sessionId || undefined,
       title: payload.title || undefined,
       tag: payload.tag || undefined,
     })
+  }
+
+  /**
+   * 点击 / 按钮动作回灌给帧内的 Notification 实例：插件注册的
+   * onclick、onaction 回调只存在于 iframe 里，壳层只负责转发。
+   *
+   * 点按钮只走这里，不碰窗口也不切会话：在通知里点「批准 / 拒绝 / 回复」时用户的
+   * 视线通常还在别处，把窗口拽到前台会打断手上的事；要看结果自己点通知本体。
+   */
+  function deliverNotificationResult(payload: NotificationClickedPayload) {
+    post({
+      type: 'dsh://notification-clicked',
+      tag: payload.tag || undefined,
+      action: payload.action || undefined,
+      inputValue: payload.inputValue || undefined,
+    })
+  }
+
+  /** `onAction`：点通知本体（`actionId === 'tap'`）交给 `onNotificationClicked`，这里只管按钮。 */
+  function handleNotificationAction(event: NotificationActionEvent) {
+    const { actionId, inputValue, notification, extra: payloadExtra } = event
+    if (typeof actionId !== 'string' || actionId === '' || actionId === 'tap')
+      return
+
+    // 会话标识只能从 `extra` 取：进程外 COM 激活（点通知中心里的历史通知）拿到的
+    // `notification` 恒为 `null`，而 `extra` 是发送时写进按钮 arguments 的那份数据
+    // 原样带回来的。缺了 tag，帧内 `pendingOnClicks` 找不到实例，事件会被静默丢弃。
+    const extra = payloadExtra ?? notification?.extra
+    const payload: NotificationClickedPayload = {
+      sessionId: extra?.sessionId ?? null,
+      title: extra?.title,
+      tag: extra?.tag,
+      action: actionId,
+      inputValue: typeof inputValue === 'string' ? inputValue : null,
+    }
+
+    // 同一次点击会从两条激活通路各投一次，用户输入文本往往只挂在其中一条上：
+    // 先到的先压住，250ms 内的第二条与它合并（优先保留带输入文本的那一份），
+    // 只向帧内投递一次，避免回复内容被空的那份顶掉。
+    const key = `${payload.tag ?? ''}|${actionId}`
+    const queued = pendingActionsRef.current.get(key)
+    if (queued) {
+      clearTimeout(queued.timer)
+      pendingActionsRef.current.delete(key)
+      dispatchNotificationAction({
+        ...queued.payload,
+        ...payload,
+        inputValue: payload.inputValue || queued.payload.inputValue,
+      })
+      return
+    }
+
+    const timer = setTimeout(() => {
+      pendingActionsRef.current.delete(key)
+      dispatchNotificationAction(payload)
+    }, ACTION_COALESCE_MS)
+    pendingActionsRef.current.set(key, { payload, timer })
+  }
+
+  function dispatchNotificationAction(payload: NotificationClickedPayload) {
+    // 事件有没有真的到达壳层、有没有带上会话标识只有日志能回答：Windows 的 toast 激活
+    // 依赖插件侧回调。eslint 只允许 console.warn/error，而 console 会被 utils/logger
+    // 劫持写进前台日志（desktop.frontdesk.log），所以开发态用 warn 留痕、打包态不打扰。
+    if (import.meta.env.DEV) {
+      console.warn('[notification] action event:', payload.action, {
+        tag: payload.tag ?? null,
+        sessionId: payload.sessionId ?? null,
+        inputLength: payload.inputValue?.length ?? 0,
+      })
+    }
+    void deliverNotificationResult(payload)
+  }
+
+  /** `onNotificationClicked`：点通知本体（前台与冷启动两条路径都会走到这里）。 */
+  function handleNotificationClick(event: NotificationClickEvent) {
+    const { data } = event
+    if (import.meta.env.DEV)
+      console.warn('[notification] click event:', JSON.stringify(data ?? null))
+
+    const payload: NotificationClickedPayload = {
+      sessionId: data?.sessionId ?? null,
+      title: data?.title,
+      tag: data?.tag,
+    }
+    void activateApplication(payload).then(() => deliverNotificationResult(payload))
   }
 
   return (

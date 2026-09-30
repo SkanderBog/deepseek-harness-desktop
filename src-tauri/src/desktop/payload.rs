@@ -10,11 +10,3 @@ pub struct DownloadFinishedPayload {
     pub(crate) success: bool,
 }
 
-/// iframe 内 DSH 页面发来的原生通知请求载荷。
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NativeNotificationPayload {
-    pub(crate) title: String,
-    pub(crate) body: String,
-    pub(crate) tag: Option<String>,
-}

@@ -493,6 +493,9 @@ const TAILWINDCSS_GENERATED = `
   .gap-\\[20px\\] {
     gap: 20px;
   }
+  .gap-\\[24px\\] {
+    gap: 24px;
+  }
   .self-center {
     align-self: center;
   }
@@ -572,6 +575,10 @@ const TAILWINDCSS_GENERATED = `
   .border-\\[0\\.5px\\] {
     border-style: var(--tw-border-style);
     border-width: 0.5px;
+  }
+  .border-b-\\[0\\.5px\\] {
+    border-bottom-style: var(--tw-border-style);
+    border-bottom-width: 0.5px;
   }
   .border-dashed {
     --tw-border-style: dashed;
@@ -757,6 +764,9 @@ const TAILWINDCSS_GENERATED = `
   }
   .py-\\[14px\\] {
     padding-block: 14px;
+  }
+  .py-\\[16px\\] {
+    padding-block: 16px;
   }
   .py-\\[24px\\] {
     padding-block: 24px;
@@ -1160,6 +1170,12 @@ const TAILWINDCSS_GENERATED = `
     &::after {
       content: var(--tw-content);
       corner-shape: round;
+    }
+  }
+  .last\\:border-b-0 {
+    &:last-child {
+      border-bottom-style: var(--tw-border-style);
+      border-bottom-width: 0px;
     }
   }
   .hover\\:bg-\\[var\\(--dsw-alias-bg-layer-4\\)\\] {

@@ -20,6 +20,7 @@ import {
   openExternalUrl,
   openInExplorer,
   renameSession,
+  startWorkspaceSession,
   supportsSessionPin,
   togglePinSession,
 } from '../service/menu'
@@ -162,10 +163,10 @@ export function buildWorkspaceMenu(
 ): void {
   const workspace = target.workspace
 
-  composer.add(locale.text('newSession'), () => {
-    // 工作区投影与 workspaces 服务来自两份内核代各自的包实例，保留既有的运行时交界断言。
-    composer.workspaces.startSession?.(workspace.workspaceId as unknown as WorkspaceId)
-  })
+  composer.add(locale.text('newSession'), () => startWorkspaceSession({
+    workspaces: composer.workspaces,
+    workspaceId: workspace.workspaceId as unknown as WorkspaceId,
+  }))
   composer.add(locale.text('openInExplorer'), () => openInExplorer({ path: workspace.path }))
 
   composer.split()
