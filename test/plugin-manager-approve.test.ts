@@ -206,4 +206,31 @@ describe('plugins manager approval', () => {
       toast.mock.calls.filter(call => call[1]?.variant === 'danger' && call[1]?.onClose === undefined),
     ).toHaveLength(0)
   })
+
+  it('ignores a refusal that arrives after the user cancelled the group', async () => {
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    invoke.mockImplementation(async (command: string) => {
+      if (command !== 'install_plugin_specs')
+        return undefined
+      await gate
+      throw new Error(`PLUGIN_VERSION_INCOMPATIBLE: ${JSON.stringify(BLOCKED)}`)
+    })
+
+    const done = plugins.enqueue('install', ['b'], RUNTIME)
+    await vi.waitFor(() => expect(invoke.mock.calls.some(call => call[0] === 'install_plugin_specs')).toBe(true))
+
+    await plugins.cancel()
+    release?.()
+
+    const results = await done
+    expect(results.map(result => [result.process.name, result.ok, result.reason])).toEqual([
+      ['b', false, 'cancelled'],
+    ])
+    // 迟到的拒绝不能给已取消的进程重新挂一个没人点的授权等待，否则整条队列永久卡在 resume 上。
+    expect(plugins.pendingApprovals).toHaveLength(0)
+    expect(plugins.groups).toHaveLength(0)
+  })
 })

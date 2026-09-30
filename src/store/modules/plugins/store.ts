@@ -332,6 +332,10 @@ export const plugins = defineStore({
         return []
       }
       catch (error) {
+        // 宿主调用返回时这一组可能已经被 cancel() 结算（取消不等在途调用结束）：此时
+        // group.pending 已空。若照旧按拒绝归结，就会给已经按「已取消」结算的进程重新挂上授权
+        // 等待，而 cancel 早已返回、再没人唤醒 resume，整条队列连同后续组会永久卡死。finish 用
+        // 同一判据做幂等，这里也让归因只看仍留在组里的进程。
         const message = errorMessage(error)
         const refusal = parseBlockedRefusal(message)
         // 升级：宿主对整批逐项核验过指纹，只有被点名的才没生效。
@@ -348,6 +352,8 @@ export const plugins = defineStore({
           const known = new Set(refusal.versions.map(item => item.name))
           const blocked: PluginProcess[] = []
           targets.forEach((process) => {
+            if (!group.pending.includes(process.id))
+              return
             if (names.size > 0 && !names.has(process.name)) {
               this.finish(group.id, process, { process, ok: true })
               return
@@ -371,6 +377,8 @@ export const plugins = defineStore({
           const names = refusalNames(refusal)
           const blocked: PluginProcess[] = []
           targets.forEach((process) => {
+            if (!group.pending.includes(process.id))
+              return
             if (names.has(process.name)) {
               this.block(group, process, refusal, group.options.toast)
               blocked.push(process)
