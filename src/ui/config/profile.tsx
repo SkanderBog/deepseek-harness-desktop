@@ -18,10 +18,19 @@ import { useInvalidateOnSettingUpdated } from '@/hooks/use-invalidate-on-setting
 import { store } from '@/store'
 import { waitForHarnessStopped } from '@/store/modules/harness'
 import { ConfigBackup } from '@/ui/config/backup'
+import { normalizeProfileId } from '@/utils/profile-id'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
 
 type ProfileView = 'list' | { profile: string }
+
+/** 宿主档案错误的 `CODE` → 提示 key（错误串是 `CODE: 详情`，详见 `service::profile`） */
+const PROFILE_ERROR_KEYS: Record<string, string> = {
+  PROFILE_EMPTY_NAME: 'profiles.error_empty_name',
+  PROFILE_NAME_TOO_LONG: 'profiles.error_name_too_long',
+  PROFILE_RESERVED: 'profiles.error_reserved',
+  PROFILE_NOT_FOUND: 'profiles.error_not_found',
+}
 
 export function ConfigProfile() {
   /**
@@ -111,6 +120,37 @@ export function ConfigProfile() {
   const [cloning, setCloning] = useState<{ sourceId: string, sourceName: string } | null>(null)
   const [cloneName, setCloneName] = useState('')
 
+  /**
+   * 档案名会直接当磁盘目录名与 CLI `--profile` 参数，只能用 ASCII 字母数字（`-`/`_`/空格
+   * 分隔，其余字符被丢弃，与后端 `normalize_profile_id` 同一套规则）。归一化后为空说明
+   * 整个名字都不可用（例如纯中文）：在输入框下面就讲清楚，按钮同时置灰，不让用户提交后
+   * 才撞上一个机器错误码。
+   */
+  function profileNameHint(value: string): string | null {
+    if (value.trim() === '' || normalizeProfileId(value) !== '')
+      return null
+    return t('profiles.name_invalid_hint')
+  }
+
+  /**
+   * 宿主错误串换成用户能看懂的一句话；未知错误码照原样显示，免得把真实原因吞掉。
+   *
+   * 「名字不可用」直接用输入框那条提示文案，「已存在」复用已有的 `clone_exists`（带名字），
+   * 其余按码查表——同一件事在两个地方各写一份文案就是新的漂移源。
+   */
+  function profileErrorText(error: unknown, name: string): string {
+    const code = String(error).split(':')[0]?.trim() ?? ''
+    if (code === 'PROFILE_INVALID_NAME')
+      return t('profiles.name_invalid_hint')
+    if (code === 'PROFILE_EXISTS')
+      return t('profiles.clone_exists', { name })
+    const key = PROFILE_ERROR_KEYS[code]
+    return key ? t(key) : String(error)
+  }
+
+  const createNameHint = profileNameHint(name)
+  const cloneNameHint = profileNameHint(cloneName)
+
   /** 推导下一个未占用的自动递增名称（仅作为建议，后端才是权威） */
   function suggestCloneName(base: string): string {
     const taken = new Set(profiles.map(p => p.id))
@@ -135,6 +175,8 @@ export function ConfigProfile() {
       toast(t('profiles.clone_empty'), {})
       return
     }
+    if (cloneNameHint !== null)
+      return
     try {
       await cloneProfile(cloning.sourceId, trimmed)
       setCloning(null)
@@ -147,7 +189,7 @@ export function ConfigProfile() {
     }
     catch (err) {
       console.error('[ConfigProfile] clone failed:', err)
-      toast(t('profiles.clone_failed'), {})
+      toast(t('profiles.clone_failed'), { description: profileErrorText(err, trimmed) })
     }
   }
 
@@ -205,6 +247,8 @@ export function ConfigProfile() {
     const trimmed = name.trim()
     if (!trimmed)
       return
+    if (createNameHint !== null)
+      return
     try {
       // 创建成功后列表已刷新出新档案，UI 本身就有变化，不再弹成功 toast
       await createProfile(trimmed)
@@ -213,7 +257,7 @@ export function ConfigProfile() {
     }
     catch (err) {
       console.error('[ConfigProfile] create failed:', err)
-      toast(t('profiles.create_failed'), { description: String(err) })
+      toast(t('profiles.create_failed'), { description: profileErrorText(err, trimmed) })
     }
   }
 
@@ -403,31 +447,39 @@ export function ConfigProfile() {
           <If
             cond={!creating}
             else={(
-              <div className="flex items-center gap-2 px-1">
-                <Input
-                  autoFocus
-                  variant="secondary"
-                  className="h-8 flex-1 rounded-md"
-                  placeholder={t('profiles.name_placeholder')}
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter')
-                      commitCreate()
-                  }}
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2 px-1">
+                  <Input
+                    autoFocus
+                    variant="secondary"
+                    className="h-8 flex-1 rounded-md"
+                    placeholder={t('profiles.name_placeholder')}
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter')
+                        commitCreate()
+                    }}
+                  />
+                  <Button size="sm" variant="tertiary" className="h-8 rounded-md" onPress={cancelCreate}>
+                    {t('profiles.create_cancel')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    className="h-8 rounded-md"
+                    isDisabled={!name.trim() || createNameHint !== null || busy}
+                    onPress={commitCreate}
+                  >
+                    {t('profiles.create_confirm')}
+                  </Button>
+                </div>
+                <If
+                  cond={createNameHint !== null}
+                  then={(
+                    <p className="px-1 text-xs text-muted">{createNameHint}</p>
+                  )}
                 />
-                <Button size="sm" variant="tertiary" className="h-8 rounded-md" onPress={cancelCreate}>
-                  {t('profiles.create_cancel')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  className="h-8 rounded-md"
-                  isDisabled={!name.trim() || busy}
-                  onPress={commitCreate}
-                >
-                  {t('profiles.create_confirm')}
-                </Button>
               </div>
             )}
           >
@@ -477,6 +529,12 @@ export function ConfigProfile() {
                       commitClone()
                   }}
                 />
+                <If
+                  cond={cloneNameHint !== null}
+                  then={(
+                    <p className="mb-1 text-xs text-muted">{cloneNameHint}</p>
+                  )}
+                />
                 {cloning && (
                   <p className="text-xs text-muted">
                     {t('profiles.clone_default_hint', { name: suggestCloneName(cloning.sourceId) })}
@@ -490,7 +548,7 @@ export function ConfigProfile() {
                 <Button
                   className="rounded-md"
                   variant="primary"
-                  isDisabled={!cloneName.trim() || busy}
+                  isDisabled={!cloneName.trim() || cloneNameHint !== null || busy}
                   onPress={commitClone}
                 >
                   {busy ? t('profiles.clone_cloning') : t('profiles.clone_confirm')}
