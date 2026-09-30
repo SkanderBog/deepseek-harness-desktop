@@ -4,13 +4,11 @@ import type { InstallResult, MachineRow, MachinesNotice, MachinesStore, MachineS
 import type { MachineLifecycleState, RemoteBridge } from '../types/index'
 import { Button, Input, Modal, StateDot } from 'dsh-tauri-ui/client'
 import { useEffect, useState, useSyncExternalStore } from 'react'
+import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
+import { messageOf } from '../../shared/error'
 import { cls } from '../styles/index'
 import { errorTextOf } from '../utils/error'
 import { retrySecondsOf } from '../utils/retry'
-
-/** New-machine form defaults (ssh-ui 既有默认：SSH 22 / 远端 web 3080)。 */
-const DEFAULT_PORT = 22
-const DEFAULT_REMOTE_PORT = 3080
 
 /** The StateDot vocabulary the connection states map onto ('idle' is hollow). */
 type DotState = 'done' | 'ongoing' | 'error' | 'idle'
@@ -161,7 +159,7 @@ function EditPanel({ draft, t, secretSet, dirty, saving, onChange, onSecret, onS
           <Input className={cls.fieldInput} value={row.host} disabled={saving} onChange={event => onChange(draft.key, { host: event.target.value })} />
         </Field>
         <Field label={t('field.port')} span={3}>
-          <Input className={cls.fieldInput} type="number" value={row.port} disabled={saving} onChange={event => onChange(draft.key, { port: numberOf(event.target.value, DEFAULT_PORT) })} />
+          <Input className={cls.fieldInput} type="number" value={row.port} disabled={saving} onChange={event => onChange(draft.key, { port: numberOf(event.target.value, DEFAULT_SSH_PORT) })} />
         </Field>
         <Field label={t('field.user')} span={3}>
           <Input className={cls.fieldInput} value={row.user} disabled={saving} onChange={event => onChange(draft.key, { user: event.target.value })} />
@@ -524,30 +522,17 @@ function statusTextOf(status: MachineStatus | undefined, t: (key: SshKey) => str
     ? t('status.disconnected')
     : t(STATUS_KEY_OF[status.state])
   if (status?.state === 'reconnecting' && status.nextRetryAt !== undefined) {
-    return base + t('status.nextRetry').replace('{hint}', retryHintOf(status.nextRetryAt, Date.now(), t))
+    const seconds = retrySecondsOf(status.nextRetryAt, Date.now())
+    const hint = seconds <= 0 ? t('retry.now') : t('retry.inSeconds').replace('{seconds}', String(seconds))
+    return base + t('status.nextRetry').replace('{hint}', hint)
   }
   return base
-}
-
-/**
- * The relative-time hint for a scheduled retry: "now" once the instant is
- * due, else "in Xs". The clock is read per render; the polling loop keeps
- * reconnecting machines re-rendering, so the hint stays current.
- */
-function retryHintOf(nextRetryAt: number, nowMs: number, t: (key: SshKey) => string): string {
-  const seconds = retrySecondsOf(nextRetryAt, nowMs)
-  return seconds <= 0 ? t('retry.now') : t('retry.inSeconds').replace('{seconds}', String(seconds))
 }
 
 /** Parse a number input; non-numbers fall back to the default. */
 function numberOf(raw: string, fallback: number): number {
   const parsed = Number(raw)
   return raw !== '' && Number.isFinite(parsed) ? parsed : fallback
-}
-
-/** One operator-facing description of a bridge failure. */
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /** Render one notice: host words verbatim, store literals through the locale table. */
@@ -578,7 +563,7 @@ function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
   const [name, setName] = useState('')
   const [id, setId] = useState('')
   const [idTouched, setIdTouched] = useState(false)
-  const [port, setPort] = useState(String(DEFAULT_PORT))
+  const [port, setPort] = useState(String(DEFAULT_SSH_PORT))
   const [user, setUser] = useState('')
   const [remotePort, setRemotePort] = useState(String(DEFAULT_REMOTE_PORT))
   const [profileName, setProfileName] = useState('')
@@ -602,7 +587,7 @@ function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
       id: effectiveId,
       name: name.trim() === '' ? effectiveId : name.trim(),
       host: trimmedHost,
-      port: numberOf(port, DEFAULT_PORT),
+      port: numberOf(port, DEFAULT_SSH_PORT),
       user: user.trim(),
       hasPassword: false,
       hasPassphrase: false,

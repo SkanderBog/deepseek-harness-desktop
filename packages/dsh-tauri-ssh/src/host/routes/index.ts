@@ -19,6 +19,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { MachineSaveRow, MachineSecretWrite, MachineView, SshInstallResult, SshMachineEventsPage, SshMachineStatus, SshTestResult, SyncApplyResult, SyncPluginRef, SyncPreview, SyncSkillRef, SyncSkillRoot } from '../types/index'
 import { Buffer } from 'node:buffer'
+import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
 import { MachineId, SshError } from '../types/index'
 
 /** One request envelope. */
@@ -331,8 +332,8 @@ function saveRowOf(payload: Record<string, unknown>): MachineSaveRow {
     throw new Error('invalid row: host')
   if (typeof value.user !== 'string')
     throw new Error('invalid row: user')
-  const port = typeof value.port === 'number' ? value.port : 22
-  const remotePort = typeof value.remotePort === 'number' ? value.remotePort : 3080
+  const port = typeof value.port === 'number' ? value.port : DEFAULT_SSH_PORT
+  const remotePort = typeof value.remotePort === 'number' ? value.remotePort : DEFAULT_REMOTE_PORT
   const startCommand = typeof value.startCommand === 'string' && value.startCommand !== ''
     ? value.startCommand
     : undefined

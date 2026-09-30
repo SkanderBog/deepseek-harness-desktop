@@ -14,3 +14,6 @@ export const SSH_PLUGIN_NAME = 'dsh-tauri-ssh'
  * `ctx.webServer` (and the client half POSTs to). Loopback-only by contract.
  */
 export const SSH_API_PREFIX = '/api-ssh'
+
+export const DEFAULT_SSH_PORT = 22
+export const DEFAULT_REMOTE_PORT = 3080

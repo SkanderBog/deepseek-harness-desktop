@@ -15,6 +15,7 @@ import { get as httpGet } from 'node:http'
 import { createServer } from 'node:net'
 import process from 'node:process'
 import { Client } from 'ssh2'
+import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
 import { MachineId } from '../types/index'
 
 /** The credential-resolution face the transport needs (SshConfigResolver implements it). */
@@ -330,8 +331,8 @@ export class Ssh2Transport implements SshTransport {
         name: hop.alias,
         host: hop.alias,
         user: hop.user ?? '',
-        port: hop.port ?? 22,
-        remotePort: 3080,
+        port: hop.port ?? DEFAULT_SSH_PORT,
+        remotePort: DEFAULT_REMOTE_PORT,
       }
       const jumpAuth = await this.resolver.resolve(jumpProfile)
       if ((jumpAuth.proxyJump ?? []).length > 0)

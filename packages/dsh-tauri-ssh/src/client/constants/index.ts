@@ -30,7 +30,7 @@ export const SSH_TABS_ID = 'dsh-tauri-ssh-tabs'
 export const SETTINGS_OPEN_MESSAGE = 'dsh://settings:open'
 
 /** The /api-ssh route the host plugin mounts (same-origin POST envelope). */
-export const SSH_API_PATH = '/api-ssh'
+export { SSH_API_PREFIX as SSH_API_PATH } from '../../shared/constants'
 
 /**
  * C-BRIDGE (S5-owned): the desktop iframe invoke commands the panel talks to

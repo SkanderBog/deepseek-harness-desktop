@@ -33,8 +33,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-/** Remote root of the desktop-managed runtime (mirrors bootstrap REMOTE_ROOT). */
-const REMOTE_ROOT = '.dsh-desktop'
+import { REMOTE_ROOT } from './bootstrap'
 /** Remote directory the plugin tree is synced into (flat node_modules inside). */
 const REMOTE_PLUGINS_DIR = `${REMOTE_ROOT}/plugins`
 /** Remote marker recording the last synced tree hash. */

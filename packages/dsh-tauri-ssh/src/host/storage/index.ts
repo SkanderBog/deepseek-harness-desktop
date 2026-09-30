@@ -12,13 +12,10 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'pathe'
 import z from 'schemastery'
+import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
 import { MachineId as brandMachineId } from '../types/index'
 
-/** Default TCP port of the remote `dsh web` instance (loopback). */
-export const DEFAULT_REMOTE_PORT = 3080
-
-/** Default SSH transport port. */
-export const DEFAULT_SSH_PORT = 22
+export { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
 
 /** Default remote dsh profile name (`dsh --profile <name> web`). */
 export const DEFAULT_REMOTE_PROFILE = 'remote'

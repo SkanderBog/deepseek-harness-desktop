@@ -84,3 +84,16 @@ net: -452 lines, -4 deps possible.
 - `keep:` scheduler DTO 的接口与 readonly 约束、公开 recommendation.form 和 locale 词典；hydrate 注册仍承载生命周期，入口规范禁止把初始化请求移到 client entry。
 - `keep:` lodash 的深比较、默认值合并、形状校验及其余仍使用的方法与依赖。`Object.is` 不等价于 `isEqual`，对象展开不等价于跳过 undefined 的 `defaults`；原 -4 deps 预估不作为本次结果。
 - 验证：新增任务更新/恢复与快照顺序回归；三包 22 文件 / 203 用例连续六次乱序通过，深比较变异被测试拒绝。合并内部包装精简后，与 UI/extension 一起运行 52 文件 / 386 用例通过，限定源码别名类型检查通过，Lint 零错误。
+
+## SSH 执行复核（2026-09-30）
+
+以下结论覆盖原 SSH 建议；独立于另外三包提交。
+
+- 已执行：SSH/远端端口默认值收口至共享常量，保留 storage 的既有导出；`SSH_API_PATH` 与 `REMOTE_PLUGIN_PROFILE` 保留名称但改为同值重导出；复用 `REMOTE_ROOT` 和错误文本转换，私有 `retryHintOf` 内联。
+- `keep:` 四个 wire 解析器、路由输入/CORS/回环校验。TypeScript 泛型不校验运行时数据，host 校验不能替代客户端容错。
+- `keep:` 客户端与宿主 wire 接口并非逐字同形：除 stage 外，machineId 的品牌类型及 skill root 的开放 string/封闭 union 也不同；不收窄宽容读取契约。
+- `keep:` 本地 snapshot store 每次浅复制通知的语义，平台的 Immer store 不是直接等价替换；sync/async 原子写保持各自调度、权限和失败清理语义。
+- `keep:` `emitStatus` 生命周期注入面、事件 ring 的测试容量、已有 retry 工具和公开 `SshKey` 词典。仓内少消费者不足以删除协议或真实边界测试能力。
+- 撤回类名派生：保留现有 literal/readonly 类型需要额外类型级转换器，实际只减少少量注释行；不为审计预估引入第二套转换逻辑。
+- 验证：受影响源码 6 文件 / 170 用例五次独立乱序通过，插件同步命令另 3 用例通过；端口 22→23 的变异被新回归拒绝并已恢复。仓库和限定源码类型检查、SSH Lint 均通过。
+- 环境限制：完整 SSH unit 仍有与原始基线相同的 16 项失败（Windows/POSIX shell、路径、文件权限与缺少部署树）；现有组件套件因本地 primitives 缺少 `simple-icons` 无法收集。未构建插件、未弱化断言、未提交临时测试配置；CI 结果另行记录。

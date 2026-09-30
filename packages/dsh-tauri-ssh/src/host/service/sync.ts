@@ -20,13 +20,7 @@ import { allowlistReadCommand, allowlistWriteCommand, mergeWorkspaceAllowlist, p
 import { dshEntryProbeCommand, firstLineOf, layoutBinDir, layoutNodeBinary } from './bootstrap'
 import { shQuote } from './transport'
 
-/**
- * Fallback remote profile for plugin installs when the caller names none —
- * the same default the tunnel bootstrap serves ({@link DEFAULT_REMOTE_PROFILE}).
- * Callers that know the machine (the `/api-ssh` service) always pass the
- * machine's own profile, so plugins land where the tunnel actually looks.
- */
-export const REMOTE_PLUGIN_PROFILE = DEFAULT_REMOTE_PROFILE
+export { DEFAULT_REMOTE_PROFILE as REMOTE_PLUGIN_PROFILE } from '../storage/index'
 
 /** How many output lines an item failure carries (the operator-facing tail). */
 const FAILURE_TAIL_LINES = 5
@@ -116,7 +110,7 @@ export function installSpecOf(name: string, spec: string): string {
  * @param profileName - the remote profile to install into.
  * @returns the shell command line.
  */
-export function pluginAddCommand(dshEntry: string, target: string, profileName: string = REMOTE_PLUGIN_PROFILE): string {
+export function pluginAddCommand(dshEntry: string, target: string, profileName: string = DEFAULT_REMOTE_PROFILE): string {
   // `dsh plugin add` spawns a bare `pnpm`: the layout bin dir carries the
   // shim the connect pipeline writes (see `ensurePnpmCommand`), so prepend it
   // to PATH for this command only.
@@ -318,13 +312,13 @@ export class SyncEngine {
     const keys = parseBuildAllowKeys(output)
     if (keys.length === 0)
       return []
-    const remote = await session.exec(allowlistReadCommand(profileName ?? REMOTE_PLUGIN_PROFILE))
+    const remote = await session.exec(allowlistReadCommand(profileName ?? DEFAULT_REMOTE_PROFILE))
     const { yaml, added } = mergeWorkspaceAllowlist(
       remote.stdout,
       { allowBuilds: Object.fromEntries(keys.map(key => [key, true])), onlyBuiltDependencies: [] },
     )
     if (added.length > 0)
-      await session.exec(allowlistWriteCommand(profileName ?? REMOTE_PLUGIN_PROFILE, yaml))
+      await session.exec(allowlistWriteCommand(profileName ?? DEFAULT_REMOTE_PROFILE, yaml))
     return added
   }
 

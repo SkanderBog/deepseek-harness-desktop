@@ -11,6 +11,8 @@
 
 import type { SshKey } from '../locales/index'
 import type { MachineLifecycleState, SshMachineEvent, SyncApplyResult, SyncItemResult, SyncPreview } from '../types/index'
+import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
+import { messageOf } from '../../shared/error'
 import { SSH_API_PATH } from '../constants/index'
 import { isLifecycleState } from '../types/index'
 
@@ -153,11 +155,6 @@ export function createSnapshotStore<T>(initial: T): SnapshotStore<T> & { update:
       for (const listener of listeners) listener()
     },
   }
-}
-
-/** Operator-facing description of any failure. */
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /** Read one wire state through the C-STATE vocabulary; unknowns read as disconnected. */
@@ -344,8 +341,8 @@ export function machineRowOf(value: unknown): MachineRow | undefined {
     return undefined
   if (typeof row.user !== 'string')
     return undefined
-  const port = typeof row.port === 'number' ? row.port : 22
-  const remotePort = typeof row.remotePort === 'number' ? row.remotePort : 3080
+  const port = typeof row.port === 'number' ? row.port : DEFAULT_SSH_PORT
+  const remotePort = typeof row.remotePort === 'number' ? row.remotePort : DEFAULT_REMOTE_PORT
   const startCommand = typeof row.startCommand === 'string' && row.startCommand !== ''
     ? row.startCommand
     : undefined
