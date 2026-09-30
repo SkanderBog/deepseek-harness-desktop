@@ -26,11 +26,12 @@ fn create_symlink(target: &Path, dst: &Path) -> std::io::Result<()> {
         .or_else(|_| std::os::windows::fs::symlink_file(target, dst))
 }
 
-/// 需要从归档中排除的相对路径组件（前缀匹配）。
-const EXCLUDED_NAMES: &[&str] = &[".backups", ".harness.pid", ".plugin-backups"];
-
-/// 需要从归档中排除的相对路径（精确匹配）。
-const EXCLUDED_PATHS: &[&str] = &["node_modules/.modules.yaml"];
+const EXCLUDED_NAMES: &[&str] = &[
+    ".backups",
+    ".harness.pid",
+    ".plugin-backups",
+    "node_modules",
+];
 
 /// 凭据文件名。
 const CREDENTIALS_FILE: &str = ".credentials.yaml";
@@ -39,6 +40,7 @@ const CREDENTIALS_FILE: &str = ".credentials.yaml";
 ///
 /// - `.backups/` 自身必须排除（防递归包含）。
 /// - `.harness.pid` 等运行时产物必须排除。
+/// - `node_modules/` 是可重建的运行时依赖，始终排除。
 /// - `.credentials.yaml` 按 `include_credentials` 决定。
 fn is_excluded(rel: &Path, include_credentials: bool) -> bool {
     if let Some(name) = rel.file_name().and_then(|n| n.to_str()) {
@@ -48,10 +50,6 @@ fn is_excluded(rel: &Path, include_credentials: bool) -> bool {
         if name == CREDENTIALS_FILE && !include_credentials {
             return true;
         }
-    }
-    let rel_str = rel.to_string_lossy().replace('\\', "/");
-    if EXCLUDED_PATHS.iter().any(|p| rel_str == *p) {
-        return true;
     }
     false
 }
@@ -128,8 +126,8 @@ fn append_dir_filtered(
 /// 创建 tar.zst 归档。
 ///
 /// 把 `source` 目录打包到 `dest` 文件。`include_credentials` 控制是否包含
-/// `.credentials.yaml`。始终排除 `.backups/`、`.harness.pid`、
-/// `node_modules/.modules.yaml`。使用 zstd 多线程压缩（级别 0 = 默认 3，
+/// `.credentials.yaml`。始终排除 `.backups/`、`.plugin-backups/`、`.harness.pid`、
+/// `node_modules/`。使用 zstd 多线程压缩（级别 0 = 默认 3，
 /// 启用 multithread 加速）。
 pub fn create_archive(source: &Path, dest: &Path, include_credentials: bool) -> Result<(), String> {
     let file = fs::File::create(dest).map_err(|e| format!("BACKUP_ARCHIVE_CREATE: {e}"))?;
@@ -522,29 +520,90 @@ mod tests {
     }
 
     #[test]
-    fn excludes_pid_and_modules_yaml() {
-        let source = setup_source_dir(&[
+    fn excludes_runtime_dependencies_and_restores_configuration() {
+        let config = [
+            ("package.json", "{\"dependencies\":{\"example\":\"1.0.0\"}}"),
+            ("pnpm-lock.yaml", "lockfileVersion: '9.0'"),
+            ("pnpm-workspace.yaml", "packages: ['plugins/*']"),
+            (".npmrc", "confirmModulesPurge=false"),
+            ("cordis.patch.yml", "plugins: {}"),
+            ("plugins/local/package.json", "{\"name\":\"local\"}"),
+            ("plugins/local/index.js", "export default {}"),
+            ("node_modules-config.json", "{}"),
+        ];
+        let mut files = config.to_vec();
+        files.extend([
             (".harness.pid", "12345"),
             ("node_modules/.modules.yaml", "modules: {}"),
-            ("real.txt", "keep"),
+            (
+                "node_modules/.pnpm/example@1.0.0/node_modules/example/index.js",
+                "runtime",
+            ),
+            (
+                "plugins/local/node_modules/example/index.js",
+                "nested runtime",
+            ),
         ]);
+        let source = setup_source_dir(&files);
         let dest = archive_dest(&source);
         create_archive(&source, &dest, false).unwrap();
         let entries = list_archive_entries(&dest).unwrap();
         assert!(
-            entries.iter().all(|e| !e.contains(".harness.pid")),
-            ".harness.pid 应被排除"
+            entries
+                .iter()
+                .all(|entry| !Path::new(entry).components().any(|component| {
+                    component.as_os_str() == "node_modules"
+                        || component.as_os_str() == ".harness.pid"
+                })),
+            "运行时依赖和 PID 应被排除，实际条目: {entries:?}"
         );
-        assert!(
-            entries.iter().all(|e| !e.contains(".modules.yaml")),
-            "node_modules/.modules.yaml 应被排除"
-        );
-        assert!(
-            entries.iter().any(|e| e.contains("real.txt")),
-            "real.txt 应存在"
-        );
+        let restore_dir = source.join("restored");
+        extract_archive(&dest, &restore_dir).unwrap();
+        for (path, content) in config {
+            assert_eq!(
+                fs::read_to_string(restore_dir.join(path)).unwrap(),
+                content,
+                "{path}"
+            );
+        }
+        assert!(!restore_dir.join("node_modules").exists());
+        assert!(!restore_dir.join("plugins/local/node_modules").exists());
         let _ = fs::remove_dir_all(&source);
         let _ = fs::remove_file(&dest);
+    }
+
+    #[test]
+    fn excludes_linked_node_modules_before_reading_target() {
+        let source = setup_source_dir(&[("config.yaml", "keep")]);
+        let target = setup_source_dir(&[("example/index.js", "runtime")]);
+        let link = source.join("node_modules");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let created = std::process::Command::new("cmd")
+                .arg("/C")
+                .raw_arg(format!(
+                    "mklink /J \"{}\" \"{}\"",
+                    link.display(),
+                    target.display()
+                ))
+                .creation_flags(0x08000000)
+                .status()
+                .unwrap();
+            assert!(created.success(), "目录联接创建应成功");
+        }
+        let dest = archive_dest(&source);
+        create_archive(&source, &dest, false).unwrap();
+        assert_eq!(list_archive_entries(&dest).unwrap(), ["config.yaml"]);
+        fs::remove_dir_all(&source).unwrap();
+        assert_eq!(
+            fs::read_to_string(target.join("example/index.js")).unwrap(),
+            "runtime"
+        );
+        fs::remove_dir_all(&target).unwrap();
+        fs::remove_file(&dest).unwrap();
     }
 
     /// 多线程压缩回归：archive 创建后能用 extract_archive 完整还原内容。
