@@ -710,6 +710,25 @@ fn write_registry_string(key: HKEY, name: Option<&str>, value: &str) -> windows:
     }
 }
 
+/// Vendored patch: strip the `\\?\` verbatim prefix so `IconUri` is a plain
+/// `C:\…` path.
+///
+/// Tauri resolves `BaseDirectory::Resource` through
+/// `tauri_utils::platform::current_exe`, which canonicalizes the executable path,
+/// and Windows canonicalization returns the verbatim form. The toast platform
+/// silently ignores an `IconUri` in that form — the notification renders with no
+/// app logo — while the identical path without the prefix works, spaces included.
+fn plain_icon_path(path: &std::path::Path) -> std::borrow::Cow<'_, str> {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        std::borrow::Cow::Owned(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        std::borrow::Cow::Owned(rest.to_owned())
+    } else {
+        text
+    }
+}
+
 /// Vendored patch: register the AUMID an unpackaged build needs for toast
 /// activation.
 ///
@@ -756,7 +775,7 @@ fn register_unpackaged_app_id(
     }
     let result = write_registry_string(aumid_key, Some("DisplayName"), display_name)
         .and_then(|()| match icon_path {
-            Some(path) => write_registry_string(aumid_key, Some("IconUri"), &path.to_string_lossy()),
+            Some(path) => write_registry_string(aumid_key, Some("IconUri"), &plain_icon_path(path)),
             None => Ok(()),
         })
         .and_then(|()| {
@@ -1585,6 +1604,34 @@ mod tests {
                 PermissionState::Prompt
             );
         }
+    }
+
+    #[test]
+    fn test_plain_icon_path_strips_verbatim_prefix() {
+        assert_eq!(
+            plain_icon_path(std::path::Path::new(r"\\?\C:\app\icons\32x32.png")),
+            r"C:\app\icons\32x32.png"
+        );
+        assert_eq!(
+            plain_icon_path(std::path::Path::new(r"\\?\D:\a b\icons\32x32.png")),
+            r"D:\a b\icons\32x32.png"
+        );
+    }
+
+    #[test]
+    fn test_plain_icon_path_maps_verbatim_unc_prefix() {
+        assert_eq!(
+            plain_icon_path(std::path::Path::new(r"\\?\UNC\server\share\32x32.png")),
+            r"\\server\share\32x32.png"
+        );
+    }
+
+    #[test]
+    fn test_plain_icon_path_keeps_plain_path_unchanged() {
+        assert_eq!(
+            plain_icon_path(std::path::Path::new(r"C:\app\icons\32x32.png")),
+            r"C:\app\icons\32x32.png"
+        );
     }
 
     // ==================== Time Conversion Tests ====================

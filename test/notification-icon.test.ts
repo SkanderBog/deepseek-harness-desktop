@@ -14,4 +14,15 @@ describe('windows notification app identity icon', () => {
     expect(icon.readUInt32BE(16)).toBe(32)
     expect(icon.readUInt32BE(20)).toBe(32)
   })
+
+  it('writes a plain IconUri because the verbatim form is ignored by the toast platform', () => {
+    const source = readFileSync(
+      new URL('vendor/tauri-plugin-notifications/src/windows.rs', tauriRoot),
+      'utf8',
+    )
+    expect(source).toContain('Some("IconUri"), &plain_icon_path(path)')
+    expect(source).not.toContain('Some("IconUri"), &path.to_string_lossy()')
+    expect(source).toContain(String.raw`strip_prefix(r"\\?\")`)
+    expect(source).toContain(String.raw`strip_prefix(r"\\?\UNC\")`)
+  })
 })

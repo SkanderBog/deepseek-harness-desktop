@@ -89,6 +89,12 @@ twice.
     the toast header icon from an EXE. The resource is explicitly included in
     `bundle.resources`. Best-effort: failures are logged and the in-process path
     still works while the app is running.
+  - `plain_icon_path()` — Tauri resolves `BaseDirectory::Resource` through
+    `tauri_utils::platform::current_exe`, which canonicalizes the executable, and Windows
+    canonicalization hands back the `\\?\` verbatim form. The toast platform silently ignores
+    an `IconUri` in that form and renders the notification with no app logo, so the prefix is
+    stripped (verbatim UNC mapped back to `\\server\share`) before the value is written.
+    Without this, `iconPath` is configured correctly and still has no visible effect.
   - `spawn_toast_activator()` — register `ToastActivatorFactory` on a dedicated
     single-threaded-apartment thread that then blocks in `GetMessageW` /
     `TranslateMessage` / `DispatchMessageW` for the life of the process, and is registered
