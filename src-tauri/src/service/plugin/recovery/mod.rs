@@ -24,6 +24,7 @@ use extract::{
     classify_reason, extract_duplicate_loader_entry, extract_plugin_refs, extract_slot_conflict,
 };
 use ownership::resolve_recovery_plugins;
+pub(crate) use uninstall::{patch_entry_targets, remove_bundle};
 use uninstall::{remove_plugin_dir, remove_plugin_from_manifest, strip_cordis_patch_for};
 
 // plugin 兄弟模块的再导出：子模块经 `super::` 统一从这里取。
@@ -46,7 +47,7 @@ pub(crate) const RECOVERY_REQUIRED_EVENT: &str = "plugin-recovery-required";
 ///
 /// `@deepseek-ai/dsh-base` / `@deepseek-ai/dsh-web-app` 等核心包都被
 /// `@deepseek-ai/` 前缀覆盖，无需逐个点名。
-fn is_core_package(name: &str) -> bool {
+pub(crate) fn is_core_package(name: &str) -> bool {
     name.starts_with("@deepseek-ai/")
 }
 
@@ -199,6 +200,22 @@ pub fn uninstall(app_handle: &AppHandle, id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn core_package_predicate_preserves_exact_prefix_boundary() {
+        for (name, expected) in [
+            ("@deepseek-ai/pkg", true),
+            ("@deepseek-ai/", true),
+            ("@deepseek-ai", false),
+            ("@deepseek-ai-extra/pkg", false),
+            (" @deepseek-ai/pkg", false),
+            ("@Deepseek-ai/pkg", false),
+            ("dshmarket", false),
+            ("", false),
+        ] {
+            assert_eq!(is_core_package(name), expected, "{name}");
+        }
+    }
 
     #[test]
     fn package_name_validation() {

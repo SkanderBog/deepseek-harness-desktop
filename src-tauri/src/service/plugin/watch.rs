@@ -109,7 +109,7 @@ fn plugin_dir(profile: &Path, id: &str) -> PathBuf {
 
 /// 规范化仓库地址，便于系统浏览器直接打开：
 /// `git+https://...` / `git://...` → `https://...`，去掉末尾 `.git`
-fn normalize_repo_url(url: &str) -> String {
+pub(crate) fn normalize_repo_url(url: &str) -> String {
     let mut normalized = url.trim().to_string();
     if let Some(rest) = normalized.strip_prefix("git+") {
         normalized = rest.to_string();
@@ -256,16 +256,7 @@ pub fn list(app_handle: &AppHandle) -> Vec<DshPlugin> {
 /// 同时把监控指纹同步到当前状态，避免紧接着的下一次轮询重复推送同一列表。
 pub fn force_emit(app_handle: &AppHandle) {
     let fp = fingerprint(app_handle);
-    let mut state = STATE
-        .get_or_init(|| {
-            Mutex::new(WatchState {
-                last_fp: None,
-                last_emit: None,
-                pending_fp: None,
-            })
-        })
-        .lock()
-        .unwrap();
+    let mut state = STATE.get_or_init(Mutex::default).lock().unwrap();
     state.pending_fp = None;
     state.last_fp = fp;
     drop(state);
@@ -303,6 +294,7 @@ fn fingerprint(app_handle: &AppHandle) -> Option<String> {
 }
 
 /// 监控状态：指纹 + 防抖窗口（仅 check_and_emit 单线程轮询访问）
+#[derive(Default)]
 struct WatchState {
     /// 上次已推送的指纹（内容一致则跳过）
     last_fp: Option<String>,
@@ -318,16 +310,7 @@ static STATE: OnceLock<Mutex<WatchState>> = OnceLock::new();
 /// 重新解析插件列表并推送 `dsh-plugins-updated` 事件。
 pub fn check_and_emit(app_handle: &AppHandle) {
     let fp = fingerprint(app_handle);
-    let mut state = STATE
-        .get_or_init(|| {
-            Mutex::new(WatchState {
-                last_fp: None,
-                last_emit: None,
-                pending_fp: None,
-            })
-        })
-        .lock()
-        .unwrap();
+    let mut state = STATE.get_or_init(Mutex::default).lock().unwrap();
 
     if state.last_fp.as_deref() == fp.as_deref() {
         return;
@@ -411,6 +394,38 @@ mod tests {
             package: None,
             internal: false,
         }]
+    }
+
+    #[test]
+    fn watch_state_default_starts_without_fingerprints_or_debounce() {
+        let state = Mutex::<WatchState>::default();
+        let state = state.lock().unwrap();
+        assert_eq!(state.last_fp, None);
+        assert_eq!(state.last_emit, None);
+        assert_eq!(state.pending_fp, None);
+    }
+
+    #[test]
+    fn repo_url_normalization_preserves_existing_boundaries() {
+        for (input, expected) in [
+            ("  git+git://example/repo.git  ", "https://example/repo"),
+            ("git+https://example/repo.git", "https://example/repo"),
+            ("git://example/repo.git", "https://example/repo"),
+            ("https://example/repo.git/", "https://example/repo.git/"),
+            (
+                "https://example/repo.git?x=1",
+                "https://example/repo.git?x=1",
+            ),
+            ("git+ssh://example/repo.git", "ssh://example/repo"),
+            (
+                "git+git+https://example/repo.git",
+                "git+https://example/repo",
+            ),
+            ("Git://example/repo.git", "Git://example/repo"),
+            ("  ", ""),
+        ] {
+            assert_eq!(normalize_repo_url(input), expected, "{input}");
+        }
     }
 
     #[test]

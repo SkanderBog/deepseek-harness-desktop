@@ -130,21 +130,6 @@ fn dev_plugins_root() -> PathBuf {
 }
 
 #[cfg(debug_assertions)]
-fn normalize_dev_repo_url(value: &str) -> String {
-    let mut url = value.trim().to_string();
-    if let Some(rest) = url.strip_prefix("git+") {
-        url = rest.to_string();
-    }
-    if let Some(rest) = url.strip_prefix("git://") {
-        url = format!("https://{rest}");
-    }
-    if let Some(rest) = url.strip_suffix(".git") {
-        url = rest.to_string();
-    }
-    url
-}
-
-#[cfg(debug_assertions)]
 fn dev_repo_url(manifest: &DevPluginPackageJson) -> String {
     let repository = manifest.repository.as_ref().and_then(|repository| {
         repository
@@ -153,7 +138,7 @@ fn dev_repo_url(manifest: &DevPluginPackageJson) -> String {
     });
     repository
         .or(manifest.homepage.as_deref())
-        .map(normalize_dev_repo_url)
+        .map(super::watch::normalize_repo_url)
         .unwrap_or_default()
 }
 
@@ -1035,6 +1020,30 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
         std::fs::create_dir_all(&root).expect("create temp dev root");
         root
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn dev_repo_url_keeps_repository_precedence_and_homepage_fallback() {
+        for (json, expected) in [
+            (
+                r#"{"repository":" git+git://example/repo.git ","homepage":"https://fallback"}"#,
+                "https://example/repo",
+            ),
+            (
+                r#"{"repository":{"url":"git://example/object.git"}}"#,
+                "https://example/object",
+            ),
+            (
+                r#"{"repository":{"url":42},"homepage":"git+https://example/home.git"}"#,
+                "https://example/home",
+            ),
+            (r#"{"repository":"","homepage":"https://fallback"}"#, ""),
+            (r#"{}"#, ""),
+        ] {
+            let manifest = serde_json::from_str(json).unwrap();
+            assert_eq!(dev_repo_url(&manifest), expected, "{json}");
+        }
     }
 
     #[cfg(debug_assertions)]

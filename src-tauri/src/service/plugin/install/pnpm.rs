@@ -420,12 +420,7 @@ fn monitor_probe_wait_task(
             }
             Err(error) => {
                 log::error!("pnpm version probe cleanup wait task failed: {error}");
-                wait_for_probe_cleanup_with(
-                    || !super::super::process::plugin_process_has_exited(pid),
-                    PNPM_PROBE_LIVENESS_INTERVAL,
-                )
-                .await;
-                super::super::process::release_process_cleanup(owner, pid_guard, process_guard);
+                await_exit_then_release(owner, pid, pid_guard, process_guard).await;
             }
         }
     });
@@ -440,14 +435,26 @@ fn monitor_orphaned_probe_pid(
 ) {
     super::super::process::mark_process_cleanup_failed(owner, reason);
     super::super::cancel::terminate_pid_tree(pid);
-    tauri::async_runtime::spawn(async move {
-        wait_for_probe_cleanup_with(
-            || !super::super::process::plugin_process_has_exited(pid),
-            PNPM_PROBE_LIVENESS_INTERVAL,
-        )
-        .await;
-        super::super::process::release_process_cleanup(owner, pid_guard, process_guard);
-    });
+    tauri::async_runtime::spawn(await_exit_then_release(
+        owner,
+        pid,
+        pid_guard,
+        process_guard,
+    ));
+}
+
+async fn await_exit_then_release(
+    owner: ProcessOwner,
+    pid: u32,
+    pid_guard: PidGuard,
+    process_guard: tokio::sync::OwnedMutexGuard<()>,
+) {
+    wait_for_probe_cleanup_with(
+        || !super::super::process::plugin_process_has_exited(pid),
+        PNPM_PROBE_LIVENESS_INTERVAL,
+    )
+    .await;
+    super::super::process::release_process_cleanup(owner, pid_guard, process_guard);
 }
 
 async fn wait_for_probe_cleanup(pending: &mut ProbeCleanupPending) {
@@ -927,6 +934,89 @@ mod tests {
         )
         .await;
         assert!(pending.is_err());
+    }
+
+    #[tokio::test]
+    async fn exited_probe_releases_its_pid_and_process_guard() {
+        #[cfg(windows)]
+        let mut child = {
+            use std::os::windows::process::CommandExt;
+            std::process::Command::new("cmd.exe")
+                .creation_flags(0x08000000)
+                .args(["/D", "/C", "exit 0"])
+                .spawn()
+                .unwrap()
+        };
+        #[cfg(not(windows))]
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        assert!(child.wait().unwrap().success());
+        let owner = super::super::super::process::new_process_owner();
+        let pid_guard = PidGuard::set(owner, pid);
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let process_guard = lock.clone().lock_owned().await;
+        assert!(lock.try_lock().is_err());
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            await_exit_then_release(owner, pid, pid_guard, process_guard),
+        )
+        .await
+        .unwrap();
+        assert_eq!(super::super::super::process::active_plugin_pid(owner), None);
+        assert!(lock.try_lock().is_ok());
+    }
+
+    #[tokio::test]
+    async fn live_probe_retains_its_pid_and_process_guard_until_exit() {
+        #[cfg(windows)]
+        let mut command = {
+            use std::os::windows::process::CommandExt;
+            let mut command = std::process::Command::new("cmd.exe");
+            command
+                .creation_flags(0x08000000)
+                .args(["/D", "/C", "set /p token="]);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = std::process::Command::new("sh");
+            command.args(["-c", "read -r token"]);
+            command
+        };
+        let mut child = command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let owner = super::super::super::process::new_process_owner();
+        let pid_guard = PidGuard::set(owner, pid);
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let process_guard = lock.clone().lock_owned().await;
+        let release = await_exit_then_release(owner, pid, pid_guard, process_guard);
+        tokio::pin!(release);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut release)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            super::super::super::process::active_plugin_pid(owner),
+            Some(pid)
+        );
+        assert!(lock.try_lock().is_err());
+        use std::io::Write;
+        child.stdin.take().unwrap().write_all(b"done\n").unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), &mut release)
+            .await
+            .unwrap();
+        let _ = child.wait();
+        assert_eq!(super::super::super::process::active_plugin_pid(owner), None);
+        assert!(lock.try_lock().is_ok());
     }
 
     struct BrokenPipeReader;

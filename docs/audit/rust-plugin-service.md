@@ -79,3 +79,14 @@ Over-engineering only。正确性 / 安全 / 性能不在本报告范围。所�
 - `DisabledEntry.reason` 与 `SnapshotManifest.patches` 的删除不需要数据迁移：serde 默认忽略未知键，旧 JSON / 旧归档照常反序列化。
 
 ## net: -508 lines, -0 deps possible.
+
+## 执行复核（2026-10-01）
+
+- **已实施**：共享 `drain_captured`、上限指数退避、core 包保护谓词、补丁条目匹配、manifest bundle 移除、悬空 insert 判定、watch 默认状态、git URL 归一、重复 bundle 正则与 pnpm 退出后释放 guard 的步骤；hex nibble 改用标准库。均复用现有模块，不新增依赖。
+- **进程边界保留**：process 的 ANSI 行解码、EOF 补换行、事件先于捕获和读错日志，与 verify 的整管 UTF-8-lossy 捕获/读错丢弃不同；owner、取消、等待和 Windows 修复宽限也不同。仅共享逐字相同的取回缓冲区操作，不合并 spawn/drain/wait。
+- **配置边界保留**：snapshot upsert 保留已有重复 bundle，materialize 会去重并处理无效节点，不能直接合并；snapshot 原子写支持归档流式生成，manifest/patch 的持久化、临时文件、替换失败与清理策略不同，不改为字节数组层。Windows WRITE_THROUGH 不等同文件 sync_all，保留原替换实现。
+- **迁移与性能保留**：未到 v1 版本边界，allowlist 损坏旧 YAML 修复、legacy 布局回退及删除失败注入保留。ensure receipt 的配置指纹及 30 秒窗口保留，避免重复执行非纯 no-op 的安装/验证/文件副作用。
+- **协议保留**：DisabledEntry.reason 和 SnapshotManifest.patches 是序列化输出字段，不以本仓无读者为理由删除。pnpm 探测错误分类包装仍钉住日志/返回协议；ensure 取消与超时路径的原清理顺序不改。
+- **其他不实施**：watch 的强类型元信息拒绝无效字段，ownership 的 Value 解析容忍无关字段，不能并成一个 schema；时间戳格式及 fallback 不同，time 依赖未启用 macros，不为小幅精简增加 feature 或新中间层。
+- **兼容细节**：disable 剥离仍只接受 mapping，recovery 的 scalar 支持不扩大到 disable；bundle 移除必须先执行，不能被 dependencies 已修改的短路跳过；debug gating、空 repository 优先级、正则分类顺序、移位退避边界、锁中毒时返回空缓冲区及子进程退出前 guard 生命周期保留。
+- **验证**：新增真实隔离目录、子进程及纯函数边界回归；`cargo test --all-features --locked` 全量 772 项通过，plugin 回归五轮独立乱序（4101/4202/4303/4404/4505）各 319 项通过。将退出等待谓词变为立即完成的变异被 live-probe guard 用例捕获（提前释放断言失败），恢复后全量和五轮均通过。全仓 cargo fmt 检出既有范围外格式差异，不格式化无关文件；修改文件 rustfmt 检查通过。未执行本地插件构建或修改用户数据。
