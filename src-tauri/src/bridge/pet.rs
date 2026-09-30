@@ -306,12 +306,7 @@ pub fn push_pet_session(app: AppHandle, action: String, session: Value) -> Resul
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .ok_or_else(|| "PET_SESSION_ID_INVALID: raw session must include id".to_string())?;
-    let event = match action {
-        "create" => "session:create",
-        "update" => "session:update",
-        "remove" => "session:remove",
-        _ => unreachable!("session action was validated above"),
-    };
+    let event = session_event_of(action).expect("session action was validated above");
     app.emit_to(pet_window::PET_WINDOW_LABEL, event, session)
         .map_err(|error| format!("PET_SESSION_PUSH_FAILED: failed to emit session {id}: {error}"))
 }
@@ -442,7 +437,7 @@ pub fn pet_stream_wanted(app: &AppHandle) -> bool {
         &config::get_store_dat_setting(app),
         &default_active_pet(app),
     );
-    status.enabled && status.visible
+    status.enabled
 }
 
 /// 断线重连日志的重记间隔：状态持续不变时最多这么久重记一次。

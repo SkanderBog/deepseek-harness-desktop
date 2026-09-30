@@ -156,8 +156,7 @@ impl SizeRotatingWriter {
             }
         }
     }
-}
-impl SizeRotatingWriter {
+
     /// 供 `log_frontend` 以 `&self` 追加写入（带轮转），避免 `&mut` 约束
     fn append_bytes(&self, buf: &[u8]) -> io::Result<()> {
         let _ = self.ensure_file();
@@ -173,11 +172,8 @@ impl SizeRotatingWriter {
         self.rotate_if_needed();
         Ok(())
     }
-}
 
-impl Write for SizeRotatingWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.ensure_file().ok();
+    fn write_and_rotate(&self, buf: &[u8]) -> io::Result<usize> {
         let mut guard = self.file.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(f) = guard.as_mut() {
             let n = f.write(buf)?;
@@ -189,13 +185,24 @@ impl Write for SizeRotatingWriter {
             Ok(buf.len())
         }
     }
-    fn flush(&mut self) -> io::Result<()> {
+    fn flush_file(&self) -> io::Result<()> {
         let mut guard = self.file.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(f) = guard.as_mut() {
             f.flush()
         } else {
             Ok(())
         }
+    }
+}
+
+impl Write for SizeRotatingWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let _ = self.ensure_file();
+        self.write_and_rotate(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flush_file()
     }
 }
 
@@ -213,68 +220,11 @@ struct SizeRotatingWriterGuard<'a> {
 
 impl<'a> Write for SizeRotatingWriterGuard<'a> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut guard = self.parent.file.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(f) = guard.as_mut() {
-            let n = f.write(buf)?;
-            let _ = f.flush();
-            drop(guard);
-            self.parent.rotate_if_needed();
-            Ok(n)
-        } else {
-            Ok(buf.len())
-        }
+        self.parent.write_and_rotate(buf)
     }
-    fn flush(&mut self) -> io::Result<()> {
-        let mut guard = self.parent.file.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(f) = guard.as_mut() {
-            f.flush()
-        } else {
-            Ok(())
-        }
-    }
-}
 
-#[allow(dead_code)]
-struct SharedRotatingWriter(Arc<SizeRotatingWriter>);
-impl Write for SharedRotatingWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut guard = self.0.file.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(f) = guard.as_mut() {
-            let n = f.write(buf)?;
-            let _ = f.flush();
-            drop(guard);
-            self.0.rotate_if_needed();
-            Ok(n)
-        } else {
-            drop(guard);
-            let _ = self.0.ensure_file();
-            let mut guard = self.0.file.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(f) = guard.as_mut() {
-                let n = f.write(buf)?;
-                let _ = f.flush();
-                drop(guard);
-                self.0.rotate_if_needed();
-                Ok(n)
-            } else {
-                Ok(buf.len())
-            }
-        }
-    }
     fn flush(&mut self) -> io::Result<()> {
-        let mut guard = self.0.file.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(f) = guard.as_mut() {
-            f.flush()
-        } else {
-            Ok(())
-        }
-    }
-}
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SharedRotatingWriter {
-    type Writer = SizeRotatingWriterGuard<'a>;
-    fn make_writer(&'a self) -> Self::Writer {
-        let _ = self.0.ensure_file();
-        SizeRotatingWriterGuard { parent: &self.0 }
+        self.parent.flush_file()
     }
 }
 
@@ -313,16 +263,9 @@ pub fn init() {
         )
         .unwrap(),
     );
-    let file_timer = OffsetTime::new(
-        time::UtcOffset::UTC,
-        time::format_description::parse_borrowed::<2>(
-            "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]Z",
-        )
-        .unwrap(),
-    );
     let stdout_layer = fmt::layer()
         .with_writer(std::io::stdout)
-        .with_timer(timer)
+        .with_timer(timer.clone())
         .with_target(true)
         .with_ansi(true)
         .with_level(true);
@@ -333,7 +276,7 @@ pub fn init() {
         // 避免前端日志及其多行堆栈把后端日志挤没（复制运行日志时更清晰）。
         let file_layer = fmt::layer()
             .with_writer(nb)
-            .with_timer(file_timer)
+            .with_timer(timer)
             .with_target(true)
             .with_ansi(false)
             .with_level(true)
@@ -429,6 +372,118 @@ pub fn log_frontend(level: FrontendLevel, target: &str, message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    struct TempLogDir(PathBuf);
+
+    impl TempLogDir {
+        fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "dsh-logger-{}-{nonce}-{sequence}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempLogDir {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn rotating_writer_keeps_exact_limit_and_reopens_after_overflow() {
+        for append in [false, true] {
+            let dir = TempLogDir::new();
+            let path = dir.0.join("desktop.log");
+            std::fs::write(&path, b"ab").unwrap();
+            let mut writer = SizeRotatingWriter::new(path.clone(), 4, 3);
+            if append {
+                writer.append_bytes(b"cd").unwrap();
+            } else {
+                writer.write_all(b"cd").unwrap();
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), b"abcd");
+            assert!(!backup_path(&path, 1).exists());
+            if append {
+                writer.append_bytes(b"e").unwrap();
+            } else {
+                assert_eq!(writer.write(b"e").unwrap(), 1);
+            }
+            assert!(!path.exists());
+            assert_eq!(std::fs::read(backup_path(&path, 1)).unwrap(), b"abcde");
+            if append {
+                writer.append_bytes(b"new").unwrap();
+            } else {
+                writer.write_all(b"new").unwrap();
+                writer.flush().unwrap();
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), b"new");
+            assert_eq!(std::fs::read(backup_path(&path, 1)).unwrap(), b"abcde");
+        }
+    }
+
+    #[test]
+    fn rotating_writer_retains_only_three_newest_backups() {
+        let dir = TempLogDir::new();
+        let path = dir.0.join("desktop.log");
+        let writer = SizeRotatingWriter::new(path.clone(), 1, 3);
+        for bytes in [b"aa", b"bb", b"cc", b"dd"] {
+            writer.append_bytes(bytes).unwrap();
+        }
+        assert!(!path.exists());
+        assert_eq!(std::fs::read(backup_path(&path, 1)).unwrap(), b"dd");
+        assert_eq!(std::fs::read(backup_path(&path, 2)).unwrap(), b"cc");
+        assert_eq!(std::fs::read(backup_path(&path, 3)).unwrap(), b"bb");
+        assert!(!backup_path(&path, 4).exists());
+    }
+
+    #[test]
+    fn rotating_writer_guard_reopens_only_when_new_guard_is_created() {
+        let dir = TempLogDir::new();
+        let path = dir.0.join("desktop.log");
+        let writer = SizeRotatingWriter::new(path.clone(), 1, 3);
+        let mut guard = writer.make_writer();
+        assert_eq!(guard.write(b"ab").unwrap(), 2);
+        assert_eq!(guard.write(b"ignored").unwrap(), 7);
+        guard.flush().unwrap();
+        assert!(!path.exists());
+        assert_eq!(std::fs::read(backup_path(&path, 1)).unwrap(), b"ab");
+        let mut next_guard = writer.make_writer();
+        assert_eq!(next_guard.write(b"c").unwrap(), 1);
+        next_guard.flush().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"c");
+    }
+
+    #[test]
+    fn rotating_writer_silently_drops_failed_opens_and_retries_next_write() {
+        let dir = TempLogDir::new();
+        let blocker = dir.0.join("blocked");
+        std::fs::write(&blocker, b"file").unwrap();
+        let path = blocker.join("desktop.log");
+        let mut writer = SizeRotatingWriter::new(path.clone(), 4, 3);
+        assert!(writer.ensure_file().is_err());
+        writer.append_bytes(b"lost").unwrap();
+        assert_eq!(writer.write(b"lost").unwrap(), 4);
+        writer.flush().unwrap();
+        {
+            let mut guard = writer.make_writer();
+            assert_eq!(guard.write(b"lost").unwrap(), 4);
+            guard.flush().unwrap();
+        }
+        std::fs::remove_file(&blocker).unwrap();
+        writer.write_all(b"ok").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"ok");
+    }
+
     #[test]
     #[allow(clippy::assertions_on_constants)]
     fn debug_logs_are_separated_from_release() {

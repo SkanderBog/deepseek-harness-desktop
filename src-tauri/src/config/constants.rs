@@ -46,6 +46,11 @@ pub const PNPM_MIRROR_BASE_URL: &str = "https://registry.npmmirror.com/pnpm/-/";
 
 /// Harness 服务地址与默认端口
 pub const DSH_HOST: &str = "http://127.0.0.1";
+
+pub fn get_dsh_service_url(port: u16) -> String {
+    format!("{DSH_HOST}:{port}")
+}
+
 /// 生产（release）默认端口
 pub const DSH_PORT: u16 = 3080;
 /// 开发（debug）默认端口：与生产隔离，避免 `pnpm tauri dev` 与已安装桌面端
@@ -126,3 +131,20 @@ pub const STORE_PENDING_INSTALLER_KEY: &str = "desktop_pending_installer";
 
 /// 健康检查超时
 pub const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[cfg(test)]
+mod tests {
+    use super::get_dsh_service_url;
+
+    #[test]
+    fn service_url_preserves_loopback_origin_and_entire_port_range() {
+        for (port, expected) in [
+            (0, "http://127.0.0.1:0"),
+            (3080, "http://127.0.0.1:3080"),
+            (3081, "http://127.0.0.1:3081"),
+            (65535, "http://127.0.0.1:65535"),
+        ] {
+            assert_eq!(get_dsh_service_url(port), expected);
+        }
+    }
+}
