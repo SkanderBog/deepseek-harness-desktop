@@ -32,7 +32,9 @@ use windows::UI::Notifications::{
     NotificationSetting, ScheduledToastNotification, ToastActivatedEventArgs, ToastNotification,
     ToastNotificationManager, ToastNotifier,
 };
-use windows::Win32::Foundation::{CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, S_FALSE, S_OK};
+use windows::Win32::Foundation::{
+    CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, ERROR_NOT_FOUND, S_FALSE, S_OK,
+};
 use windows::Win32::System::Com::{
     CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED, CoInitializeEx, CoRegisterClassObject,
     CoUninitialize, IClassFactory, IClassFactory_Impl, REGCLS_MULTIPLEUSE,
@@ -65,6 +67,27 @@ use crate::models::{ActionType, ActiveNotification, PendingNotification, Schedul
 /// family-name hash is install-time only.
 fn is_packaged() -> bool {
     Package::Current().is_ok()
+}
+
+fn notification_permission(
+    setting: windows::core::Result<NotificationSetting>,
+    packaged: bool,
+) -> crate::Result<PermissionState> {
+    let setting = match setting {
+        // Issue #812: an unpackaged AUMID may have no settings until its first toast.
+        Err(error) if !packaged && error.code() == ERROR_NOT_FOUND.to_hresult() => {
+            return Ok(PermissionState::Granted);
+        }
+        result => result?,
+    };
+    match setting {
+        NotificationSetting::Enabled => Ok(PermissionState::Granted),
+        NotificationSetting::DisabledForApplication
+        | NotificationSetting::DisabledForUser
+        | NotificationSetting::DisabledByGroupPolicy
+        | NotificationSetting::DisabledByManifest => Ok(PermissionState::Denied),
+        _ => Ok(PermissionState::Prompt),
+    }
 }
 
 /// Resolve a user-supplied image string into a URI scheme Windows toast
@@ -1296,14 +1319,7 @@ impl<R: Runtime> Notifications<R> {
 
     #[allow(unknown_lints, clippy::unused_async, clippy::unused_async_trait_impl)]
     pub async fn permission_state(&self) -> crate::Result<PermissionState> {
-        match self.plugin.notifier.Setting()? {
-            NotificationSetting::Enabled => Ok(PermissionState::Granted),
-            NotificationSetting::DisabledForApplication
-            | NotificationSetting::DisabledForUser
-            | NotificationSetting::DisabledByGroupPolicy
-            | NotificationSetting::DisabledByManifest => Ok(PermissionState::Denied),
-            _ => Ok(PermissionState::Prompt),
-        }
+        notification_permission(self.plugin.notifier.Setting(), self.plugin.packaged)
     }
 
     pub fn register_action_types(&self, types: Vec<ActionType>) -> crate::Result<()> {
@@ -1521,6 +1537,55 @@ mod tests {
     /// PowerShell App User Model ID - always available on Windows.
     const POWERSHELL_APP_ID: &str =
         "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe";
+
+    #[test]
+    fn notification_permission_allows_missing_unpackaged_profile() {
+        let error = windows::core::Error::from(ERROR_NOT_FOUND.to_hresult());
+        assert_eq!(
+            notification_permission(Err(error), false).unwrap(),
+            PermissionState::Granted
+        );
+    }
+
+    #[test]
+    fn notification_permission_preserves_missing_packaged_profile_error() {
+        let error = windows::core::Error::from(ERROR_NOT_FOUND.to_hresult());
+        let error = notification_permission(Err(error), true).unwrap_err();
+        assert!(error.to_string().contains("0x80070490"));
+    }
+
+    #[test]
+    fn notification_permission_preserves_other_errors() {
+        for packaged in [false, true] {
+            let error = notification_permission(Err(E_FAIL.into()), packaged).unwrap_err();
+            assert!(error.to_string().contains("0x80004005"));
+        }
+    }
+
+    #[test]
+    fn notification_permission_respects_windows_settings() {
+        for packaged in [false, true] {
+            assert_eq!(
+                notification_permission(Ok(NotificationSetting::Enabled), packaged).unwrap(),
+                PermissionState::Granted
+            );
+            for setting in [
+                NotificationSetting::DisabledForApplication,
+                NotificationSetting::DisabledForUser,
+                NotificationSetting::DisabledByGroupPolicy,
+                NotificationSetting::DisabledByManifest,
+            ] {
+                assert_eq!(
+                    notification_permission(Ok(setting), packaged).unwrap(),
+                    PermissionState::Denied
+                );
+            }
+            assert_eq!(
+                notification_permission(Ok(NotificationSetting(-1)), packaged).unwrap(),
+                PermissionState::Prompt
+            );
+        }
+    }
 
     // ==================== Time Conversion Tests ====================
 

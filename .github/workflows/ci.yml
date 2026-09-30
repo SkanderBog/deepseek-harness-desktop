@@ -260,6 +260,11 @@ jobs:
           # 同上：PR 只读缓存，避免每轮生成新条目挤掉 main 的暖缓存。
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Run Windows native notification tests
+        if: runner.os == 'Windows'
+        run: cargo test -p tauri-plugin-notifications --lib --no-default-features --locked
+        working-directory: src-tauri
+
       - name: Run tests
         run: cargo test --all-features --locked
         working-directory: src-tauri

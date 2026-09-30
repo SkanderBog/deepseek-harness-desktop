@@ -5,6 +5,10 @@ description = "Desktop application for DeepSeek Harness (dsh)"
 authors = [ "deepseek-harness-desktop contributors" ]
 edition = "2021"
 
+[workspace]
+members = ["vendor/tauri-plugin-notifications"]
+resolver = "2"
+
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
