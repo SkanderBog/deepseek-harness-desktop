@@ -1,4 +1,6 @@
-import { delay } from '@hairy/utils'
+function delay(milliseconds: number): Promise<void> {
+  return new Promise<void>(resolve => setTimeout(resolve, milliseconds))
+}
 
 export type StartupPhase = 'plugin-install' | 'process-boot' | 'client-modules'
 export type ReadinessTimeout = 'inactivity' | 'absolute'
