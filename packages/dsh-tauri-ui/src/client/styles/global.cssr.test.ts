@@ -1,5 +1,78 @@
+import postcss from 'postcss'
 import { describe, expect, it } from 'vitest'
 import globalStyle from './global.cssr'
+
+describe('conversation input dock stack', () => {
+  const rules: Record<string, Record<string, string>> = {}
+  postcss.parse(globalStyle.render()).walkRules((rule) => {
+    if (rule.selector.includes('conversation.input.dock')) {
+      rules[rule.selector] = {}
+      rule.walkDecls((decl) => {
+        rules[rule.selector][decl.prop] = decl.value
+      })
+    }
+  })
+
+  it.each([
+    [2, '30px', 'scale(0.98)'],
+    [3, '65px', 'scale(0.96)'],
+    [4, '100px', 'scale(0.94)'],
+  ])('stacks the %sth last non-anchor child only with at least three non-anchor children', (index, top, transform) => {
+    const selector = `[data-slot="conversation.input.dock"]:has(> :nth-child(3 of :not([data-dsh-tauri-worktree-mode-anchor]))):not(:hover) > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`
+    expect(rules[selector]).toEqual({ position: 'relative', top, transform })
+  })
+
+  it.each([2, 3, 4])('restores the %sth last non-anchor child on hover', (index) => {
+    const selector = `[data-slot="conversation.input.dock"]:has(> :nth-child(3 of :not([data-dsh-tauri-worktree-mode-anchor]))):hover > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`
+    expect(rules[selector]).toEqual({ position: 'relative', top: '0', transform: 'scale(1)' })
+  })
+
+  it('adds no stack declarations to the last child or children earlier than the fourth last', () => {
+    expect(Object.keys(rules)).toHaveLength(6)
+    expect(Object.keys(rules).some(selector => selector.includes(':nth-last-child(1 '))).toBe(false)
+    expect(Object.keys(rules).some(selector => selector.includes(':nth-last-child(5 '))).toBe(false)
+  })
+})
+
+describe('mobile conversation layout', () => {
+  const root = postcss.parse(globalStyle.render())
+
+  it('hides the requested slots and sidebar footer only on a mobile device', () => {
+    const media = root.nodes.find(node => node.type === 'atrule' && node.name === 'media')
+    expect(media?.type).toBe('atrule')
+    if (media?.type !== 'atrule')
+      throw new Error('Missing mobile media query')
+    expect(media.params).toBe('(hover: none) and (any-pointer: coarse) and (any-hover: none)')
+    const selectors: string[] = []
+    media.walkRules((rule) => {
+      if (!rule.selector.includes('data-conversation-scroll')) {
+        selectors.push(...rule.selectors)
+        expect(rule.nodes.map(node => node.type === 'decl' ? [node.prop, node.value, node.important] : [])).toEqual([['display', 'none', true]])
+      }
+    })
+    expect(selectors).toEqual([
+      '[data-slot="conversation.session.header"]',
+      '[data-slot="conversation.composer.bar"]',
+      '[data-slot="conversation.composer.dock"]',
+      '[data-slot="sidebar"] [class$="_footArea"]',
+      '[data-slot="sidebar"] [class*="_footArea "]',
+    ])
+  })
+
+  it('overrides conversation scroll bottom padding to zero inside the mobile media query', () => {
+    const declarations: unknown[] = []
+    root.walkRules('[data-conversation-scroll]', (rule) => {
+      const parent = rule.parent
+      expect(parent?.type).toBe('atrule')
+      if (parent?.type === 'atrule')
+        expect(parent.params).toBe('(hover: none) and (any-pointer: coarse) and (any-hover: none)')
+      rule.walkDecls((decl) => {
+        declarations.push([decl.prop, decl.value, decl.important])
+      })
+    })
+    expect(declarations).toEqual([['padding-bottom', '0', true]])
+  })
+})
 
 /**
  * 侧边栏 rail 的 logo 契约。

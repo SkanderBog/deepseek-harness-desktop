@@ -1,10 +1,40 @@
+import { MOBILE_MEDIA_QUERIES } from '../constants'
 import { cssr } from '../utils/cssr'
 
 export const GLOBAL_STYLE_ID = 'dsh-tauri-ui-global-styles'
 
 const { c } = cssr
 
+const INPUT_DOCK_SELECTOR = '[data-slot="conversation.input.dock"]:has(> :nth-child(3 of :not([data-dsh-tauri-worktree-mode-anchor])))'
+
 export default c([
+  ...[
+    { index: 2, top: '30px', scale: '0.98' },
+    { index: 3, top: '65px', scale: '0.96' },
+    { index: 4, top: '100px', scale: '0.94' },
+  ].flatMap(({ index, top, scale }) => {
+    const child = `> :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`
+    return [
+      c(`${INPUT_DOCK_SELECTOR}:not(:hover) ${child}`, {
+        position: 'relative',
+        top,
+        transform: `scale(${scale})`,
+      }),
+      c(`${INPUT_DOCK_SELECTOR}:hover ${child}`, {
+        position: 'relative',
+        top: '0',
+        transform: 'scale(1)',
+      }),
+    ]
+  }),
+  c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
+    c('[data-slot="conversation.session.header"], [data-slot="conversation.composer.bar"], [data-slot="conversation.composer.dock"], [data-slot="sidebar"] [class$="_footArea"], [data-slot="sidebar"] [class*="_footArea "]', {
+      display: 'none !important',
+    }),
+    c('[data-conversation-scroll]', {
+      paddingBottom: '0 !important',
+    }),
+  ]),
   c('[data-slot="sidebar.right.tab.guide"]', [
     c('[class$="guide"]', {
       gap: '8px',
