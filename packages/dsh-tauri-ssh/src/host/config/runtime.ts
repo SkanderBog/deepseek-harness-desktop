@@ -97,6 +97,10 @@ export function syncRuntimeDeps(): SyncDeps {
 }
 
 export function clearHostRuntime(): void {
+  // 使在途 attempt 失效：未完成的 performConnect/performInstall 恢复执行时会比对 generation，
+  // 若不等则不再对外拨号（否则它们的续跑会读到下一个 runtime 的 deps，把连接打到别人的 transport 上）。
+  for (const target of machineStates.values())
+    target.generation += 1
   config = undefined
   homeDir = homedir()
   sshDir = ''

@@ -3,7 +3,7 @@ import type { MachineProfile, MachineSaveRow, MachineSecretWrite, MachineView, S
 import type { WorkspaceAllowlist } from '../utils/allowlist'
 import type { SshHostBlock } from '../utils/ssh-config'
 import type { BootstrapHooks } from './bootstrap.types'
-import type { MachineState } from './machine.types'
+import type { MachineState, ReconnectState } from './machine.types'
 import { defineService } from 'dsh-tauri'
 import { join } from 'pathe'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
@@ -536,15 +536,15 @@ function scheduleReconnect(machineId: MachineId): void {
     redacted(machineId, `retrying in ${Math.round(delay / 100) / 10} s (attempt ${rec.attempt} of ${config.reconnectMaxAttempts})`),
   )
   rec.timer = setTimeout(() => {
-    void attemptReconnect(machineId)
+    void attemptReconnect(machineId, rec)
   }, delay)
   rec.timer.unref?.()
 }
 
-async function attemptReconnect(machineId: MachineId): Promise<void> {
+async function attemptReconnect(machineId: MachineId, expected: ReconnectState): Promise<void> {
   const target = machineStates.get(machineId)
   const rec = target?.reconnect
-  if (target === undefined || rec === undefined || rec.generation !== target.generation)
+  if (target === undefined || rec !== expected || rec.generation !== target.generation)
     return
   const profile = machineProfiles.get(machineId)
   if (profile === undefined)
