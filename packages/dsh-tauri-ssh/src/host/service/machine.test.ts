@@ -231,6 +231,9 @@ class FakeTransport implements SshTransport {
     _signal?: AbortSignal,
   ): Promise<SshSession> {
     this.connectCalls += 1
+    // TEMP DIAGNOSTIC (drop before review): trace dials past the expected budget.
+    if (this.connectCalls > 3)
+      console.error(`[DIAL-TRACE] call #${this.connectCalls} machine=${String(profile.id)}\n${new Error('dial').stack ?? ''}`)
     this.profiles.push(profile)
     const session = this.sessionFactory()
     this.sessions.push(session)
