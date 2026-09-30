@@ -114,11 +114,11 @@ export const plugins = defineStore({
     logs: [],
     activeGroupId: null,
     cancelling: false,
-    presenterCount: 0,
     installedSource: [],
     installedLoaded: false,
     progressKey: null,
     progressDetail: '',
+    queueResults: [],
   }),
   getters: {
     installed(): Plugin[] {
@@ -142,15 +142,6 @@ export const plugins = defineStore({
       const list = await invoke<DshPlugin[]>('refresh_plugin_updates')
       this.setInstalled(list)
       return list
-    },
-
-    attachPresenter(): void {
-      this.presenterCount += 1
-    },
-
-    detachPresenter(): void {
-      this.presenterCount = Math.max(0, this.presenterCount - 1)
-      this.syncProgress()
     },
 
     on<K extends PluginsManagerEvent>(
@@ -282,7 +273,11 @@ export const plugins = defineStore({
     },
 
     precheck(process: PluginProcess): PluginProcessReason | null {
-      if (process.type === 'install' || !this.installedLoaded)
+      // 升级永不预跳过：面板既然画出了升级入口，就说明它有版本或异常信息要处理，而本地快照
+      // （`installedSource`）可能刚被安装/刷新改过。按快照判「没有更新」会把用户的点击悄悄丢掉——
+      // 用户点过的插件必须交给宿主，宿主按面板给的目标版本显式安装，装不上就报真实错误
+      // （见 `update_dsh_plugins` → `install_targets`）。
+      if (process.type === 'install' || process.type === 'upgrade' || !this.installedLoaded)
         return null
       const installed = this.installedSource.find(item => item.id === process.name || item.name === process.name)
       if (!installed)
@@ -290,10 +285,6 @@ export const plugins = defineStore({
       if (process.type === 'disable' && installed.disabled)
         return 'already-absent'
       if (process.type === 'enable' && !installed.disabled && !installed.patchDisabled)
-        return 'already-absent'
-      // 面板对「有更新」与「插件异常」都显示升级入口，后者是损坏插件的修复路径：
-      // 即使没有任何更新也必须放行，否则用户永远修不好异常插件。
-      if (process.type === 'upgrade' && !installed.updateAvailable && installed.error == null)
         return 'already-absent'
       return null
     },
@@ -319,7 +310,7 @@ export const plugins = defineStore({
           const message = errorMessage(outcome.reason)
           const refusal = parseBlockedRefusal(message)
           if (refusal !== null && refusalNames(refusal).size > 0) {
-            this.block(group, process, refusal, group.options.toast && this.presenterCount > 0)
+            this.block(group, process, refusal, group.options.toast)
             blocked.push(process)
             return
           }
@@ -328,10 +319,14 @@ export const plugins = defineStore({
         return blocked
       }
       try {
+        // 升级的载荷项是 `id@版本`（面板显示着目标版本，带上它核验与显式安装兜底才有据
+        // 可依，见 `update_dsh_plugins`）；宿主的参数名仍叫 `ids`。
         await invoke<void>(COMMANDS[group.type], {
           ...(group.type === 'install'
             ? { specs: targets.map(process => process.spec) }
-            : { ids: targets.map(process => process.name) }),
+            : group.type === 'upgrade'
+              ? { ids: targets.map(process => process.spec) }
+              : { ids: targets.map(process => process.name) }),
         })
         targets.forEach(process => this.finish(group.id, process, { process, ok: true }))
         return []
@@ -339,34 +334,45 @@ export const plugins = defineStore({
       catch (error) {
         const message = errorMessage(error)
         const refusal = parseBlockedRefusal(message)
-        // 已授权过这个精确版本还是没生效（retryable=false），说明档案把来源钉死了（catalog /
-        // git / link 或精确版本），`--latest` 越不过声明范围，插件本身没有损坏。这里没有可授权
-        // 的动作：进授权流程只会让用户靠「关闭」来表达拒绝，关掉后紧接着再补一条失败提示。
-        if (refusal?.kind === 'update-hold' && !refusal.retryable) {
+        // 升级：宿主对整批逐项核验过指纹，只有被点名的才没生效。
+        // - 没被点名的说明确实装上了，报成功即可，重提一次反而会把它们重新判成「没有变化」；
+        // - 还能授权（新版本只是太新，写进档案豁免清单就能过闸）→ 进授权流程，常驻提示带按钮；
+        // - 点名的版本已经授权过（写在豁免清单里）却还是没有变化：这是**失败**，不是
+        //   「可跳过」。用户点升级就是要装上那个版本，静默跳过会让他以为已经更新（见
+        //   `plugins.hold_pinned_desc` 的原因说明）；
+        // - 载荷连目标版本都没有（探测缓存没命中、面板当时也没有版本可带）时无从安装：这同样是
+        //   失败，只是原因不同（没有可安装的目标版本）。任何「什么都没发生」的路径都必须留下
+        //   一条可见的结果，否则汇总里会出现用户看不见的空桶（「1 个成功」而其它插件下落不明）。
+        if (refusal?.kind === 'update-hold') {
           const names = refusalNames(refusal)
+          const known = new Set(refusal.versions.map(item => item.name))
+          const blocked: PluginProcess[] = []
           targets.forEach((process) => {
-            // 宿主对整批逐项核验过指纹：没被点名的说明确实装上了，报成功即可，重提一次反而会把
-            // 它们重新判成「没有变化」。只有 payload 缺版本号（latest 为 null）时无从归因，那种
-            // 情况下才把整批按没生效结算。
             if (names.size > 0 && !names.has(process.name)) {
               this.finish(group.id, process, { process, ok: true })
+              return
+            }
+            if (names.size > 0 && refusal.retryableNames.includes(process.name)) {
+              this.block(group, process, refusal, group.options.toast)
+              blocked.push(process)
               return
             }
             this.finish(group.id, process, {
               process,
               ok: false,
-              error: i18next.t('plugins.hold_pinned_desc'),
-              reason: 'update-hold',
+              error: i18next.t(
+                known.has(process.name) ? 'plugins.hold_pinned_desc' : 'plugins.hold_no_target',
+              ),
             })
           })
-          return []
+          return blocked
         }
         if (refusal !== null && refusalNames(refusal).size > 0) {
           const names = refusalNames(refusal)
           const blocked: PluginProcess[] = []
           targets.forEach((process) => {
             if (names.has(process.name)) {
-              this.block(group, process, refusal, group.options.toast && this.presenterCount > 0)
+              this.block(group, process, refusal, group.options.toast)
               blocked.push(process)
               return
             }
@@ -399,6 +405,8 @@ export const plugins = defineStore({
       process.approvalKey = toast(i18next.t(BLOCK_TITLE[refusal.kind], { name: process.name }), {
         variant: refusal.kind === 'incompatible' ? 'danger' : 'warning',
         timeout: 0,
+        // 授权气泡必须一直可点：被新气泡挤掉后没人能再授权它，队列会永远停在等待授权上
+        sticky: true,
         description: i18next.t(BLOCK_DESC[refusal.kind], { blocked: versions }),
         actionProps: {
           children: i18next.t('buttons.authorize'),
@@ -437,7 +445,6 @@ export const plugins = defineStore({
     settle(group: PluginGroup): void {
       const results = group.results
       const failed = results.filter(result => !result.ok)
-      const succeeded = results.some(result => result.ok)
       group.status = 'settled'
       this.groups = this.groups.filter(item => item.id !== group.id)
       group.processIds.forEach(id => this.detach(id))
@@ -447,8 +454,6 @@ export const plugins = defineStore({
       if (failed.length > 0)
         triggerPluginsManagerEvent('error', failed)
       this.presentResults(group, results)
-      if (succeeded && group.options.restartOnSettle)
-        void harness.restart()
       if (this.groups.length === 0)
         triggerPluginsManagerEvent('allcompleted', results)
     },
@@ -471,8 +476,9 @@ export const plugins = defineStore({
 
     syncProgress(): void {
       const processes = this.progressTargets()
-      const wanted = this.presenterCount > 0
-        && processes.length > 0
+      // 提示权只由入队时的 toast 选项决定：面板关闭（presenter 卸载）不该让仍在跑的队列
+      // 失去进度气泡与授权入口。
+      const wanted = processes.length > 0
         && this.groups.some(group => group.options.toast)
       if (!wanted) {
         this.hideProgress()
@@ -513,29 +519,79 @@ export const plugins = defineStore({
       toast.update(current, { description: line })
     },
 
+    /**
+     * 结果提示：整条队列（一次入队的多个组）跑完才汇报一次。
+     *
+     * 每个组各自弹结果会互相盖住——用户只看到最后一条，前面失败的原因全被顶掉。因此把结果
+     * 攒到队列排空再统一汇报（见 [`presentQueueResults`](self)）。
+     */
     presentResults(group: PluginGroup, results: PluginProcessResult[]): void {
-      if (!group.options.toast || this.presenterCount === 0)
+      if (!group.options.toast)
         return
-      results.forEach((result) => {
-        // 来源被钉死时升级本来就无从生效：这不是失败，而是一句「保持原样」的说明，因此用可
-        // 自动消失、无需关闭的中性提示，并且不计入失败汇总。
-        if (result.reason === 'update-hold') {
-          toast(i18next.t('plugins.hold_title', { name: result.process.name }), {
-            description: i18next.t('plugins.hold_pinned_desc'),
-          })
-          return
-        }
-        toast(
-          i18next.t(result.ok ? RESULT_SUCCESS[group.type] : RESULT_FAILED[group.type], {
-            name: result.process.name,
-          }),
-          { variant: result.ok ? 'default' : 'danger' },
-        )
-      })
-      const failed = results.filter(result => !result.ok && result.reason !== 'update-hold')
-      if (failed.length > 1) {
-        toast(i18next.t('plugins.result_summary', { count: failed.length }), { variant: 'danger' })
+      this.queueResults.push(...results)
+      if (this.groups.length > 0)
+        return
+      const pending = this.queueResults
+      this.queueResults = []
+      this.presentQueueResults(pending, group.options)
+    },
+
+    presentQueueResults(results: PluginProcessResult[], options: PluginsManagerRuntime): void {
+      if (results.length === 0)
+        return
+      const succeeded = results.filter(result => result.ok).length
+      // 汇总不允许有看不见的桶：升级点名的目标版本没装上必定带 `error`，会落进 `failed`；
+      // 只有卸载/禁用本来无事可做（already-absent）才算「无需变更」。用户自己取消或拒绝授权
+      // 的项（cancelled / rejected）既不算成功也不算失败，也不再追着提示（见 m07292/m07436）。
+      const noop = results.filter(result => result.reason === 'already-absent').length
+      const failed = results.filter(
+        result => !result.ok
+          && result.reason !== 'already-absent'
+          && result.reason !== 'cancelled'
+          && result.reason !== 'rejected',
+      ).length
+      const restart = options.restartOnSettle && succeeded > 0
+      // 需要重启时把「重启」按钮挂在结果气泡上：一次操作只留一条。单独再弹一条常驻的重启提示
+      // 会和结果提示同时出现，用户看到的就是「两个 toast 说同一件事」。
+      let restartKey = ''
+      const restartAction = {
+        children: i18next.t('app.restart'),
+        onPress: () => {
+          toast.close(restartKey)
+          void harness.restart()
+        },
       }
+      if (results.length === 1) {
+        const [result] = results
+        // 用户自己的选择（取消 / 拒绝授权）不再补一条错误提示追问他；其余结果无论成败都要
+        // 说出来（失败带 `description: result.error`），否则用户会以为操作没发生。
+        if (result.reason === 'cancelled' || result.reason === 'rejected')
+          return
+        const title = i18next.t(
+          result.ok ? RESULT_SUCCESS[result.process.type] : RESULT_FAILED[result.process.type],
+          { name: result.process.name },
+        )
+        restartKey = toast(
+          title,
+          result.ok
+            ? restart
+              ? { variant: 'accent', timeout: 0, actionProps: restartAction }
+              : { variant: 'default' }
+            : { variant: 'danger', description: result.error },
+        )
+        return
+      }
+      const parts = [
+        succeeded > 0 ? i18next.t('plugins.queue_summary_success', { count: succeeded }) : '',
+        failed > 0 ? i18next.t('plugins.queue_summary_failed', { count: failed }) : '',
+        noop > 0 ? i18next.t('plugins.queue_summary_skipped', { count: noop }) : '',
+      ].filter(part => part !== '')
+      restartKey = toast(i18next.t('plugins.queue_summary'), {
+        description: parts.join(' · '),
+        variant: failed > 0 ? 'danger' : restart ? 'accent' : 'default',
+        timeout: restart ? 0 : undefined,
+        actionProps: restart ? restartAction : undefined,
+      })
     },
 
     async approve(refs?: PluginRef | PluginRef[]): Promise<PluginProcessResult[]> {
@@ -557,7 +613,7 @@ export const plugins = defineStore({
         catch (error) {
           const message = errorMessage(error)
           this.pushLog('error', message, group.id, process.id)
-          if (group.options.toast && this.presenterCount > 0) {
+          if (group.options.toast) {
             toast(i18next.t('plugins.authorize_failed'), {})
           }
           continue

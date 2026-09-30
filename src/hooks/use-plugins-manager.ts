@@ -9,7 +9,7 @@ import type {
 } from '@/store/modules/plugins'
 import type { PluginsManagerEvent, PluginsManagerEventMap } from '@/store/modules/plugins/events'
 import type { DshPlugin } from '@/types'
-import { useMount, useUnmount, useWatch } from '@reause/core'
+import { useMount, useWatch } from '@reause/core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { useStore } from 'valtio-define'
@@ -85,11 +85,7 @@ export function useDshPluginsManager(options: UseDshPluginsManagerOptions = {}):
   )
 
   useMount(() => {
-    plugins.attachPresenter()
     void plugins.refresh()
-  })
-  useUnmount(() => {
-    plugins.detachPresenter()
   })
   useListen<{ line: string }>('preinstall-log', (event) => {
     plugins.setProgressDetail(event.payload.line)

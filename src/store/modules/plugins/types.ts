@@ -4,7 +4,11 @@ import type { DshPlugin, PluginErrorInfo } from '@/types'
 export type BlockedRefusal
   = | { kind: 'incompatible', versions: IncompatibleVersion[] }
     | { kind: 'policy', versions: PolicyBlockedVersion[] }
-    | { kind: 'update-hold', versions: PolicyBlockedVersion[], retryable: boolean }
+    // update-hold 是逐项核验的结果：一次升级可能有的插件装上了、有的没变化、有的只是太新
+    // 需要授权。`versions` 只放能写进档案豁免清单的条目（带得出新版本号的），`retryableNames`
+    // 是可以就地授权的那几个，`heldNames` 是完全查不到更新版本的（来源被钉死）——它们只能
+    // 报「保持原样」，不能进授权流程。
+    | { kind: 'update-hold', versions: PolicyBlockedVersion[], retryable: boolean, retryableNames: string[], heldNames: string[] }
 
 export interface Plugin {
   id: string
@@ -106,11 +110,11 @@ export interface PluginsState {
   logs: PluginManagerLog[]
   activeGroupId: string | null
   cancelling: boolean
-  presenterCount: number
   installedSource: DshPlugin[]
   installedLoaded: boolean
   progressKey: string | null
   progressDetail: string
+  queueResults: PluginProcessResult[]
 }
 
 export type { DshPlugin }

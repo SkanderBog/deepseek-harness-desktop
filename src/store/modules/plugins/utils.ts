@@ -26,22 +26,47 @@ export function parseVersions<T>(error: string, prefix: string): T[] | null {
   }
 }
 
+interface UpdateHoldEntry {
+  name?: unknown
+  latest?: unknown
+  retryable?: unknown
+}
+
+/**
+ * 升级没生效的载荷：宿主逐项核验整批插件后合成的结果。
+ * 单个 id 时是一份对象，多个 id 时是同样结构的数组 —— 两者都要能解析，否则整批会退化成
+ * 「升级插件 X 失败」，把「授权一下就能装上的新版本」说成失败。
+ */
 export function parseUpdateHold(error: string): BlockedRefusal | null {
   if (!error.startsWith(UPDATE_HOLD_PREFIX))
     return null
   try {
-    const payload = JSON.parse(error.slice(UPDATE_HOLD_PREFIX.length)) as {
-      name: string
-      latest?: unknown
-      retryable?: unknown
-    }
-    if (typeof payload.name !== 'string')
+    const parsed = JSON.parse(error.slice(UPDATE_HOLD_PREFIX.length)) as unknown
+    const entries: unknown[] = Array.isArray(parsed) ? parsed : [parsed]
+    const versions: PolicyBlockedVersion[] = []
+    const retryableNames: string[] = []
+    const heldNames: string[] = []
+    entries.forEach((entry) => {
+      const item = (entry ?? {}) as UpdateHoldEntry
+      if (typeof item.name !== 'string')
+        return
+      const latest = typeof item.latest === 'string' && item.latest !== '' ? item.latest : null
+      if (latest === null) {
+        heldNames.push(item.name)
+        return
+      }
+      versions.push({ name: item.name, version: latest })
+      if (item.retryable === true)
+        retryableNames.push(item.name)
+    })
+    if (versions.length === 0 && heldNames.length === 0)
       return null
-    const latest = typeof payload.latest === 'string' && payload.latest !== '' ? payload.latest : null
     return {
       kind: 'update-hold',
-      versions: latest === null ? [] : [{ name: payload.name, version: latest }],
-      retryable: payload.retryable === true && latest !== null,
+      versions,
+      retryable: retryableNames.length > 0,
+      retryableNames,
+      heldNames,
     }
   }
   catch (err) {
@@ -61,7 +86,10 @@ export function parseBlockedRefusal(error: string): BlockedRefusal | null {
 }
 
 export function refusalNames(refusal: BlockedRefusal): Set<string> {
-  return new Set(refusal.versions.map(item => item.name))
+  const names = new Set(refusal.versions.map(item => item.name))
+  if (refusal.kind === 'update-hold')
+    refusal.heldNames.forEach(name => names.add(name))
+  return names
 }
 
 export function normalizeRef(ref: PluginRef): NormalizedRef {
