@@ -28,10 +28,29 @@ export default c([
     ]
   }),
   c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
-    c('[data-slot="conversation.session.header"], [data-slot="conversation.composer.bar"], [data-slot="conversation.composer.dock"], [data-slot="sidebar"] [class$="_footArea"], [data-slot="sidebar"] [class*="_footArea "]', {
-      display: 'none !important',
+    c('[data-slot="conversation.composer.bar"] [class$="_dock"]', {
+      display: 'none !important'
     }),
-    c('[data-conversation-scroll]', {
+    c('[class$="_composerStack"] > [data-slot="conversation.input.dock"]', {
+      display: 'none !important'
+    }),
+    c('[class$="_turnErrorCode"]', {
+      display: 'none !important'
+    }),
+    c('[data-slot="conversation.header"] [class$="_header"]', {
+      display: 'none !important'
+    }),
+    c('[data-slot="main"] header[class*="_pageHead"]', {
+      paddingLeft: '0 !important',
+      paddingTop: '24px !important'
+    }),
+     c('header[class*="_pageHead"] [class*="_toolbar"]', {
+      display: 'none !important'
+    }),
+    // c('[data-slot="conversation.session.header"], [data-slot="conversation.composer.bar"], [class*=""], [data-slot="sidebar"] [class$="_footArea"], [data-slot="sidebar"] [class*="_footArea "]', {
+    //   display: 'none !important',
+    // }),
+    c('[data-slot="main"] [data-conversation-scroll]', {
       paddingBottom: '0 !important',
     }),
   ]),
