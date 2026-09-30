@@ -1,7 +1,18 @@
 import type { ReactElement } from 'react'
-import type { AutoConfigAllButtonProps } from './auto-config-all-button.types'
+import type { ModelDiscoveryChannel } from '../../service/model-config'
+import type { ModelDraft, ModelProbeTarget } from './model-config-toolbar'
+import type { Translate } from './types'
 import { Action, Text } from 'dsh-tauri-ui/client'
 import { useModelConfigFetch } from './use-model-config-fetch'
+
+export interface AutoConfigAllButtonProps {
+  t: Translate
+  models: readonly ModelDraft[]
+  probe: ModelProbeTarget
+  operations?: ModelDiscoveryChannel
+  disabled?: boolean
+  onApply?: (models: ModelDraft[], applied: number, undisclosed: string[]) => void
+}
 
 export function AutoConfigAllButton({ t, models, probe, operations, disabled, onApply }: AutoConfigAllButtonProps): ReactElement {
   const { busy, failure, notice, run } = useModelConfigFetch({ t, models, probe, operations, onApply })

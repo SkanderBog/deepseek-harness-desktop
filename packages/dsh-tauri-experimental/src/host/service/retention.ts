@@ -18,7 +18,7 @@ import { defineService } from 'dsh-tauri'
 import { dirname, join } from 'pathe'
 import { MAX_FILE_BYTES } from '../config/constants'
 import { retainedWorkspaces } from '../config/runtime'
-import { gitInSnapshot, pruneLooseObjects } from '../utils/git'
+import { pruneLooseObjects } from '../utils/git'
 import { resolveInsideWorkspace } from '../utils/paths'
 import { snapshot } from './snapshot'
 
@@ -140,17 +140,6 @@ export const retention = defineService({
     }
     await walk(dir)
     return total / (1024 * 1024)
-  },
-
-  /** 私有仓健康摘要（诊断：ref 数 + 体积 + 是否有残留隔离目录）。 */
-  async describe(store: SnapshotStore): Promise<{ refs: number, sizeMb: number, quarantineLeftover: boolean }> {
-    const listed = await gitInSnapshot(store, ['for-each-ref', '--format=%(refname)'])
-    const refs = listed.ok ? listed.out.split('\n').filter(line => line.trim().length > 0).length : 0
-    return {
-      refs,
-      sizeMb: Math.round(await retention.measure(store.gitDir)),
-      quarantineLeftover: existsSync(`${store.gitDir}.retention-quarantine`),
-    }
   },
 })
 

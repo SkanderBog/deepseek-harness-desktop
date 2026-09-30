@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { execFile } from 'node:child_process'
 import { rmSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
 import { join } from 'pathe'
@@ -52,7 +52,6 @@ describe('会话独占 index', () => {
     expect(first.indexFile).toBeDefined()
     expect(first.indexFile).not.toBe(second.indexFile)
     expect(first.indexFile?.startsWith(first.gitDir)).toBe(true)
-    // 不给会话 id 的调用面（如按路径取代数）仍退回私有仓自带的 index。
     expect(snapshot.resolve(worktree).indexFile).toBeUndefined()
   })
 })
@@ -77,6 +76,20 @@ afterEach(async () => {
 })
 
 describe('captureSnapshot + diffTurnChanges', () => {
+  it('mirrors source info/exclude when commonDir was omitted', async () => {
+    const { worktree } = await fixture()
+    await writeFile(join(worktree, '.git', 'info', 'exclude'), 'local-only.txt\n', 'utf8')
+    await writeFile(join(worktree, 'local-only.txt'), 'must not enter the snapshot\n', 'utf8')
+    const store = snapshot.resolve(worktree)
+
+    const captured = await snapshot.capture(store, snapshot.ref('source-exclude', 1, 'before'), 'before')
+    expect(captured.ok).toBe(true)
+    expect(await readFile(join(store.gitDir, 'info', 'exclude'), 'utf8')).toBe('local-only.txt\n')
+    const listed = await gitInSnapshot(store, ['ls-files'])
+    expect(listed).toEqual({ ok: true, out: '.gitignore\na.txt\ngone.txt\n' })
+    expect(await readFile(join(worktree, 'local-only.txt'), 'utf8')).toBe('must not enter the snapshot\n')
+  })
+
   it('reports added / modified / deleted files with per-file line counts', async () => {
     const { worktree } = await fixture()
     const store = snapshot.resolve(worktree)
@@ -234,6 +247,19 @@ describe('liveDiff（运行中实时读数）', () => {
 })
 
 describe('捕获限额（超限文件 / 嵌套仓库）', () => {
+  it('accepts the file-count limit and rejects one file above it without publishing a ref', async () => {
+    const { worktree } = await fixture()
+    const store = snapshot.resolve(worktree)
+    const beforeRef = snapshot.ref('file-count', 1, 'before')
+    const accepted = await snapshot.capture(store, beforeRef, 'before', { limits: { maxFiles: 3 } })
+    expect(accepted.ok).toBe(true)
+
+    const afterRef = snapshot.ref('file-count', 1, 'after')
+    expect(await snapshot.capture(store, afterRef, 'after', { limits: { maxFiles: 2 } })).toEqual({ ok: false, reason: 'RUNNING_CHANGES_TOO_MANY_FILES' })
+    const refs = await gitInSnapshot(store, ['for-each-ref', '--format=%(refname)'])
+    expect(refs).toEqual({ ok: true, out: `${beforeRef}\n` })
+  })
+
   it('超限时排除最大的文件后重试，并把它记进跳过明细', async () => {
     const { worktree } = await fixture()
     const store = snapshot.resolve(worktree)
@@ -410,7 +436,7 @@ describe('快照仓代数', () => {
     expect(first.ok).toBe(true)
     const firstGeneration = store.generation
     expect(firstGeneration).toBeTypeOf('string')
-    expect(await snapshot.generation(worktree)).toBe(firstGeneration)
+    expect(JSON.parse(await readFile(`${store.gitDir}.json`, 'utf8'))).toMatchObject({ generation: firstGeneration })
 
     // 整仓消失（被隔离重建 / 用户清理）：下一次捕获必须换一代。
     await rm(store.gitDir, { recursive: true, force: true })
@@ -418,9 +444,11 @@ describe('快照仓代数', () => {
     expect(second.ok).toBe(true)
     expect(store.generation).toBeTypeOf('string')
     expect(store.generation).not.toBe(firstGeneration)
-    expect(await snapshot.generation(worktree)).toBe(store.generation)
+    expect(JSON.parse(await readFile(`${store.gitDir}.json`, 'utf8'))).toMatchObject({ generation: store.generation })
     // 老 ref 随旧仓一起消失：旧代数记录不存在「指向别人对象」的错乱。
-    expect(await snapshot.read(store, snapshot.ref('s12', 1, 'before'))).toBeNull()
+    const oldRef = await gitInSnapshot(store, ['rev-parse', '--verify', '--quiet', snapshot.ref('s12', 1, 'before')])
+    expect(oldRef.ok).toBe(false)
+    expect(oldRef.out).toBe('')
   })
 })
 

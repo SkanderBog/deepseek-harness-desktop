@@ -8,7 +8,7 @@
 
 ### dsh-tauri-model
 
-`shrink: modelStyles / welcomeStyles / onboardingStyles / onboardingDialogStyles 是 84 行人工维护的「键 → 哈希类名」映射表，必须与上面的 CSS 模板字符串手工对齐；四张表都能从 CSS 文本推导。` 写法：`const modelStyles = Object.fromEntries([...MODELS_CSS.matchAll(/\.(zGbnIq_\w+)/g)].map(m => [m[1].slice(7), m[1]]))`（`prefix` 换成 `zGbnIqw_`/`zGbnIqo_`/`zGbnIqd_` 各 1 行；`hiddenLabel` 这类驼峰键与类名本来就一一对应）。漂移已经发生过：`org`/`w3` 两个键指向的类名在 CSS 里根本不存在，`hiddenLabel`/`switchThumb` 两个键（规则在 `styles.ts:611`、`styles.ts:622` 的 media 块内）零消费者。 [packages/dsh-tauri-model/src/client/models/styles.ts:779-868] (-80 LOC)
+`shrink: modelStyles / welcomeStyles / onboardingStyles / onboardingDialogStyles 是 84 行人工维护的「键 → 哈希类名」映射表，必须与上面的 CSS 模板字符串手工对齐；四张表都能从 CSS 文本推导。` 写法：`const modelStyles = Object.fromEntries([...MODELS_CSS.matchAll(/\.(zGbnIq_(\w+))/g)].map(([, className, key]) => [key, className]))`（`prefix` 换成 `zGbnIqw_`/`zGbnIqo_`/`zGbnIqd_` 各 1 行；`hiddenLabel` 这类驼峰键与类名本来就一一对应）。漂移已经发生过：`org`/`w3` 两个键指向的类名在 CSS 里根本不存在，`hiddenLabel`/`switchThumb` 两个键（规则在 `styles.ts:611`、`styles.ts:622` 的 media 块内）零消费者。 [packages/dsh-tauri-model/src/client/models/styles.ts:779-868] (-80 LOC)
 
 `shrink: packages/dsh-tauri-model/src/client/types/remotes.ts 前 10 行 + LlmModelDiscoveryRequest + LlmDiscoveredModel 是对 packages/dsh-tauri-ui/src/client/types/remotes.ts 的逐字重复。` `dsh-tauri-ui/client` 已经发布这几张类型（`packages/dsh-tauri-ui/src/client/index.ts:23` 的 `export * from './types/remotes'`），且已是本包的直接依赖（`packages/dsh-tauri-model/package.json:73`）与本包 src 里到处在 import 的入口（`ModelInputTypes.tsx:4` 等 13 处）。改成 `export type { JsonValue, RemoteFailure, RemoteResult, LlmModelDiscoveryRequest } from 'dsh-tauri-ui/client'`，`LlmDiscoveredModel` 换成 `interface LlmDiscoveredModel extends UILlmDiscoveredModel { inputModalities?: readonly string[] }`（本包只多这一个字段）。检索式：`JsonValue|RemoteFailure|RemoteResult|LlmModelDiscoveryRequest`（全仓）。 [packages/dsh-tauri-model/src/client/types/remotes.ts:1-10,52-57] (-14 LOC)
 
@@ -77,4 +77,15 @@ $body = ($files | Where-Object { $_ -notmatch 'styles\.ts$' -and $_ -notmatch '\
 # 对每个候选 key 判 $body -notmatch "\b$k\b"
 ```
 
-net: -456 lines, -2 deps possible.
+## 执行复核（2026-09-30）
+
+- 已执行：CSS 派生类名映射、复用远端/领域类型、组件 props 就地声明、测试夹具迁入 test-only 目录、删除内部 `withPath`/`presetTableSize`；既有组件类型出口名称保留。
+- 已执行：删除从未 arm 的客户端摘要重试及其孤立的 service/store 子树（`fetchSummary` 唯一调用者是该调度器和无人调用的 `expectTurn`）；保留实时读数轮询、`getSummary` HTTP API 及宿主账本能力。
+- 已执行：删除无生产调用的回滚写盘辅助实现、`capture.begin/pending`、`snapshot.generation/read`、`retention.describe` 与孤儿注释；测试改走生产 `start/awaitBegin`、账本、refs 与持久化结果，未删除生产行为断言。
+- 协议修正：`TurnSummary.hasBaseline` 现有契约为可选，而生成 DTO 为必选。复用 DTO 时仍保留可选字段和 interface 形状；不得按原建议直接 alias 收窄。增加旧/新载荷编译检查。
+- `keep:` `MODEL_EXTRAS_KEYS` 与组件 props 类型仍有 UI barrel 出口；`runningChangesHooks`/`turn:captured` 注释明确承诺扩展生命周期事件；共享原因码 `RUNNING_CHANGES_REASON_UNSAFE_PATH` 仍保留协议定义，`hookable` 依赖不删。
+- `keep:` `createSettingsSchemaOperations` 提供可脱离接收者调用的函数，原 service 的 `hasPath/deletePath` 使用 `this`。直接替换会破坏公开注入面的调用语义。
+- `keep:` `CaptureLimits` 用小夹具验证真实容量边界；`queue.size`/`lock.lockPath` 守护尾链清理与旧锁围栏安全；`commonDir` 省略值确有调用/测试，fallback 负责继承源仓排除规则。
+- `keep:` `retention.measure` 的原逐目录 best-effort 遍历。原建议递归 `readdir` 后只取 `isFile()` 会改变符号链接计量与子目录读取失败语义，已有回归覆盖，不为少几行改行为。
+
+原 `net: -456 lines, -2 deps possible` 是审计预估（包含上述撤回项及重叠），不是执行结果；本次未删依赖。

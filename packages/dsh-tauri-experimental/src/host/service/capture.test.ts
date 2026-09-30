@@ -164,7 +164,8 @@ describe('turn 结算编排', () => {
     const { worktree } = await fixture()
     captureFor()
 
-    await capture.begin('s5', 1)
+    capture.start('s5', 1)
+    await capture.awaitBegin('s5', 1)
     await writeFile(join(worktree, 'a.txt'), 'one\ntwo\nthree\n', 'utf8')
     await capture.settle('s5', 1)
 
@@ -181,7 +182,8 @@ describe('turn 结算编排', () => {
     // 用户手动停止就发生在这个窗口里：`agent/pre-step` 的屏障还没回来（before 快照在跑
     // `git add`），而 `turn/end` 已经到达。变更前这种 turn 会**整个消失**——账本里没有行，
     // 直到很久以后某个 idle 才被顺手收掉（实测有 30 分钟后才落账的）。
-    const beginning = capture.begin('s1', 1)
+    capture.start('s1', 1)
+    const beginning = capture.awaitBegin('s1', 1)
     await capture.settle('s1', 1)
     await beginning
 
@@ -196,7 +198,8 @@ describe('turn 结算编排', () => {
     await fixture()
     captureFor()
 
-    const beginning = capture.begin('s2', 1)
+    capture.start('s2', 1)
+    const beginning = capture.awaitBegin('s2', 1)
     await capture.settleIdle('s2')
     await beginning
 
@@ -208,7 +211,8 @@ describe('turn 结算编排', () => {
     const captured: number[] = []
     captureFor(captured)
 
-    const beginning = capture.begin('s3', 1)
+    capture.start('s3', 1)
+    const beginning = capture.awaitBegin('s3', 1)
     await Promise.all([capture.settle('s3', 1), capture.settleIdle('s3')])
     await beginning
 
@@ -221,11 +225,13 @@ describe('turn 结算编排', () => {
     await fixture()
     captureFor()
 
-    const first = capture.begin('s6', 1)
+    capture.start('s6', 1)
+    const first = capture.awaitBegin('s6', 1)
     const idle = capture.settleIdle('s6')
     // idle 之后（用户重新发消息）立刻开始的新一轮：这次兜底不能把它一起结算掉，
     // 否则它的 after 会在 before 刚结束时被拍下来，那一轮的真实改动就永远拿不到了。
-    const second = capture.begin('s6', 2)
+    capture.start('s6', 2)
+    const second = capture.awaitBegin('s6', 2)
     await Promise.all([first, second, idle])
 
     expect((await ledger.load('s6')).turns.map(turn => turn.turn)).toEqual([1])
@@ -246,7 +252,8 @@ describe('turn 结算编排', () => {
 
     // 复现 git/IO 抛错：runBeginTurn 里的 queue.run 直接拒绝，before 快照连结果对象都没有。
     setFailing(true)
-    await capture.begin('s7', 1)
+    capture.start('s7', 1)
+    await capture.awaitBegin('s7', 1)
     setFailing(false)
     // 结算没有条目可结算，但不能因此把这一轮从账本里抹掉（客户端靠账本行停止重试）。
     await capture.settleIdle('s7')
@@ -262,7 +269,8 @@ describe('turn 结算编排', () => {
     const { setFailing } = faultyQueue()
     captureFor()
 
-    await capture.begin('s8', 1)
+    capture.start('s8', 1)
+    await capture.awaitBegin('s8', 1)
     await writeFile(join(worktree, 'a.txt'), 'one\ntwo\nthree\n', 'utf8')
 
     // after 快照这一步抛错：账本还没有这一轮。
@@ -284,12 +292,14 @@ describe('运行中提示条的读数生命周期', () => {
     await fixture()
     captureFor()
 
-    await capture.begin('s9', 1)
+    capture.start('s9', 1)
+    await capture.awaitBegin('s9', 1)
     expect(capture.live('s9')).toMatchObject({ active: true, turn: 1 })
 
     // 第 1 轮还在后台结算（after 快照排队），用户已经发了新消息：
     // 此时若还报第 1 轮的读数，客户端提示条就会显示跨轮的累加数字。
-    await capture.begin('s9', 2)
+    capture.start('s9', 2)
+    await capture.awaitBegin('s9', 2)
     expect(capture.live('s9')).toMatchObject({ active: true, turn: 2 })
   })
 
@@ -297,7 +307,8 @@ describe('运行中提示条的读数生命周期', () => {
     const { worktree } = await fixture()
     captureFor()
 
-    await capture.begin('s10', 1)
+    capture.start('s10', 1)
+    await capture.awaitBegin('s10', 1)
     await writeFile(join(worktree, 'a.txt'), 'one\ntwo\nthree\n', 'utf8')
     // 会话结束：读数归零，客户端提示条立刻消失。
     capture.resetLive('s10')
@@ -314,8 +325,10 @@ describe('运行中提示条的读数生命周期', () => {
     await fixture()
     captureFor()
 
-    await capture.begin('s11', 1)
-    await capture.begin('s12', 1)
+    capture.start('s11', 1)
+    await capture.awaitBegin('s11', 1)
+    capture.start('s12', 1)
+    await capture.awaitBegin('s12', 1)
 
     capture.resetLive('s11')
     expect(capture.live('s11').active).toBe(false)
@@ -331,7 +344,8 @@ describe('运行中提示条的读数生命周期', () => {
     const gate = gatedQueue()
     captureFor()
 
-    await capture.begin('s13', 1)
+    capture.start('s13', 1)
+    await capture.awaitBegin('s13', 1)
     expect(capture.live('s13')).toMatchObject({ active: true, turn: 1 })
 
     // 关上闸门后，下一次定时刷新（1.5s）会挂在队列里 —— 等它真的开始。
@@ -350,26 +364,23 @@ describe('运行中提示条的读数生命周期', () => {
     expect(capture.live('s13').active).toBe(false)
   })
 
-  it('读数归零不等于这一轮已落定：撤销判定仍然看结算状态', async () => {
-    await fixture()
-    captureFor()
+  it('resetLive stops live readings without settling or losing the turn', async () => {
+    const { worktree } = await fixture()
+    capture.start('s14', 1)
+    await capture.awaitBegin('s14', 1)
+    await writeFile(join(worktree, 'a.txt'), 'one\ntwo\nthree\n', 'utf8')
 
-    expect(capture.pending('s14', 1)).toBe(false)
-
-    await capture.begin('s14', 1)
-    expect(capture.pending('s14', 1)).toBe(true)
-    expect(capture.pending('s14')).toBe(true)
-    expect(capture.pending('s14', 2)).toBe(false)
-    expect(capture.pending('s15')).toBe(false)
-
-    // 会话结束（读数归零）之后这一轮仍在后台结算：撤销必须继续被拒绝。
     capture.resetLive('s14')
-    expect(capture.live('s14').active).toBe(false)
-    expect(capture.pending('s14', 1)).toBe(true)
+    expect(capture.live('s14')).toEqual({ active: false, turn: null, fileCount: 0, insertions: 0, deletions: 0 })
+    expect((await ledger.load('s14')).turns).toEqual([])
 
     await capture.settle('s14', 1)
-    expect(capture.pending('s14', 1)).toBe(false)
-    expect(capture.pending('s14')).toBe(false)
+    const current = await ledger.load('s14')
+    expect(current.turns.map(turn => turn.turn)).toEqual([1])
+    expect(current.turns[0]?.files).toEqual([{ path: 'a.txt', status: 'M', insertions: 1, deletions: 0, binary: false }])
+    await writeFile(join(worktree, 'a.txt'), 'later\n', 'utf8')
+    await capture.settle('s14', 1)
+    expect(await ledger.load('s14')).toEqual(current)
   })
 
   it('工作区里的嵌套仓库不会让运行中读数凭空多出文件（提示条假报 +N）', async () => {
@@ -389,7 +400,8 @@ describe('运行中提示条的读数生命周期', () => {
     await run('git', ['-C', worktree, ...identity, 'add', 'source/react-use'], { windowsHide: true })
 
     captureFor()
-    await capture.begin('s16', 1)
+    capture.start('s16', 1)
+    await capture.awaitBegin('s16', 1)
     await writeFile(join(worktree, 'a.txt'), 'one\ntwo\nthree\n', 'utf8')
 
     // 等第一次定时刷新（1.5s 起）落地：读数出现就必须正好是 a.txt 这一处改动。
@@ -420,7 +432,8 @@ describe('工作区被带外换提交世代（新建工作树 / checkout 到 ori
     const older = await gitAt('rev-parse', 'HEAD~1')
 
     captureFor()
-    await capture.begin('s-head', 1)
+    capture.start('s-head', 1)
+    await capture.awaitBegin('s-head', 1)
     expect(capture.live('s-head')).toMatchObject({ active: true, turn: 1 })
 
     await gitAt('checkout', '--quiet', older)
@@ -462,7 +475,8 @@ describe('工作区被带外换提交世代（新建工作树 / checkout 到 ori
       return result
     })
     try {
-      await capture.begin('s-race', 1)
+      capture.start('s-race', 1)
+      await capture.awaitBegin('s-race', 1)
     }
     finally {
       spy.mockRestore()
@@ -492,7 +506,8 @@ describe('屏障等待预算（容量治理与 before 一次持锁）', () => {
     const recorded = recordingQueue()
     const startedAt = Date.now()
 
-    await capture.begin('s-barrier', 1)
+    capture.start('s-barrier', 1)
+    await capture.awaitBegin('s-barrier', 1)
     expect(recorded).toHaveLength(1)
     expect(recorded[0]).toMatchObject({ lockTimeoutMs: LOCK_BARRIER_TIMEOUT_MS })
     expect(recorded[0]!.waitDeadline).toBeGreaterThanOrEqual(startedAt + LOCK_BARRIER_TIMEOUT_MS)
@@ -515,7 +530,8 @@ describe('屏障等待预算（容量治理与 before 一次持锁）', () => {
     const ensure = vi.spyOn(retention, 'ensure')
     const captureSnapshot = vi.spyOn(snapshot, 'capture')
     try {
-      await capture.begin('s-busy', 1)
+      capture.start('s-busy', 1)
+      await capture.awaitBegin('s-busy', 1)
       expect(calls).toBe(1)
       expect(ensure).not.toHaveBeenCalled()
       expect(captureSnapshot).not.toHaveBeenCalled()
@@ -545,11 +561,12 @@ describe('屏障等待预算（容量治理与 before 一次持锁）', () => {
     })
     const captureSnapshot = vi.spyOn(snapshot, 'capture')
     try {
-      await capture.begin('s-slow-retention', 1)
+      capture.start('s-slow-retention', 1)
+      await capture.awaitBegin('s-slow-retention', 1)
       expect(recorded).toHaveLength(1)
       expect(Date.now()).toBeGreaterThan(recorded[0]!.waitDeadline!)
       expect(captureSnapshot).toHaveBeenCalledTimes(1)
-      expect(capture.pending('s-slow-retention', 1)).toBe(true)
+      expect((await ledger.load('s-slow-retention')).turns).toEqual([])
       expect(capture.live('s-slow-retention')).toMatchObject({ active: true, turn: 1 })
     }
     finally {
@@ -571,7 +588,8 @@ describe('屏障等待预算（容量治理与 before 一次持锁）', () => {
     const ensure = vi.spyOn(retention, 'ensure').mockRejectedValueOnce(new Error('retention failed'))
     const captureSnapshot = vi.spyOn(snapshot, 'capture')
     try {
-      await capture.begin('s-retention-failed', 1)
+      capture.start('s-retention-failed', 1)
+      await capture.awaitBegin('s-retention-failed', 1)
       expect(recorded).toHaveLength(1)
       expect(captureSnapshot).toHaveBeenCalledTimes(1)
       expect(captureSnapshot.mock.calls[0]?.[3]?.exclude).toEqual([])

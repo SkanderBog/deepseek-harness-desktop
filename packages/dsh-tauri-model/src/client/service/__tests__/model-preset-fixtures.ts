@@ -1,4 +1,4 @@
-import type { PresetTable } from '../../shared/model-presets'
+import type { PresetTable } from '../../../shared/model-presets'
 
 export const PRESET_FIXTURE: PresetTable = {
   'claude-3-5-sonnet': [1, 0, 200000, 8192],

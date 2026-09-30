@@ -6,7 +6,6 @@
  *   - 私有仓自带 index（stat 缓存让 `add --all` 后续轮次天然增量）；
  *   - 源仓库只做只读探测：镜像 core.autocrlf / core.eol / core.symlinks 与 info/exclude；
  *   - **快照仓代数（generation）**：整仓被隔离重建或被删后轮换，账本记录据此判定过期；
- *   - 越界与不安全路径：所有写盘路径都过 `utils/paths.ts` 的词法 + 父级符号链接校验；
  *   - 不在快照范围内却不该静默漏掉的东西（超大文件、嵌套 Git 仓库）排除并记录进账本。
  */
 
@@ -77,12 +76,6 @@ export const snapshot = defineService({
   /** 有界扫描嵌套 Git 仓库（根 + 两级，跳过噪音目录）。 */
   scan(worktree: string): string[] {
     return scanNestedRepos(worktree)
-  },
-
-  /** 读取某工作区当前代数（不存在返回 null）。 */
-  async generation(worktree: string): Promise<string | null> {
-    const marker = await readMarker(workspaceMarkerPath(snapshot.resolve(worktree)))
-    return marker?.generation ?? null
   },
 
   /** 轮换快照仓代数：整仓被删/被隔离重建后调用，旧记录据此自然过期。 */
@@ -202,17 +195,6 @@ export const snapshot = defineService({
       if (isSafeRef(ref))
         await gitInSnapshot(store, ['update-ref', '-d', ref])
     }
-  },
-
-  /** 解析 ref 指向的 commit；不存在返回 null。 */
-  async read(store: SnapshotStore, ref: string): Promise<string | null> {
-    if (!isSafeRef(ref))
-      return null
-    const result = await gitInSnapshot(store, ['rev-parse', '--verify', '--quiet', ref])
-    if (!result.ok)
-      return null
-    const oid = result.out.trim()
-    return oid.length > 0 ? oid : null
   },
 
   /**

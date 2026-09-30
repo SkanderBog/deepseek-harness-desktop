@@ -1,7 +1,7 @@
+import type { ModelDiscoveryOutcome } from '../service/model-config.ts'
 import type {
   ClientRemote,
   CredentialInfo,
-  LlmDiscoveredModel,
   LlmModelDiscoveryRequest,
   SettingsNamespaceView,
   SettingsPathOpView,
@@ -12,9 +12,7 @@ export type SettingsWriteOutcome
     | { readonly kind: 'conflict', readonly message: string }
     | { readonly kind: 'refused', readonly message: string }
 
-export type ModelDiscoveryOutcome
-  = | { readonly kind: 'found', readonly models: readonly LlmDiscoveredModel[] }
-    | { readonly kind: 'refused', readonly message: string }
+export type { ModelDiscoveryOutcome } from '../service/model-config.ts'
 
 export interface ModelsOperations {
   describeCredential: (ref: string) => Promise<CredentialInfo | undefined>

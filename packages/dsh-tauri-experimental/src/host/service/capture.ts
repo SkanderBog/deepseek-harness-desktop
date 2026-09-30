@@ -86,12 +86,6 @@ export const capture = defineService({
       await Promise.all(inflight)
   },
 
-  /** 起快照并同步等它落地：生产路径由 start / awaitBegin 分挂两个钩子，这里保留合并形态。 */
-  async begin(sessionId: string, turn: number): Promise<void> {
-    capture.start(sessionId, turn)
-    await capture.awaitBegin(sessionId, turn)
-  },
-
   /**
    * 结算一轮：等 before 快照落地 → 捕 after → 差异 → 写账本。
    *
@@ -221,28 +215,6 @@ export const capture = defineService({
         continue
       stopLivePolling(entry)
     }
-  },
-
-  /**
-   * 该轮是否仍未落定：before 快照还在飞，或 after 尚未结算。
-   * 不能用实时读数是否 active（读数是提示条的过程态，`turn/end` 一到就归零，
-   * 而这一轮此后还要在后台结算）。
-   * @param sessionId - 会话 id。
-   * @param turn - 省略即该会话是否有任何未落定的轮次。
-   */
-  pending(sessionId: string, turn?: number): boolean {
-    for (const entry of activeTurns.values()) {
-      if (entry.sessionId === sessionId && (turn === undefined || entry.turn === turn))
-        return true
-    }
-    if (turn === undefined) {
-      for (const item of beginningTurns.values()) {
-        if (item.sessionId === sessionId)
-          return true
-      }
-      return false
-    }
-    return beginningTurns.has(activeKey(sessionId, turn))
   },
 
   /**

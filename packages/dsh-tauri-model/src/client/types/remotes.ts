@@ -1,13 +1,6 @@
-export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
+import type { JsonValue, LlmModelDiscoveryRequest, RemoteResult, LlmDiscoveredModel as UILlmDiscoveredModel } from 'dsh-tauri-ui/client'
 
-export interface RemoteFailure {
-  code: string
-  message: string
-}
-
-export type RemoteResult<T>
-  = | { ok: true, value: T }
-    | { ok: false, error: RemoteFailure }
+export type { JsonValue, LlmModelDiscoveryRequest, RemoteFailure, RemoteResult } from 'dsh-tauri-ui/client'
 
 export interface CredentialInfo {
   configured: boolean
@@ -49,13 +42,6 @@ export interface LlmConfigurableProvider {
   error?: string
 }
 
-export interface LlmModelDiscoveryRequest {
-  provider?: string
-  baseURL?: string
-  api?: string
-  apiKey?: string
-}
-
 export interface LlmCatalogModel {
   id: string
   name: string
@@ -74,11 +60,7 @@ export interface LlmModelCatalog {
   groups: readonly LlmCatalogGroup[]
 }
 
-export interface LlmDiscoveredModel {
-  id: string
-  name?: string
-  contextWindow?: number
-  maxTokens?: number
+export interface LlmDiscoveredModel extends UILlmDiscoveredModel {
   inputModalities?: readonly string[]
 }
 
