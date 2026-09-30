@@ -436,44 +436,12 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         ],
     )?;
 
-    // 编辑菜单：macOS 设置了主菜单后，⌘X/⌘C/⌘V/⌘A 等组合键会先经菜单的
-    // key-equivalent 路由，若不挂载标准编辑项，WebView 的编辑快捷键会被吞掉，
-    // 输入框内无法剪切/复制/粘贴（#85）。这些预定义项绑定标准 NSMenu 选择器
-    // （cut:/copy:/paste:/selectAll:/undo:/redo:），由 AppKit 把命令转发给聚焦视图
-    // （WebView），同时保持菜单条上的撤销/重做/剪切/复制/粘贴/全选。
-    let undo = PredefinedMenuItem::undo(app, Some(&crate::config::i18n::t("menu.undo")))?;
-    let redo = PredefinedMenuItem::redo(app, Some(&crate::config::i18n::t("menu.redo")))?;
-    let cut = PredefinedMenuItem::cut(app, Some(&crate::config::i18n::t("menu.cut")))?;
-    let copy = PredefinedMenuItem::copy(app, Some(&crate::config::i18n::t("menu.copy")))?;
-    let paste = PredefinedMenuItem::paste(app, Some(&crate::config::i18n::t("menu.paste")))?;
-    let select_all =
-        PredefinedMenuItem::select_all(app, Some(&crate::config::i18n::t("menu.select_all")))?;
-    let edit_separator_after_redo = PredefinedMenuItem::separator(app)?;
-    let edit_separator_before_select_all = PredefinedMenuItem::separator(app)?;
-    let edit_menu = Submenu::with_id_and_items(
-        app,
-        "desktop-edit-menu",
-        crate::config::i18n::t("menu.edit"),
-        true,
-        &[
-            &undo,
-            &redo,
-            &edit_separator_after_redo,
-            &cut,
-            &copy,
-            &paste,
-            &edit_separator_before_select_all,
-            &select_all,
-        ],
-    )?;
-
     let menu = Menu::with_items(
         app,
         &[
             &system_application_menu,
             &file_menu,
             &run_menu,
-            &edit_menu,
             &help_menu,
         ],
     )?;

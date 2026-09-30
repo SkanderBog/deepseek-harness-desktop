@@ -12,7 +12,7 @@ function submenuItems(id: string) {
 }
 
 describe('macOS native run menu', () => {
-  it('installs File, Run, Help in order while retaining required macOS system and editing actions', () => {
+  it('installs only File, Run, Help after the macOS system menu without an Edit menu', () => {
     const nativeMenuSource = builderSource.slice(builderSource.indexOf('pub fn install_macos_menu('))
     const menu = nativeMenuSource.match(/let menu = Menu::with_items\(\s*app,\s*&\[([^\]]+)\]/)
     expect(menu).not.toBeNull()
@@ -20,10 +20,10 @@ describe('macOS native run menu', () => {
       '&system_application_menu',
       '&file_menu',
       '&run_menu',
-      '&edit_menu',
       '&help_menu',
     ])
     expect(builderSource).not.toContain('"desktop-application-menu"')
+    expect(nativeMenuSource).not.toContain('"desktop-edit-menu"')
   })
 
   it('places Application, Profiles, Plugins, Core and fullscreen in the Run submenu', () => {
