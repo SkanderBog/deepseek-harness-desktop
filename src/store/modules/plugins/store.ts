@@ -339,6 +339,28 @@ export const plugins = defineStore({
       catch (error) {
         const message = errorMessage(error)
         const refusal = parseBlockedRefusal(message)
+        // 已授权过这个精确版本还是没生效（retryable=false），说明档案把来源钉死了（catalog /
+        // git / link 或精确版本），`--latest` 越不过声明范围，插件本身没有损坏。这里没有可授权
+        // 的动作：进授权流程只会让用户靠「关闭」来表达拒绝，关掉后紧接着再补一条失败提示。
+        if (refusal?.kind === 'update-hold' && !refusal.retryable) {
+          const names = refusalNames(refusal)
+          targets.forEach((process) => {
+            // 宿主对整批逐项核验过指纹：没被点名的说明确实装上了，报成功即可，重提一次反而会把
+            // 它们重新判成「没有变化」。只有 payload 缺版本号（latest 为 null）时无从归因，那种
+            // 情况下才把整批按没生效结算。
+            if (names.size > 0 && !names.has(process.name)) {
+              this.finish(group.id, process, { process, ok: true })
+              return
+            }
+            this.finish(group.id, process, {
+              process,
+              ok: false,
+              error: i18next.t('plugins.hold_pinned_desc'),
+              reason: 'update-hold',
+            })
+          })
+          return []
+        }
         if (refusal !== null && refusalNames(refusal).size > 0) {
           const names = refusalNames(refusal)
           const blocked: PluginProcess[] = []
@@ -361,7 +383,6 @@ export const plugins = defineStore({
             ok: false,
             error: message,
             code: errorCode(message),
-            ...(refusal?.kind === 'update-hold' ? { reason: 'update-hold' as const } : {}),
           }),
         )
         return []
@@ -375,21 +396,16 @@ export const plugins = defineStore({
       if (!presenter)
         return
       const versions = refusal.versions.map(item => `${item.name}@${item.version}`).join('、')
-      const hold = refusal.kind === 'update-hold'
-      const actionable = !hold || refusal.retryable
-      const descKey = hold && !actionable ? 'plugins.hold_pinned_desc' : BLOCK_DESC[refusal.kind]
       process.approvalKey = toast(i18next.t(BLOCK_TITLE[refusal.kind], { name: process.name }), {
         variant: refusal.kind === 'incompatible' ? 'danger' : 'warning',
         timeout: 0,
-        description: i18next.t(descKey, { blocked: versions }),
-        actionProps: actionable
-          ? {
-              children: i18next.t('buttons.authorize'),
-              onPress: () => {
-                void this.approve(process.spec)
-              },
-            }
-          : undefined,
+        description: i18next.t(BLOCK_DESC[refusal.kind], { blocked: versions }),
+        actionProps: {
+          children: i18next.t('buttons.authorize'),
+          onPress: () => {
+            void this.approve(process.spec)
+          },
+        },
         onClose: (reason: ToastCloseReason) => {
           if (reason !== 'dismissed')
             return
@@ -501,6 +517,14 @@ export const plugins = defineStore({
       if (!group.options.toast || this.presenterCount === 0)
         return
       results.forEach((result) => {
+        // 来源被钉死时升级本来就无从生效：这不是失败，而是一句「保持原样」的说明，因此用可
+        // 自动消失、无需关闭的中性提示，并且不计入失败汇总。
+        if (result.reason === 'update-hold') {
+          toast(i18next.t('plugins.hold_title', { name: result.process.name }), {
+            description: i18next.t('plugins.hold_pinned_desc'),
+          })
+          return
+        }
         toast(
           i18next.t(result.ok ? RESULT_SUCCESS[group.type] : RESULT_FAILED[group.type], {
             name: result.process.name,
@@ -508,7 +532,7 @@ export const plugins = defineStore({
           { variant: result.ok ? 'default' : 'danger' },
         )
       })
-      const failed = results.filter(result => !result.ok)
+      const failed = results.filter(result => !result.ok && result.reason !== 'update-hold')
       if (failed.length > 1) {
         toast(i18next.t('plugins.result_summary', { count: failed.length }), { variant: 'danger' })
       }

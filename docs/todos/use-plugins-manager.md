@@ -271,6 +271,7 @@ interface PluginsState {
 * 宿主返回授权拦截码（如 `PLUGIN_VERSION_INCOMPATIBLE`）时，通过 `parseBlockedRefusal` 匹配目标进程。
 * 匹配成功的进程切换为 `unauthorized` 并挂载 `refusal` 载荷；同组其他未被拦截的进程**重置回 `pending**`。
 * 隐藏当前组的加载 Toast，暂停队列推进，等待用户决策。
+* 例外：升级返回 `PLUGIN_UPDATE_NO_CHANGE` 且 `retryable === false`（该精确版本已授权过仍未生效），说明档案把来源钉死了（catalog / git / link 或精确版本），`--latest` 越不过声明范围，插件本身没有损坏——**不存在可授权的动作**，因此不进入 `unauthorized`，也不产生常驻 Toast：被拦截项直接以 `ok: false, reason: 'update-hold'` 结算，宿主本次已核验通过的其余进程按成功结算，队列继续推进。
 
 
 3. **重新提交剩余集合**：
@@ -335,6 +336,8 @@ interface PluginsState {
 ├─── 进程授权等待 ─────────────► 为每个待授权项弹出独立的常驻 Toast (timeout: 0)
 │
 └─── 组结算完成 ───────────────► 依次触发结果 Toast，多项失败时追加汇总 Toast
+                                （`reason: 'update-hold'` 例外：用一条自动消失的中性提示
+                                 呈现"没有可授权的新版本"，不计入失败汇总）
 
 ```
 
