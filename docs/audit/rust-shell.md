@@ -69,4 +69,5 @@
 - **不实施**：通知 page-load 路径可能在 build 返回前执行，附加窗口还只有该注册路径；删除任一路径或原子守卫均不成立。权限注册可以部分成功，重试也可能重复 handler，本次不改变该机制或既有外部拖放注册时机。桌宠并非第三个相同 chrome 消费者（泛型 Runtime、透明窗口、脚本差异），不强行合并。当前源码没有报告描述的 about 菜单重复。
 - **不实施**：image 依赖只开启 PNG，而现有读取支持 WebP 且接受仅含头部的测试素材，替换会改变格式接受面及错误次序；资源 engines.node/pnpm/git 是分发元数据，不因 Rust 未读取而删除；get_preinstall_plugins 虽无 await，但列表读取磁盘，改同步 Tauri command 会改变执行线程，保留 async。
 - **协议与依赖**：所有 IPC command、事件、权限、窗口标签、用户配置键、CLI 旗标、DTO 字段及已公开 desktop 常量路径保留；没有新增或移除依赖，没有本地插件构建。
+- **CI 回归修正**：macOS 菜单源码契约测试原先要求旧内联文案表达式，已迁移为精确校验共享 helper 的两种状态与安装/刷新两处调用；没有放宽行为契约。八项菜单测试五个独立乱序种子各通过，全屏状态条件反转被该测试捕获，恢复后复跑通过。
 - **验证**：cargo test --all-features --locked 全量 769 项通过；cargo check --all-targets --all-features --locked 通过；完整 lib 套件按 5101/5202/5303/5404/5505 五个种子独立乱序，各 769 项通过。后端日志过滤条件反转的变异被新回归准确捕获（预期 Cargo 101），恢复后全量与五轮通过；变更文件 rustfmt 与 git diff --check 通过。配置/logger、bridge/scheduler 与跨平台 desktop 三个只读复核均无严重问题。
