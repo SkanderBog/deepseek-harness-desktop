@@ -34,6 +34,15 @@ const actionChip = tv({
   },
 })
 
+/** 队列里的进程类型 → 面板行内动作名（队列叫 upgrade/uninstall，按钮叫 update/remove） */
+const QUEUED_ACTIONS: Record<PluginProcess['type'], string> = {
+  install: 'install',
+  upgrade: 'update',
+  uninstall: 'remove',
+  disable: 'disable',
+  enable: 'enable',
+}
+
 /** 兼容性检查的问题码 → i18n key：管理器把宿主返回的 problem 原样透传给调用方 */
 const searchProblemKeys: Record<PluginSearchProblem, string> = {
   'invalid-spec': 'plugins.search_invalid_spec',
@@ -111,18 +120,24 @@ export function ConfigPlugin() {
     },
   })
 
+  /** 该插件在管理器队列里的进程类型（不在队列里为 null）。 */
+  function queuedType(id: string): PluginProcess['type'] | null {
+    return manager.processes.find(process => process.name === id)?.type ?? null
+  }
+
   /**
    * 管理器动作只等待组结算：授权等待期间的横幅与结果 Toast 都由管理器弹出，
    * 面板仅负责行内 busy 与「同一行不重复派发」。不同行的动作互不禁用，
    * 后续点击会作为新组进入管理器队列。
+   *
+   * 队列里已有该插件的同义动作时也算忙（升级 = 更新、卸载 = 移除）：Spinner 跟着队列走，
+   * 不必等宿主返回；整行禁点由 [`rowBusy`](self) 负责。
    */
   function busyWith(id: string, action: string): boolean {
-    return busy.includes(`${id}:${action}`)
-  }
-
-  /** 该插件在管理器队列里的进程类型（不在队列里为 null）。 */
-  function queuedType(id: string): PluginProcess['type'] | null {
-    return manager.processes.find(process => process.name === id)?.type ?? null
+    if (busy.includes(`${id}:${action}`))
+      return true
+    const queued = queuedType(id)
+    return queued !== null && QUEUED_ACTIONS[queued] === action
   }
 
   /** 队列里已有该插件的进程时整行禁点：再点只会把它作为新组塞进同一个队列。 */
@@ -428,7 +443,7 @@ export function ConfigPlugin() {
                 onClick={() => onUpgrade(plugin.id, plugin.latest)}
               >
                 <span className="flex items-center gap-1">
-                  <If cond={busyWith(plugin.id, 'update') || queuedType(plugin.id) === 'upgrade'} then={<Spinner size="sm" color="current" />} />
+                  <If cond={busyWith(plugin.id, 'update')} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.upgrade')}
                   <If cond={plugin.latest != null && plugin.error == null}>
                     <span className="font-mono text-[10px] opacity-80 max-w-[80px] truncate">
@@ -449,7 +464,7 @@ export function ConfigPlugin() {
                 onClick={() => onEnable(plugin.id, plugin.patchDisabled)}
               >
                 <span className="flex items-center gap-1">
-                  <If cond={busyWith(plugin.id, 'enable') || queuedType(plugin.id) === 'enable'} then={<Spinner size="sm" color="current" />} />
+                  <If cond={busyWith(plugin.id, 'enable')} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.enable')}
                 </span>
               </Chip>
@@ -461,7 +476,7 @@ export function ConfigPlugin() {
                 onClick={() => onDisable(plugin.id)}
               >
                 <span className="flex items-center gap-1">
-                  <If cond={busyWith(plugin.id, 'disable') || queuedType(plugin.id) === 'disable'} then={<Spinner size="sm" color="current" />} />
+                  <If cond={busyWith(plugin.id, 'disable')} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.disable')}
                 </span>
               </Chip>
@@ -515,7 +530,7 @@ export function ConfigPlugin() {
                 onClick={() => onRemove(plugin.id, plugin.name)}
               >
                 <span className="flex items-center gap-1">
-                  <If cond={busyWith(plugin.id, 'remove') || queuedType(plugin.id) === 'uninstall'} then={<Spinner size="sm" color="current" />} />
+                  <If cond={busyWith(plugin.id, 'remove')} then={<Spinner size="sm" color="current" />} />
                   {t('plugins.uninstall')}
                 </span>
               </Chip>

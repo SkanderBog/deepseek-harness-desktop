@@ -533,10 +533,10 @@ export const plugins = defineStore({
         return
       const pending = this.queueResults
       this.queueResults = []
-      this.presentQueueResults(pending, group.options)
+      this.presentQueueResults(pending, group)
     },
 
-    presentQueueResults(results: PluginProcessResult[], options: PluginsManagerRuntime): void {
+    presentQueueResults(results: PluginProcessResult[], group: PluginGroup): void {
       if (results.length === 0)
         return
       const succeeded = results.filter(result => result.ok).length
@@ -550,7 +550,7 @@ export const plugins = defineStore({
           && result.reason !== 'cancelled'
           && result.reason !== 'rejected',
       ).length
-      const restart = options.restartOnSettle && succeeded > 0
+      const restart = group.options.restartOnSettle && succeeded > 0
       // 需要重启时把「重启」按钮挂在结果气泡上：一次操作只留一条。单独再弹一条常驻的重启提示
       // 会和结果提示同时出现，用户看到的就是「两个 toast 说同一件事」。
       let restartKey = ''
