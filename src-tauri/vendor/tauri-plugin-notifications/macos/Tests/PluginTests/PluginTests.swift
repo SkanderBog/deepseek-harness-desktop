@@ -1336,6 +1336,55 @@ final class NotificationHandlerTests: XCTestCase {
         XCTAssertEqual(pendingNotification?.title, "Scheduled")
     }
 
+    func testEveryQuestionRoundKeepsInputSubmitAndRoutingData() throws {
+        for round in 1...2 {
+            let tag = "dsh-notification-pending-session-\(round)"
+            let extra = ["sessionId": "session", "tag": tag]
+            let action = Action(
+                id: "reply", title: "Reply", foreground: false, input: true,
+                inputButtonTitle: "Submit", inputPlaceholder: "Your answer"
+            )
+            let input = try XCTUnwrap(makeActions([action]).first as? UNTextInputNotificationAction)
+            XCTAssertEqual(input.textInputButtonTitle, "Submit")
+            XCTAssertEqual(input.textInputPlaceholder, "Your answer")
+            XCTAssertFalse(input.options.contains(.foreground))
+
+            let notification = makeTestNotification(
+                id: round, actionTypeId: "dsh-notification-reply", extra: extra, silent: true
+            )
+            let content = try makeNotificationContent(notification)
+            let request = UNNotificationRequest(identifier: "\(round)", content: content, trigger: nil)
+            handler.saveNotification(request.identifier, notification)
+
+            XCTAssertEqual(content.categoryIdentifier, "dsh-notification-reply")
+            let active = try XCTUnwrap(handler.toActiveNotification(request))
+            let received = ReceivedNotification(actionId: "reply", inputValue: "answer \(round)", notification: active)
+            let json = try XCTUnwrap(parseJSON(received.toJSONString()))
+            XCTAssertEqual(json["inputValue"] as? String, "answer \(round)")
+            let payload = try XCTUnwrap(json["notification"] as? JsonObject)
+            XCTAssertEqual(payload["extra"] as? [String: String], extra)
+
+            XCTAssertNil(handler.toNotificationClick(request, actionIdentifier: "reply"))
+            XCTAssertNil(handler.toNotificationClick(request, actionIdentifier: UNNotificationDismissActionIdentifier))
+            let click = try XCTUnwrap(handler.toNotificationClick(request, actionIdentifier: UNNotificationDefaultActionIdentifier))
+            XCTAssertEqual(click.data, extra)
+            XCTAssertEqual(click.id, round)
+
+            let presentation = handler.presentationOptions(for: request)
+            XCTAssertTrue(presentation.contains(.alert))
+            XCTAssertFalse(presentation.contains(.sound))
+        }
+    }
+
+    func testNonSilentLocalNotificationsKeepSound() {
+        let notification = makeTestNotification(id: 123, silent: false)
+        handler.saveNotification("123", notification)
+        let request = UNNotificationRequest(identifier: "123", content: UNMutableNotificationContent(), trigger: nil)
+        let presentation = handler.presentationOptions(for: request)
+        XCTAssertTrue(presentation.contains(.alert))
+        XCTAssertTrue(presentation.contains(.sound))
+    }
+
     func testSetClickListenerActive() {
         // Initially false
         handler.setClickListenerActive(true)
