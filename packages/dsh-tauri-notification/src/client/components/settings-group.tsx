@@ -1,7 +1,7 @@
 import type { ChangeEvent, ReactElement, ReactNode } from 'react'
 import type { SoundPlayer } from '../service/sound'
 import type { NotificationSound, TurnCompleteMode } from '../types'
-import { Button, Checkbox, Select } from 'dsh-tauri-ui/client'
+import { Button, Select, Switch } from 'dsh-tauri-ui/client'
 import { useStore } from 'dsh-tauri/client'
 import { useEffect, useRef, useState } from 'react'
 import { locale } from '../locales'
@@ -30,11 +30,11 @@ function Row(props: { title: string, hint: string, children: ReactNode }): React
 }
 
 /**
- * 通知设置：轮次完成通知 / 启用权限通知 / 启用问题通知 / 通知提示音。
+ * 通知设置分组：轮次完成通知 / 启用权限通知 / 启用问题通知 / 通知提示音。
  *
  * 挂在官方「通用」设置页的 `settings.general.item` 槽位里（官方 `GeneralSection` 负责页面骨架，
- * 条目只贡献内容），所以每行的尺寸、留白和分隔线都照官方通用页自己的行来画，不加卡片或分组标题——
- * 四行标题本身就说明了这是通知设置。
+ * 条目只贡献内容）：不套卡片、也不加分组标题——四行的标题本身已经说明这是通知设置，
+ * 样式直接对齐官方通用页自己的行。开关用官方 `Switch`，与页面里其它开关保持一致。
  * 状态读写都走 `notificationSettings` 单例，与通知运行时共用同一份配置。
  */
 export function NotificationSettingsGroup(): ReactElement {
@@ -100,6 +100,7 @@ export function NotificationSettingsGroup(): ReactElement {
     // （`[data-slot="settings.general.item"] > :last-child { border-bottom: none }`），
     // 中间那些条目得自己带，否则本组最后一行会跟下一条官方设置黏在一起。
     <div className="flex flex-col border-b-[0.5px] border-border-l2">
+      {/* 行包一层：`last:border-b-0` 要落在最后一行上，而不能被下面的提示行顶掉。 */}
       <div className="flex flex-col">
         <Row title={locale.text('turnComplete')} hint={locale.text('turnCompleteHint')}>
           <Select
@@ -109,16 +110,16 @@ export function NotificationSettingsGroup(): ReactElement {
           />
         </Row>
         <Row title={locale.text('approval')} hint={locale.text('approvalHint')}>
-          <Checkbox
+          <Switch
             checked={approval}
-            aria-label={locale.text('approval')}
+            label={locale.text('approval')}
             onChange={next => notificationSettings.setApproval(next)}
           />
         </Row>
         <Row title={locale.text('question')} hint={locale.text('questionHint')}>
-          <Checkbox
+          <Switch
             checked={question}
-            aria-label={locale.text('question')}
+            label={locale.text('question')}
             onChange={next => notificationSettings.setQuestion(next)}
           />
         </Row>
