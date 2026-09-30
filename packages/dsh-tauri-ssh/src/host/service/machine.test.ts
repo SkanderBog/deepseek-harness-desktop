@@ -237,7 +237,12 @@ class FakeTransport implements SshTransport {
       .slice(1)
       .map(line => line.trim())
       .filter(line => line.includes('machine.ts:') || line.includes('machine.test.ts:'))
-      .map(line => line.replace(/^at /, '').replace(/^.*(machine[^/\\]*\.ts:\d+:\d+).*$/, '$1'))
+      .map((line) => {
+        const open = line.indexOf('(')
+        const close = line.lastIndexOf(')')
+        const loc = open >= 0 && close > open ? line.slice(open + 1, close) : line.replace(/^at /, '')
+        return loc.slice(loc.lastIndexOf('/') + 1)
+      })
       .join(' < ')}`)
     this.profiles.push(profile)
     const session = this.sessionFactory()
