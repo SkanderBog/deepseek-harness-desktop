@@ -310,7 +310,7 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
             actions: actions.map(action => ({
               id: action.action,
               title: action.title,
-              foreground: false,
+              foreground: true,
               input: action.input === true,
               inputPlaceholder: action.inputPlaceholder,
               inputButtonTitle: action.inputButtonTitle,
