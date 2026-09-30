@@ -194,9 +194,12 @@ pub async fn refresh_plugin_updates(
     plugin::update::refresh(&app_handle).await
 }
 
-/// 批量升级已安装插件：`dsh plugin --profile <当前档案> update <ids...> --latest`，
+/// 批量升级已安装插件：`dsh plugin --profile <当前档案> update <id...> --latest`，
 /// 合并为单次子进程执行，输出通过 `preinstall-log` 事件实时推送；升级前逐项
 /// 记录依赖指纹，命令返回后核验是否真实落盘（防 pnpm 假成功）。
+///
+/// `ids` 的每一项是 `<id>` 或 `<id>@<版本>`（保留参数名以免改动前端载荷键）：面板显示着
+/// 目标版本，带上它核验与显式安装兜底才有据可依（见 `plugin::update_many`）。
 #[tauri::command]
 pub async fn update_dsh_plugins(app_handle: AppHandle, ids: Vec<String>) -> Result<(), String> {
     plugin::update_many(&app_handle, &ids).await?;
