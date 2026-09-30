@@ -42,17 +42,25 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       try? self.plugin?.trigger("notification", data: notificationData)
     }
 
-    return presentationOptions(for: notification.request)
-  }
+    // For push notifications in foreground, don't show system notification
+    // (only trigger event so developer can handle it)
+    let isPushNotification = notification.request.trigger?.isKind(of: UNPushNotificationTrigger.self) == true
+    if isPushNotification {
+      return UNNotificationPresentationOptions.init(rawValue: 0)
+    }
 
-  func presentationOptions(for request: UNNotificationRequest) -> UNNotificationPresentationOptions {
-    if request.trigger is UNPushNotificationTrigger {
-      return []
+    // For local notifications, check if silent
+    if let options: Notification = notificationsMap[notification.request.identifier] {
+      if options.silent ?? false {
+        return UNNotificationPresentationOptions.init(rawValue: 0)
+      }
     }
-    if notificationsMap[request.identifier]?.silent == true {
-      return [.badge, .alert]
-    }
-    return [.badge, .sound, .alert]
+
+    return [
+      .badge,
+      .sound,
+      .alert,
+    ]
   }
 
   /// Convert notification request to ReceivedNotification (for push notifications not in map)
@@ -111,24 +119,9 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
         ))
     }
 
-    guard let clickedData = toNotificationClick(originalNotificationRequest, actionIdentifier: actionId) else {
-      return
-    }
-
-    if hasClickedListener {
-      try? self.plugin?.trigger("notificationClicked", data: clickedData)
-    } else {
-      pendingNotificationClick = clickedData
-    }
-  }
-
-  func toNotificationClick(_ request: UNNotificationRequest, actionIdentifier: String) -> NotificationClickedData? {
-    guard actionIdentifier == UNNotificationDefaultActionIdentifier else {
-      return nil
-    }
-
-    let id = Int(request.identifier) ?? -1
-    let userInfo = request.content.userInfo
+    // Handle notificationClicked for both local and push notifications
+    let id = Int(originalNotificationRequest.identifier) ?? -1
+    let userInfo = originalNotificationRequest.content.userInfo
     var dataDict: [String: String]? = nil
     if !userInfo.isEmpty {
       dataDict = [:]
@@ -142,7 +135,15 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       }
     }
 
-    return NotificationClickedData(id: id, data: dataDict)
+    let clickedData = NotificationClickedData(id: id, data: dataDict)
+
+    if hasClickedListener {
+      // Listener exists, trigger directly
+      try? self.plugin?.trigger("notificationClicked", data: clickedData)
+    } else {
+      // No listener (cold-start), store for later
+      pendingNotificationClick = clickedData
+    }
   }
 
   func toActiveNotification(_ request: UNNotificationRequest) -> ActiveNotification? {
@@ -155,8 +156,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       body: request.content.body,
       sound: notificationRequest.sound ?? "",
       actionTypeId: request.content.categoryIdentifier,
-      attachments: notificationRequest.attachments,
-      extra: notificationRequest.extra
+      attachments: notificationRequest.attachments
     )
   }
 
@@ -187,7 +187,6 @@ struct ActiveNotification: Encodable {
   let sound: String
   let actionTypeId: String
   let attachments: [NotificationAttachment]?
-  var extra: [String: String]? = nil
   var source: String = "local"
 }
 
