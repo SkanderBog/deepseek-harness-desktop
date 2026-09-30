@@ -9,8 +9,6 @@ export const queryKeys = {
   info: ['info'] as const,
   /** CLI 链接状态（debug 面板） */
   cliStatus: ['cli_status'] as const,
-  /** 服务运行日志（debug 面板，2s 轮询） */
-  logs: ['logs'] as const,
   /** 开机自启开关 */
   launchOnLogin: ['launch_on_login'] as const,
   /** Harness 核心列表（local / app-<tag>） */

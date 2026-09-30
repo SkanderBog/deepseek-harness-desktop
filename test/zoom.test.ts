@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { normalizeZoomFactor } from '../src/store/modules/setting/utils'
 import {
-  normalizeZoomFactor,
   zoomActionFromBridgeMessage,
   zoomActionFromShortcut,
-  zoomFactorFromLevel,
-  zoomLevelFromFactor,
 } from '../src/utils/zoom'
 
 function shortcut(
@@ -55,30 +53,6 @@ describe('desktop zoom shortcuts', () => {
     expect(zoomActionFromBridgeMessage(null)).toBeNull()
   })
 })
-
-describe('zoom level ↔ factor mapping (Chromium base 1.2)', () => {
-  it('maps levels to factors', () => {
-    expect(zoomFactorFromLevel(0)).toBe(1)
-    expect(zoomFactorFromLevel(1)).toBeCloseTo(1.2, 10)
-    expect(zoomFactorFromLevel(-1)).toBeCloseTo(1 / 1.2, 10)
-    expect(zoomFactorFromLevel(3)).toBeCloseTo(1.728, 10)
-  })
-
-  it('maps factors back to levels', () => {
-    expect(zoomLevelFromFactor(1)).toBe(0)
-    expect(zoomLevelFromFactor(1.2)).toBeCloseTo(1, 10)
-    expect(zoomLevelFromFactor(1.44)).toBeCloseTo(2, 10)
-    // 比例不是 1.2 的整数次幂 → 小数级别（Electron `getZoomLevel()` 同样可能返回小数）
-    expect(zoomLevelFromFactor(1.4)).toBeCloseTo(1.8455, 3)
-  })
-
-  it('round-trips level → factor → level', () => {
-    for (const level of [-2, -1, 0, 1, 2, 5]) {
-      expect(zoomLevelFromFactor(zoomFactorFromLevel(level))).toBeCloseTo(level, 10)
-    }
-  })
-})
-
 describe('zoom factor stepping (mirrors Rust normalize_zoom_factor)', () => {
   it('clamps to [0.5, 2.0] and snaps to the 0.1 grid', () => {
     expect(normalizeZoomFactor(0.1)).toBe(0.5)
