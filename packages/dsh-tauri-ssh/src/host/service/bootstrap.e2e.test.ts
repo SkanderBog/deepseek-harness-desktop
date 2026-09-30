@@ -1,32 +1,24 @@
-/**
- * Real-machine E2E (linux x64): a fresh remote bootstrap through the REAL
- * transport, planner (live GitHub metadata), install script, launch, and
- * boot-HTML readiness, then a reconnect that skips the install. Gated behind
- * `DSH_SSH_E2E_HOST` so the ordinary test run never needs a remote:
- *
- *   DSH_SSH_E2E_HOST=dev pnpm --filter dsh-tauri-ssh exec vitest run \
- *     src/host/service/bootstrap.e2e.test.ts
- *
- * Shares the machine with parallel nodes: default layout (`~/.dsh-desktop`)
- * and the default port, leftover processes cleaned before and after, and the
- * installed tree deliberately left in place (the shared "already
- * initialized" state other nodes may reuse).
- * @module dsh-tauri-ssh/host/service/bootstrap.e2e
- */
-
 /* eslint-disable no-console -- the run's console output IS the recorded evidence */
-import type { MachineProfile, SshLink } from '../types/index'
-import type { SshTransport } from './transport'
+import type { MachineProfile, SshLink, SshSession } from '../types/index'
+import type { SshTransportOptions } from './transport.types'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { clearHostRuntime, setHostConfig, setKnownHostsPath, setMachineDeps } from '../config/runtime'
 import { MachineId } from '../types/index'
-import { SshMachineEvents } from './events'
-import { KnownHostsStore } from './host-keys'
-import { SshManager } from './manager'
-import { SshConfigResolver } from './ssh-config'
-import { Ssh2Transport } from './transport'
+import { EMPTY_ALLOWLIST } from '../utils/allowlist'
+import { resolveSshAuth } from '../utils/ssh-config'
+import { events } from './events'
+import { machine } from './machine'
+import { transport } from './transport'
+
+const HOME_DIR = process.env.HOME ?? ''
+const SSH_DIR = join(HOME_DIR, '.ssh')
+
+function credentialsOf(target: MachineProfile) {
+  return resolveSshAuth(target, SSH_DIR, HOME_DIR)
+}
 
 /** The shared dev machine alias from `~/.ssh/config` (key auth). */
 const HOST = process.env.DSH_SSH_E2E_HOST
@@ -97,30 +89,32 @@ EOF
 
 describe.skipIf(HOST === undefined)('bootstrap E2E (real linux x64 remote)', () => {
   const roots: string[] = []
-  let manager!: SshManager
-  let events!: SshMachineEvents
-  let transport!: SshTransport
+  const options: SshTransportOptions = {
+    readyTimeoutMs: E2E_CONFIG.connectTimeoutMs,
+    resolveProfile: credentialsOf,
+    keepaliveIntervalMs: E2E_CONFIG.keepaliveIntervalMs,
+    keepaliveCountMax: E2E_CONFIG.keepaliveCountMax,
+  }
+
+  async function openRaw(): Promise<SshSession> {
+    return await transport.connect(profile, () => true, options)
+  }
 
   beforeAll(() => {
     const known = mkdtempSync(join(tmpdir(), 'dsh-ssh-e2e-'))
     roots.push(known)
-    events = new SshMachineEvents()
-    transport = new Ssh2Transport(E2E_CONFIG.connectTimeoutMs, new SshConfigResolver(join(process.env.HOME ?? '', '.ssh'), process.env.HOME ?? ''))
-    manager = new SshManager({
-      transport,
-      knownHosts: new KnownHostsStore(join(known, 'known-hosts.json')),
-      config: E2E_CONFIG,
-      events,
-      emitStatus: () => {},
-    })
-    manager.refreshProfiles(new Map([[profile.id, profile]]))
+    clearHostRuntime()
+    setHostConfig({ ...E2E_CONFIG, sshDir: SSH_DIR })
+    setKnownHostsPath(join(known, 'known-hosts.json'))
+    setMachineDeps({ transport, emitStatus: () => {}, localAllowlist: () => EMPTY_ALLOWLIST })
+    machine.refreshProfiles(new Map([[profile.id, profile]]))
   })
 
   afterAll(async () => {
-    await manager.disconnect(profile.id).catch(() => undefined)
-    await manager.dispose().catch(() => undefined)
+    await machine.disconnect(profile.id).catch(() => undefined)
+    await machine.dispose().catch(() => undefined)
     // Leave the installed tree for sibling nodes; stop only our processes.
-    const session = await transport.connect(profile, () => true).catch(() => undefined)
+    const session = await openRaw().catch(() => undefined)
     if (session !== undefined) {
       const leftovers = await session.exec(`${CLEANUP_COMMAND}\nrm -f "$HOME/.dsh-e2e-port.yml"`).catch(() => undefined)
       const remaining = (leftovers?.stdout ?? '(probe failed)').trim()
@@ -136,7 +130,7 @@ describe.skipIf(HOST === undefined)('bootstrap E2E (real linux x64 remote)', () 
   it('bootstraps a fresh machine end to end (probe → download → verify → install → launch → ready)', async () => {
     // Fresh start: stop leftover shared-layout processes, wipe the tree, and
     // stage the port overlay the launch's --patch consumes.
-    const cleaner = await transport.connect(profile, () => true)
+    const cleaner = await openRaw()
     const wiped = await cleaner.exec(`${CLEANUP_COMMAND}\nrm -rf "$HOME/.dsh-desktop"\n${PORT_PATCH_COMMAND}\n[ -f "$HOME/.dsh-e2e-port.yml" ] && [ ! -e "$HOME/.dsh-desktop" ] && echo wiped`)
     await cleaner.close()
     expect(wiped.stdout).toContain('wiped')
@@ -144,7 +138,7 @@ describe.skipIf(HOST === undefined)('bootstrap E2E (real linux x64 remote)', () 
     const startedAt = Date.now()
     let link: SshLink
     try {
-      link = await manager.connect(profile.id)
+      link = await machine.connect(profile.id)
     }
     catch (error) {
       // Surface everything the event channel captured before failing.
@@ -169,11 +163,11 @@ describe.skipIf(HOST === undefined)('bootstrap E2E (real linux x64 remote)', () 
     // readiness is judged by the legacy fallback — the designed behavior;
     // instances that serve the SPA manifest take the boot-HTML path instead.
     console.log(`[e2e] readiness judged by: ${ready?.line}`)
-    expect(manager.status(profile.id).state).toBe('connected')
+    expect(machine.status(profile.id).state).toBe('connected')
   }, 30 * 60_000)
 
   it('installs the shared default layout with working binaries', async () => {
-    const session = await transport.connect(profile, () => true)
+    const session = await openRaw()
     const probe = await session.exec(
       `"$HOME/.dsh-desktop/runtime/bin/node" --version && ls "$HOME/.dsh-desktop/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js" >/dev/null && echo entry-ok && ls "$HOME/.dsh-desktop/dependencies/pnpm/bin/pnpm.cjs" >/dev/null && echo pnpm-ok`,
     )
@@ -186,9 +180,9 @@ describe.skipIf(HOST === undefined)('bootstrap E2E (real linux x64 remote)', () 
   })
 
   it('reconnects without reinstalling and returns to ready', async () => {
-    await manager.disconnect(profile.id)
+    await machine.disconnect(profile.id)
     const page0 = events.since(profile.id)
-    const link = await manager.connect(profile.id)
+    const link = await machine.connect(profile.id)
     expect(link.tunnelBaseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
     const page1 = events.since(profile.id)
     const fresh = page1.events.filter(event => event.seq > (page0.events.at(-1)?.seq ?? 0))

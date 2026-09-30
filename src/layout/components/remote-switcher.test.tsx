@@ -36,7 +36,7 @@ function machineOf(partial: Partial<SshMachineRow>): SshMachineRow {
 let engineMachines: SshMachineRow[] = []
 /** 本轮引擎回报的 SSH 开关（false = 插件未启用，壳层不渲染控件）。 */
 let engineEnabled = true
-/** 是否模拟本地实例不可达（/api-ssh 抛错 → 降级态）。 */
+/** 是否模拟本地实例不可达（ssh API 抛错 → 降级态）。 */
 let engineUnreachable = false
 
 let disconnectSpy = vi.fn(async () => undefined)

@@ -16,6 +16,16 @@ const plugins = [
   'dsh-tauri-ui',
   'dsh-tauri-notification',
   'dsh-tauri-worktree',
+  'dsh-tauri-ssh',
+]
+
+// 壳层走 @tauri-apps/plugin-http（Rust 侧发请求），复用 ssh 路由再生成一份调用层。
+const SHELL_SERVERS = [
+  {
+    input: 'packages/dsh-tauri-ssh/src/host/routes',
+    output: { main: 'src/apis/remote.ts', type: 'src/apis/remote.types.ts' },
+    meta: { baseURL: JSON.stringify('/api/desktop/dsh-tauri-ssh'), import: { http: './http' } },
+  },
 ]
 
 export default defineConfig({
@@ -23,9 +33,12 @@ export default defineConfig({
   meta: { import: { http: 'dsh-tauri/client' } },
   // worktree 的根级 routes/post.ts、routes/delete.ts 生成名是 `post` / 保留字 `delete`
   patch: { operations: { delete: 'deleteWorktree', post: 'postWorktree' } },
-  servers: plugins.map(plugin => ({
-    input: `packages/${plugin}/src/host/routes`,
-    output: { main: `packages/${plugin}/src/client/apis/index.ts` },
-    meta: { baseURL: JSON.stringify(`/api/desktop/${plugin}`) },
-  })),
+  servers: [
+    ...plugins.map(plugin => ({
+      input: `packages/${plugin}/src/host/routes`,
+      output: { main: `packages/${plugin}/src/client/apis/index.ts` },
+      meta: { baseURL: JSON.stringify(`/api/desktop/${plugin}`) },
+    })),
+    ...SHELL_SERVERS,
+  ],
 })

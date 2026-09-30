@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest'
-import { en, zh } from './index'
+import { describe, expect, it, vi } from 'vitest'
+
+import { PLUGIN_ID } from '../constants/index'
+import { en, locale, zh } from './index'
+
+vi.mock('dsh-tauri/client', async () => (await import('../test-utils/client-mock')).clientMock)
 
 describe('locales', () => {
   it('en covers every zh key with no extras', () => {
@@ -13,5 +17,9 @@ describe('locales', () => {
     for (const [key, value] of Object.entries(en)) {
       expect(value, `en.${key}`).toBeTruthy()
     }
+  })
+
+  it('registers the plugin namespace', () => {
+    expect(locale.NS).toBe(PLUGIN_ID)
   })
 })

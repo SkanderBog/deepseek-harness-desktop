@@ -1,8 +1,8 @@
 /**
- * SSH 远端机器的类型面：壳层消费 `/api-ssh`（本地实例上的 dsh-tauri-ssh
- * 插件路由）所需的最小机器行词汇。字段与插件 host 侧
- * `SshMachineListItem`（C-STATE / S1 契约）逐字对齐：六态连接状态 +
- * `nextRetryAt`/`authMethod` 增量、隧道 URL、最近错误与机器标识色。
+ * SSH 远端机器的类型面：壳层消费 `dsh-tauri-ssh` 插件的 REST 路由
+ * （`/api/desktop/dsh-tauri-ssh/*`，经 `src/apis/remote.ts`）所需的最小机器行词汇。
+ * 字段与插件 host 侧的机器行契约对齐：六态连接状态 + `nextRetryAt`/`authMethod`
+ * 增量、隧道 URL、最近错误与机器标识色。
  * @module store/remote/types
  */
 
@@ -48,7 +48,7 @@ export interface SshMachineRow {
 }
 
 /** 连接管线阶段（宿主 progress.phase 词汇；installing 含 bootstrap 安装段）。 */
-export type SshProgressPhase = 'handshake' | 'installing' | 'starting' | 'probing'
+export type SshProgressPhase = 'handshake' | 'installing' | 'starting' | 'probing' | 'syncing'
 
 /** 进行中操作的实时进度（来自 machine.list 行的 progress 字段）。 */
 export interface SshProgress {
@@ -58,37 +58,16 @@ export interface SshProgress {
   log?: string
 }
 
-/** machine.save 的机器档案（与宿主 MachineProfile 契约对齐；敏感值走 secrets 另传）。 */
-export interface SshMachineProfile {
-  id: string
-  name: string
-  host: string
-  port?: number
-  user?: string
-  remotePort?: number
-  color?: string
-  tintBorder?: boolean
-  startCommand?: string
-}
-
-/** machine.save 的敏感字段：仅在保存时传输，任何状态不落库。 */
-export interface SshSecrets {
-  password?: string
-  passphrase?: string
-}
-
 /** machine.events 返回的单条事件（seq 单调递增，增量轮询游标）。 */
 export interface SshEventEntry {
   seq: number
   line: string
 }
 
-/**
- * `machine.list` 的应答信封（items = 手动机器，discovered = ~/.ssh/config 别名）。
- * `enabled` 为 SSH 功能开关：关闭时两侧机器行为空，壳层据此不渲染切换器。
- */
-export interface SshMachineListValue {
-  enabled?: boolean
-  items: SshMachineRow[]
-  discovered: SshMachineRow[]
+/** 壳层用到的四个端点：由 `src/apis/remote.ts`（genapi 生成）实现。 */
+export interface SshApiClient {
+  listMachines: () => Promise<{ enabled: boolean, machines: SshMachineRow[] }>
+  connect: (machineId: string) => Promise<{ tunnelBaseUrl: string }>
+  disconnect: (machineId: string) => Promise<void>
+  events: (machineId: string, sinceSeq?: number) => Promise<{ items: SshEventEntry[] }>
 }

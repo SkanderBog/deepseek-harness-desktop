@@ -952,9 +952,6 @@ importers:
         specifier: catalog:testing
         version: 2.9.0
     devDependencies:
-      '@deepseek-ai/dsh-client-ui-primitives':
-        specifier: catalog:dsh
-        version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
       '@testing-library/dom':
         specifier: catalog:testing
         version: 10.4.2
@@ -2433,12 +2430,6 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@kwsites/file-exists@1.1.1':
-    resolution: {integrity: sha512-m9/5YGR18lIwxSFDwfE3oA7bWuq9kdau6ugN4H2rJeyhFQZcG9AgSHkQtSD15a8WvTgfz9aikZMrKPHvbpqFiw==}
-
-  '@kwsites/promise-deferred@1.1.1':
-    resolution: {integrity: sha512-GaHYm+c0O9MjZRu0ongGBRbinu8gVAMd2UZjji6jVmqKtZluZnptXGWhz1E8j8D2HJ3f/yMxKAUC0b+57wncIw==}
-
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     resolution: {integrity: sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ==}
     engines: {node: ^22.20 || ^24.12 || >=25}
@@ -3122,12 +3113,6 @@ packages:
     resolution: {integrity: sha512-zD6NdeWEByGE9QF9vCrlJ5YQB4oq9q91kPZS37Jwj5hOkvR1lTBSpsKhKDw4IJtbQ35LsTS1HD9DZYGKIshU1Q==}
     cpu: [x64]
     os: [win32]
-
-  '@simple-git/args-pathspec@1.0.3':
-    resolution: {integrity: sha512-ngJMaHlsWDTfjyq9F3VIQ8b7NXbBLq5j9i5bJ6XLYtD6qlDXT7fdKY2KscWWUF8t18xx052Y/PUO1K1TRc9yKA==}
-
-  '@simple-git/argv-parser@1.1.1':
-    resolution: {integrity: sha512-Q9lBcfQ+VQCpQqGJFHe5yooOS5hGdLFFbJ5R+R5aDsnkPCahtn1hSkMcORX65J2Z5lxSkD0lQorMsncuBQxYUw==}
 
   '@sinclair/typebox@0.34.52':
     resolution: {integrity: sha512-XiMQh7qqVlxZzcVD+kkGMNGMzcTrDMLWI7S4x7z1MkCkbDPrekpZXEUK0eZqZFMuHQg2a2DZOcDIh9o5v3Gonw==}
@@ -6080,9 +6065,6 @@ packages:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
 
-  simple-git@3.36.0:
-    resolution: {integrity: sha512-cGQjLjK8bxJw4QuYT7gxHw3/IouVESbhahSsHrX97MzCL1gu2u7oy38W6L2ZIGECEfIBG4BabsWDPjBxJENv9Q==}
-
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
 
@@ -8225,14 +8207,6 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@kwsites/file-exists@1.1.1':
-    dependencies:
-      debug: 4.4.3
-    transitivePeerDependencies:
-      - supports-color
-
-  '@kwsites/promise-deferred@1.1.1': {}
-
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
 
@@ -8696,12 +8670,6 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.62.4':
     optional: true
-
-  '@simple-git/args-pathspec@1.0.3': {}
-
-  '@simple-git/argv-parser@1.1.1':
-    dependencies:
-      '@simple-git/args-pathspec': 1.0.3
 
   '@sinclair/typebox@0.34.52': {}
 
@@ -12125,16 +12093,6 @@ snapshots:
   siginfo@2.0.0: {}
 
   signal-exit@4.1.0: {}
-
-  simple-git@3.36.0:
-    dependencies:
-      '@kwsites/file-exists': 1.1.1
-      '@kwsites/promise-deferred': 1.1.1
-      '@simple-git/args-pathspec': 1.0.3
-      '@simple-git/argv-parser': 1.1.1
-      debug: 4.4.3
-    transitivePeerDependencies:
-      - supports-color
 
   sisteransi@1.0.5: {}
 

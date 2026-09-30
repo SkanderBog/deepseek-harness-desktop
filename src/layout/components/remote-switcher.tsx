@@ -49,7 +49,7 @@ function openInNewWindow(machine: SshMachineRow, onError: (err: unknown) => void
 /**
  * 导航栏远端机器切换器：本地实例 ↔ 各远端机器。
  *
- * 数据面全部来自本地实例 `/api-ssh`（`useRemoteMachines` 启动秒级轮询 +
+ * 数据面全部来自本地实例 `/api/desktop/dsh-tauri-ssh`（`useRemoteMachines` 启动秒级轮询 +
  * 聚焦刷新）；点击机器行=当前窗口切换（未连接则发起连接，进度弹窗实时
  * 呈现），行尾图标=新窗口打开（已连接机器可用）。操作区两项同级：底部
  * 「管理机器…」与「同步到远端…」，各自直达 SSH 设置浮层的对应标签页。
@@ -131,6 +131,7 @@ export function RemoteSwitcher({ onManage, onSync }: { onManage?: () => void, on
             {machines.map((machine) => {
               const pending = pendingId === machine.id
               const connected = machine.state === 'connected' && machine.tunnelBaseUrl !== undefined
+              const subtitle = subtitleOf(machine)
               return (
                 <Dropdown.Item
                   key={machine.id}
@@ -154,8 +155,8 @@ export function RemoteSwitcher({ onManage, onSync }: { onManage?: () => void, on
                     />
                     <span className="flex min-w-0 flex-col">
                       <Label className="truncate">{machine.name}</Label>
-                      <If cond={subtitleOf(machine) !== undefined}>
-                        <Description className="truncate text-[11px] leading-4">{subtitleOf(machine)}</Description>
+                      <If cond={subtitle !== undefined}>
+                        <Description className="truncate text-[11px] leading-4">{subtitle}</Description>
                       </If>
                     </span>
                     <Description className={cn('ml-auto shrink-0', pending && 'text-warning')}>

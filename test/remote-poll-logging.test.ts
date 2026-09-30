@@ -1,4 +1,4 @@
-import type { SshApiClient } from '../src/store/modules/remote/api'
+import type { SshApiClient } from '../src/store/modules/remote/types'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // 本地实例不可达时的降级轮询：`refresh` 每 2 秒跑一轮，实例停着（插件操作会停服）时会
@@ -59,7 +59,7 @@ describe('remote poll logging', () => {
   })
 
   it('does not log when the instance is reachable but has no SSH API', async () => {
-    const { SshApiHttpError } = await import('../src/store/modules/remote/api')
+    const { SshApiHttpError } = await import('../src/apis/http')
     bindSshApiForTests(onlyListMachines(async () => {
       throw new SshApiHttpError(404)
     }))

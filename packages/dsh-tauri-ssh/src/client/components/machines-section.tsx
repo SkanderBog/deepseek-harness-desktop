@@ -1,19 +1,20 @@
 import type { CSSProperties, ReactNode } from 'react'
 import type { SshKey } from '../locales/index'
-import type { InstallResult, MachineRow, MachinesNotice, MachinesStore, MachineStatus, ProgressPhase, SecretValues } from '../store/index'
-import type { MachineLifecycleState, RemoteBridge } from '../types/index'
+import type { MachinesNotice } from '../store/modules/machines.types'
+import type { InstallResult, MachineLifecycleState, MachineRow, MachineStatus, ProgressPhase, RemoteBridge, SecretValues } from '../types/index'
 import { Button, Input, Modal, StateDot } from 'dsh-tauri-ui/client'
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { cn, useStore } from 'dsh-tauri/client'
+import { useEffect, useState } from 'react'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
 import { messageOf } from '../../shared/error'
-import { cls } from '../styles/index'
+import { desktopBridge } from '../service/bridge'
+import * as service from '../service/machines'
+import { store } from '../store/index'
 import { errorTextOf } from '../utils/error'
 import { retrySecondsOf } from '../utils/retry'
 
-/** The StateDot vocabulary the connection states map onto ('idle' is hollow). */
 type DotState = 'done' | 'ongoing' | 'error' | 'idle'
 
-/** The identity-color palette (fits the DSH status hue family). */
 const COLOR_CHOICES = [
   '#4176E6',
   '#0EA5E9',
@@ -25,44 +26,77 @@ const COLOR_CHOICES = [
   '#A855F7',
 ]
 
-/** One in-edit draft of a manual machine row (keyed by row id). */
+const SECTION = 'flex flex-col gap-[12px] max-w-[960px] text-primary'
+const SECTION_HEAD = 'flex flex-wrap items-start justify-between gap-[12px]'
+const TITLE = 'm-0 text-[18px] leading-[28px] font-semibold text-primary'
+const INTRO = 'm-0 text-[13px] leading-[20px] text-tertiary'
+const CHROME = 'flex shrink-0 flex-wrap items-center gap-[8px]'
+const DANGER_ACTION = 'text-error'
+const HINT = 'm-0 text-[12px] leading-[18px] text-tertiary'
+const ERROR = 'm-0 text-[12px] leading-[18px] text-error'
+const FIELD_LABEL = 'text-[12px] leading-[18px] font-medium text-secondary'
+const FIELD_INPUT = 'box-border w-full'
+const LOG_STREAM = 'm-0 max-h-[160px] overflow-auto font-mono text-[11px] leading-[16px] whitespace-pre-wrap text-tertiary [overflow-wrap:anywhere]'
+const ROWS = 'm-0 mt-[12px] flex list-none flex-col overflow-hidden rounded-[12px] border border-border-l2 bg-layer-3 p-0'
+const ROW_CARD = 'flex flex-col gap-[8px] border-l-2 border-l-transparent px-[14px] py-[10px] [&+&]:border-t [&+&]:border-t-border-l2'
+const ROW_HEAD = 'flex items-center gap-[10px]'
+const ROW_IDENTITY = 'inline-flex min-w-0 items-center gap-[6px]'
+const ROW_NAME = 'text-[14px] leading-[22px] font-medium text-primary'
+const ROW_TAG = 'shrink-0 rounded-full border-0 bg-module-platform px-[8px] py-[2px] text-[11px] leading-[16px] text-secondary'
+const STATUS = 'text-[12px] leading-[18px] text-tertiary'
+const ROW_ACTIONS = 'ml-auto inline-flex items-center gap-[4px]'
+const EDITOR = 'mx-0 mb-[4px] mt-[2px] flex flex-col gap-[12px] border-t border-t-border-l2 pt-[12px]'
+const EDITOR_ACTIONS = 'flex items-center justify-end gap-[8px]'
+const GRID = 'grid grid-cols-[repeat(12,minmax(0,1fr))] gap-[10px_12px] max-[760px]:grid-cols-[repeat(6,minmax(0,1fr))]'
+const FIELD = 'flex min-w-0 flex-col gap-[6px] max-[520px]:col-span-6!'
+const STATE_DOT = 'relative inline-block h-[8px] w-[8px] shrink-0 rounded-full bg-current text-[var(--dsw-alias-label-caption)] after:absolute after:inset-[25%] after:rounded-full after:bg-current after:content-[\'\']'
+const COLOR_PIP = 'inline-block h-[10px] w-[10px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(0,0,0,0.12)]'
+const APPEARANCE = 'flex flex-wrap items-center gap-[10px]'
+const SWATCHES = 'inline-flex flex-wrap items-center gap-[6px]'
+const SWATCH = 'box-border h-[20px] w-[20px] cursor-pointer rounded-full border border-border-l2 bg-[color:var(--swatch-color)] p-0 hover:border-border-l4'
+const SWATCH_ON = 'outline-2 outline-brand outline-offset-2'
+const SWATCH_NONE = 'bg-[image:linear-gradient(to_top_right,transparent_calc(50%_-_1px),var(--dsw-alias-label-tertiary),transparent_calc(50%_+_1px))]'
+const SWITCH_ROW = 'ml-[4px] inline-flex items-center gap-[8px]'
+const SWITCH = 'relative h-[20px] w-[36px] cursor-pointer rounded-[10px] border-0 bg-border-l3 p-0 disabled:cursor-default disabled:opacity-40 [transition:background_0.15s_var(--ds-ease-in-out)] after:absolute after:top-[2px] after:left-[2px] after:h-[16px] after:w-[16px] after:rounded-full after:bg-layer-1 after:shadow-[0_1px_2px_rgba(0,0,0,0.2)] after:content-[\'\'] after:[transition:transform_0.15s_var(--ds-ease-in-out)]'
+const SWITCH_ON = 'bg-business after:translate-x-[16px]'
+const STEP_RAIL = 'm-0 ml-[8px] inline-flex list-none gap-[4px] p-0 align-middle'
+const STEP_DONE = 'rounded-full border border-[color:var(--dsw-alias-line-secondary,currentColor)] px-[6px] text-[11px] leading-[16px] text-tertiary'
+const STEP_CURRENT = 'rounded-full border border-current px-[6px] text-[11px] leading-[16px] text-[var(--dsw-alias-state-warning-primary,#d48806)]'
+const STATUS_ERROR = 'm-0 text-[12px] leading-[18px] text-error'
+const LINK = 'm-0 font-mono text-[12px] leading-[18px] text-tertiary [overflow-wrap:anywhere]'
+const INSTALL_BOX = 'flex flex-col gap-[8px] rounded-[8px] border border-border-l2 bg-[var(--dsw-alias-surface-tinted)] px-[12px] py-[10px]'
+const INSTALL_NOTE = 'm-0 text-[12px] leading-[18px] text-secondary'
+const NOTICE = 'm-0 text-[12px] leading-[18px] text-secondary'
+const EMPTY = 'm-0 rounded-[8px] border border-dashed border-border-l3 p-[12px] text-center text-[12px] leading-[18px] text-tertiary'
+const EMPTY_BLOCK = 'flex flex-col items-start gap-[8px]'
+const GROUP = 'mt-[12px] flex flex-col gap-[2px]'
+const GROUP_TITLE = 'm-0 text-[12px] leading-[18px] font-medium text-secondary'
+const GROUP_HINT = 'm-0 text-[12px] leading-[18px] text-tertiary'
+const REMOTE_CARD = 'mt-[4px] flex flex-col items-center gap-[12px] rounded-[12px] border-[0.5px] border-border-l2 bg-layer-1 px-[24px] py-[40px] text-center'
+const REMOTE_ICON = 'inline-flex h-[44px] w-[44px] items-center justify-center rounded-full bg-[var(--dsw-alias-surface-tinted)] text-success'
+
 interface Draft {
   key: string
   row: MachineRow
 }
 
-/** Per-row typed secrets the editor holds (write-only; keyed by row id). */
 type DirtySecrets = Record<string, SecretValues>
 
-/** Which secret fields exist (the write-only sidecar keys). */
-export type SecretFieldName = 'password' | 'passphrase'
+type SecretFieldName = 'password' | 'passphrase'
 
-/** Injected dependencies (the app binds the real store/bridge; tests pass fakes). */
-export interface MachinesSectionInjected {
-  store: MachinesStore
-  /** Desktop bridge; absent (or unanswered probe) means pure web. */
+interface MachinesSectionProps {
+  t: (key: SshKey) => string
   bridge?: RemoteBridge | undefined
 }
 
-export interface MachinesSectionProps extends MachinesSectionInjected {
-  t: (key: SshKey) => string
-}
-
-/** The remove-confirm target: which row is about to be deleted. */
 interface RemoveTarget {
   key: string
   id: string
   name: string
 }
 
-/** The id charset mirrors the host-side MachineId guard. */
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/u
 
-/**
- * Derive the machine id from a host: lowercase alnum-dash slug of the part
- * after the last `@` (so `ops@10.1.1.1` → `10.1.1.1` → `10-1-1-1`); empty
- * when the host has no usable characters.
- */
 function slugOf(host: string): string {
   return host
     .trim()
@@ -72,7 +106,6 @@ function slugOf(host: string): string {
     .replace(/^-+|-+$/gu, '')
 }
 
-/** Pick the first free id: the slug itself, else slug-2, slug-3, … */
 function freeIdOf(base: string, taken: ReadonlySet<string>): string {
   if (!taken.has(base))
     return base
@@ -83,16 +116,9 @@ function freeIdOf(base: string, taken: ReadonlySet<string>): string {
   }
 }
 
-/**
- * The shared machine row shell: identity (state dot + optional color pip +
- * name + host tag), live status text with the step rail, and the trailing
- * action cluster. Manual and discovered rows differ only in their action
- * set and whether an editor can expand below.
- */
 function RowShell({ id, name, tag, tintColor, tintBorder, status, trail, actions, t, children }: {
   id: string
   name: string
-  /** The muted identity suffix (host for manual rows, the config tag for discovered). */
   tag: string
   tintColor: string | undefined
   tintBorder: boolean
@@ -104,33 +130,28 @@ function RowShell({ id, name, tag, tintColor, tintBorder, status, trail, actions
 }): ReactNode {
   return (
     <li
-      className={cls.rowCard}
+      className={ROW_CARD}
       data-testid={`machine-${id}`}
       style={tintBorder && tintColor !== undefined ? { borderLeftColor: tintColor } : undefined}
     >
-      <div className={cls.rowHead}>
-        <span className={cls.rowIdentity}>
+      <div className={ROW_HEAD}>
+        <span className={ROW_IDENTITY}>
           <StateDotOf status={status} />
           {tintColor !== undefined
-            ? <span className={cls.colorPip} style={{ background: tintColor }} aria-hidden="true" />
+            ? <span className={COLOR_PIP} style={{ background: tintColor }} aria-hidden="true" />
             : null}
-          <span className={cls.rowName}>{name}</span>
-          <span className={cls.rowTag}>{tag}</span>
-          <span className={cls.status} data-testid={`status-${id}`}>{statusTextOf(status, t)}</span>
+          <span className={ROW_NAME}>{name}</span>
+          <span className={ROW_TAG}>{tag}</span>
+          <span className={STATUS} data-testid={`status-${id}`}>{statusTextOf(status, t)}</span>
           <StepRail trail={trail} t={t} />
         </span>
-        <span className={cls.rowActions}>{actions}</span>
+        <span className={ROW_ACTIONS}>{actions}</span>
       </div>
       {children}
     </li>
   )
 }
 
-/**
- * The inline editor of one manual machine: connection fields, write-only
- * secrets and the appearance row. Saving applies immediately for this row
- * alone (other rows are untouched); cancel discards the buffer.
- */
 function EditPanel({ draft, t, secretSet, dirty, saving, onChange, onSecret, onSave, onCancel }: {
   draft: Draft
   t: (key: SshKey) => string
@@ -145,42 +166,40 @@ function EditPanel({ draft, t, secretSet, dirty, saving, onChange, onSecret, onS
   const { row } = draft
   const invalid = row.id === '' || row.name === '' || row.host === ''
   return (
-    <div className={cls.editor} data-testid={`editor-${row.id}`}>
-      {/* 12 栅格显式分组：第 1 行 = ID / 名称 / 主机（3+4+5），
-          第 2 行 = 端口 / 用户 / 远端端口 / 远端档案（3×4），启动命令独占整行 */}
-      <div className={cls.grid}>
+    <div className={EDITOR} data-testid={`editor-${row.id}`}>
+      <div className={GRID}>
         <Field label={t('field.id')} span={3}>
-          <Input className={cls.fieldInput} value={row.id} disabled />
+          <Input className={FIELD_INPUT} value={row.id} disabled />
         </Field>
         <Field label={t('field.name')} span={4}>
-          <Input className={cls.fieldInput} value={row.name} disabled={saving} onChange={event => onChange(draft.key, { name: event.target.value })} />
+          <Input className={FIELD_INPUT} value={row.name} disabled={saving} onChange={event => onChange(draft.key, { name: event.target.value })} />
         </Field>
         <Field label={t('field.host')} span={5}>
-          <Input className={cls.fieldInput} value={row.host} disabled={saving} onChange={event => onChange(draft.key, { host: event.target.value })} />
+          <Input className={FIELD_INPUT} value={row.host} disabled={saving} onChange={event => onChange(draft.key, { host: event.target.value })} />
         </Field>
         <Field label={t('field.port')} span={3}>
-          <Input className={cls.fieldInput} type="number" value={row.port} disabled={saving} onChange={event => onChange(draft.key, { port: numberOf(event.target.value, DEFAULT_SSH_PORT) })} />
+          <Input className={FIELD_INPUT} type="number" value={row.port} disabled={saving} onChange={event => onChange(draft.key, { port: numberOf(event.target.value, DEFAULT_SSH_PORT) })} />
         </Field>
         <Field label={t('field.user')} span={3}>
-          <Input className={cls.fieldInput} value={row.user} disabled={saving} onChange={event => onChange(draft.key, { user: event.target.value })} />
+          <Input className={FIELD_INPUT} value={row.user} disabled={saving} onChange={event => onChange(draft.key, { user: event.target.value })} />
         </Field>
         <Field label={t('field.remotePort')} span={3}>
-          <Input className={cls.fieldInput} type="number" value={row.remotePort} disabled={saving} onChange={event => onChange(draft.key, { remotePort: numberOf(event.target.value, DEFAULT_REMOTE_PORT) })} />
+          <Input className={FIELD_INPUT} type="number" value={row.remotePort} disabled={saving} onChange={event => onChange(draft.key, { remotePort: numberOf(event.target.value, DEFAULT_REMOTE_PORT) })} />
         </Field>
         <Field label={t('field.profileName')} span={3}>
-          <Input className={cls.fieldInput} value={row.profileName ?? ''} placeholder="remote" disabled={saving || (row.startCommand ?? '') !== ''} onChange={event => onChange(draft.key, { profileName: event.target.value })} />
+          <Input className={FIELD_INPUT} value={row.profileName ?? ''} placeholder="remote" disabled={saving || (row.startCommand ?? '') !== ''} onChange={event => onChange(draft.key, { profileName: event.target.value })} />
         </Field>
         <Field label={t('field.startCommand')} span={12}>
-          <Input className={cls.fieldInput} value={row.startCommand ?? ''} disabled={saving} onChange={event => onChange(draft.key, { startCommand: event.target.value })} />
+          <Input className={FIELD_INPUT} value={row.startCommand ?? ''} disabled={saving} onChange={event => onChange(draft.key, { startCommand: event.target.value })} />
         </Field>
       </div>
-      <div className={cls.grid}>
+      <div className={GRID}>
         <SecretField field="password" span={6} label={t('field.password')} keyName={draft.key} secretSet={secretSet} t={t} value={dirty.password ?? ''} onValue={onSecret} />
         <SecretField field="passphrase" span={6} label={t('field.passphrase')} keyName={draft.key} secretSet={secretSet} t={t} value={dirty.passphrase ?? ''} onValue={onSecret} />
       </div>
       <AppearanceEditor row={row} t={t} onChange={onChange} draftKey={draft.key} />
-      <div className={cls.editorActions}>
-        {invalid ? <p className={cls.hint}>{t('saveHint')}</p> : null}
+      <div className={EDITOR_ACTIONS}>
+        {invalid ? <p className={cn(HINT, 'mr-auto')}>{t('saveHint')}</p> : null}
         <Button variant="ghost" size="sm" disabled={saving} onClick={() => onCancel(draft.key)}>
           {t('add.cancel')}
         </Button>
@@ -192,7 +211,6 @@ function EditPanel({ draft, t, secretSet, dirty, saving, onChange, onSecret, onS
   )
 }
 
-/** The shared trailing action cluster of one row (test/connect/open/disconnect + row-specific extras). */
 function RowActions({ id, t, status, busy, bridgeOpen, bridgePending, opening, onTest, onConnect, onDisconnect, onOpen, extras }: {
   id: string
   t: (key: SshKey) => string
@@ -245,7 +263,6 @@ function RowActions({ id, t, status, busy, bridgeOpen, bridgePending, opening, o
   )
 }
 
-/** The detail block under a row: install surface, errors, tunnel link, live log. */
 function RowDetails({ id, status, busy, logLines, bridgeError, installResult, t, onInstall }: {
   id: string
   status: MachineStatus | undefined
@@ -261,33 +278,31 @@ function RowDetails({ id, status, busy, logLines, bridgeError, installResult, t,
       {status?.dshMissing === true
         ? <InstallPanel status={status} busy={busy} t={t} onInstall={() => onInstall(id)} />
         : null}
-      {status?.lastError !== undefined ? <p className={cls.statusError} role="alert">{status.lastError}</p> : null}
+      {status?.lastError !== undefined ? <p className={STATUS_ERROR} role="alert">{status.lastError}</p> : null}
       {bridgeError !== undefined
         ? (
-            <p className={cls.statusError} role="alert" data-testid={`bridge-error-${id}`}>
+            <p className={STATUS_ERROR} role="alert" data-testid={`bridge-error-${id}`}>
               {t('bridge.error')}
               {bridgeError}
             </p>
           )
         : null}
-      {status?.tunnelBaseUrl !== undefined ? <p className={cls.link}>{status.tunnelBaseUrl}</p> : null}
+      {status?.tunnelBaseUrl !== undefined ? <p className={LINK}>{status.tunnelBaseUrl}</p> : null}
       <LogStream id={id} lines={logLines} fallback={status?.progress?.log} />
       {installResult !== undefined
-        ? <p className={cls.installNote} data-testid={`install-note-${id}`}>{installNoteOf(installResult, t)}</p>
+        ? <p className={INSTALL_NOTE} data-testid={`install-note-${id}`}>{installNoteOf(installResult, t)}</p>
         : null}
     </>
   )
 }
 
-/** The state dot: a primitive StateDot for live states, hollow CSS for idle. */
 function StateDotOf({ status }: { status: MachineStatus | undefined }): ReactNode {
   const state = dotStateOf(status)
   if (state === 'idle')
-    return <span className={cls.stateDot} data-state="idle" aria-hidden="true" />
+    return <span className={STATE_DOT} data-state="idle" aria-hidden="true" />
   return <StateDot state={state} size={8} />
 }
 
-/** The streaming log: the S2 event lines when present, else the progress log. */
 function LogStream({ id, lines, fallback }: { id: string, lines: readonly string[], fallback: string | undefined }): ReactNode {
   const output = lines.length > 0
     ? lines.join('\n')
@@ -295,13 +310,12 @@ function LogStream({ id, lines, fallback }: { id: string, lines: readonly string
   if (output === '')
     return null
   return (
-    <pre className={cls.logStream} data-testid={`machine-log-${id}`}>
+    <pre className={LOG_STREAM} data-testid={`machine-log-${id}`}>
       {output}
     </pre>
   )
 }
 
-/** The dsh-missing install surface: a one-click install (the log lives in the card stream). */
 function InstallPanel({ status, busy, t, onInstall }: {
   status: MachineStatus
   busy: 'test' | 'connect' | 'disconnect' | 'install' | undefined
@@ -311,14 +325,14 @@ function InstallPanel({ status, busy, t, onInstall }: {
   const installing = busy === 'install' || status.progress?.phase === 'installing'
   if (installing) {
     return (
-      <div className={cls.installBox}>
-        <p className={cls.installHint}>{t('progress.installing')}</p>
+      <div className={INSTALL_BOX}>
+        <p className={INSTALL_NOTE}>{t('progress.installing')}</p>
       </div>
     )
   }
   return (
-    <div className={cls.installBox}>
-      <p className={cls.installHint}>{t('install.hint')}</p>
+    <div className={INSTALL_BOX}>
+      <p className={INSTALL_NOTE}>{t('install.hint')}</p>
       <Button variant="primary" size="sm" disabled={busy !== undefined} onClick={onInstall}>
         {t('install.action')}
       </Button>
@@ -326,7 +340,6 @@ function InstallPanel({ status, busy, t, onInstall }: {
   )
 }
 
-/** One operator-facing line for a finished install. */
 function installNoteOf(result: InstallResult, t: (key: SshKey) => string): string {
   if (result.credentialsError !== undefined) {
     return t('install.done.error') + result.credentialsError
@@ -334,35 +347,26 @@ function installNoteOf(result: InstallResult, t: (key: SshKey) => string): strin
   return result.credentialsCopied ? t('install.done.copied') : t('install.done.nokey')
 }
 
-/** The grid spans the editor layout uses (12-column track). */
-export type FieldSpan = 3 | 4 | 5 | 6 | 8 | 12
+type FieldSpan = 3 | 4 | 5 | 6 | 8 | 12
 
-/** Span class per grid width (the 12-column editor track). */
 const SPAN_CLASS: Record<FieldSpan, string> = {
-  3: cls.span3,
-  4: cls.span4,
-  5: cls.span5,
-  6: cls.span6,
-  8: cls.span8,
-  12: cls.span12,
+  3: 'col-span-3',
+  4: 'col-span-4 max-[760px]:col-span-3',
+  5: 'col-span-5 max-[760px]:col-span-3',
+  6: 'col-span-6 max-[760px]:col-span-3',
+  8: 'col-span-8 max-[760px]:col-span-6',
+  12: 'col-span-12 max-[760px]:col-span-6',
 }
 
-/** One labeled field row. */
 function Field({ label, span = 6, children }: { label: string, span?: FieldSpan, children: ReactNode }): ReactNode {
   return (
-    <label className={`${cls.field} ${SPAN_CLASS[span]}`}>
-      <span className={cls.fieldLabel}>{label}</span>
+    <label className={cn(FIELD, SPAN_CLASS[span])}>
+      <span className={FIELD_LABEL}>{label}</span>
       {children}
     </label>
   )
 }
 
-/**
- * The appearance row of one machine editor: an identity-color swatch set
- * (plus a "default" reset) and the tint-the-border switch, which is only
- * meaningful while a color is chosen. Clearing writes the empty-string
- * (off) form — the save path drops it.
- */
 function AppearanceEditor({ row, t, onChange, draftKey }: {
   row: MachineRow
   t: (key: SshKey) => string
@@ -371,14 +375,14 @@ function AppearanceEditor({ row, t, onChange, draftKey }: {
 }): ReactNode {
   const color = colorOf(row)
   return (
-    <div className={cls.appearance}>
-      <span className={cls.fieldLabel}>{t('field.color')}</span>
-      <div className={cls.swatches}>
+    <div className={APPEARANCE}>
+      <span className={FIELD_LABEL}>{t('field.color')}</span>
+      <div className={SWATCHES}>
         {COLOR_CHOICES.map(choice => (
           <button
             key={choice}
             type="button"
-            className={cls.swatch}
+            className={cn(SWATCH, color === choice && SWATCH_ON)}
             data-selected={color === choice}
             style={{ '--swatch-color': choice } as CSSProperties}
             aria-label={`${t('field.color')}: ${choice}`}
@@ -388,31 +392,30 @@ function AppearanceEditor({ row, t, onChange, draftKey }: {
         ))}
         <button
           type="button"
-          className={`${cls.swatch} ${cls.swatchNone}`}
+          className={cn(SWATCH, SWATCH_NONE, color === undefined && SWATCH_ON)}
           data-selected={color === undefined}
           aria-label={t('color.none')}
           aria-pressed={color === undefined}
           title={t('color.none')}
           onClick={() => onChange(draftKey, { color: '', tintBorder: false })}
         />
-        <span className={cls.switchRow}>
+        <span className={SWITCH_ROW}>
           <button
             type="button"
             role="switch"
             aria-checked={row.tintBorder === true}
-            className={cls.switch}
+            className={cn(SWITCH, row.tintBorder === true && SWITCH_ON)}
             disabled={color === undefined}
             onClick={() => onChange(draftKey, { tintBorder: row.tintBorder !== true })}
           />
-          <span className={cls.fieldLabel}>{t('field.tintBorder')}</span>
+          <span className={FIELD_LABEL}>{t('field.tintBorder')}</span>
         </span>
       </div>
     </div>
   )
 }
 
-/** One write-only secret input; the placeholder reports whether a value is stored. */
-export function SecretField({ field, label, keyName, secretSet, t, value, onValue, span = 6 }: {
+function SecretField({ field, label, keyName, secretSet, t, value, onValue, span = 6 }: {
   field: SecretFieldName
   label: string
   keyName: string
@@ -424,10 +427,10 @@ export function SecretField({ field, label, keyName, secretSet, t, value, onValu
 }): ReactNode {
   const placeholder = secretSet[`${keyName}.${field}`] ? t('secret.set') : t('secret.unset')
   return (
-    <label className={`${cls.field} ${SPAN_CLASS[span]}`}>
-      <span className={cls.fieldLabel}>{label}</span>
+    <label className={cn(FIELD, SPAN_CLASS[span])}>
+      <span className={FIELD_LABEL}>{label}</span>
       <Input
-        className={cls.fieldInput}
+        className={FIELD_INPUT}
         type="password"
         value={value}
         placeholder={placeholder}
@@ -437,7 +440,6 @@ export function SecretField({ field, label, keyName, secretSet, t, value, onValu
   )
 }
 
-/** The write-only secret presence flags of one draft row, keyed like the stored sidecar. */
 function secretFlagsOf(row: MachineRow): Record<string, boolean> {
   return {
     [`${row.id}.password`]: row.hasPassword,
@@ -445,12 +447,10 @@ function secretFlagsOf(row: MachineRow): Record<string, boolean> {
   }
 }
 
-/** The row's effective identity color ('' and undefined both mean none). */
 function colorOf(row: MachineRow): string | undefined {
   return row.color === undefined || row.color === '' ? undefined : row.color
 }
 
-/** Short step labels of each pipeline phase (the long progress.* text stays in the status line). */
 const STEP_KEY_OF: Record<ProgressPhase, SshKey> = {
   handshake: 'step.handshake',
   installing: 'step.installing',
@@ -459,17 +459,16 @@ const STEP_KEY_OF: Record<ProgressPhase, SshKey> = {
   syncing: 'step.syncing',
 }
 
-/** The step rail: the phases one operation actually walked, latest current. */
 function StepRail({ trail, t }: { trail: readonly ProgressPhase[], t: (key: SshKey) => string }): ReactNode {
   if (trail.length === 0)
     return null
   const current = trail[trail.length - 1]
   return (
-    <ol className={cls.stepRail} data-testid="step-rail">
+    <ol className={STEP_RAIL} data-testid="step-rail">
       {trail.map(phase => (
         <li
           key={phase}
-          className={phase === current ? cls.stepCurrent : cls.stepDone}
+          className={phase === current ? STEP_CURRENT : STEP_DONE}
         >
           {t(STEP_KEY_OF[phase])}
         </li>
@@ -478,7 +477,6 @@ function StepRail({ trail, t }: { trail: readonly ProgressPhase[], t: (key: SshK
   )
 }
 
-/** The connection-state dot vocabulary (StateDot states; idle renders hollow). */
 function dotStateOf(status: MachineStatus | undefined): DotState {
   if (status?.state === 'connected')
     return 'done'
@@ -489,7 +487,6 @@ function dotStateOf(status: MachineStatus | undefined): DotState {
   return 'idle'
 }
 
-/** The status-label key of each lifecycle state (the hyphenated state maps to camelCase keys). */
 const STATUS_KEY_OF: Record<MachineLifecycleState, SshKey> = {
   'disconnected': 'status.disconnected',
   'testing': 'status.testing',
@@ -499,7 +496,6 @@ const STATUS_KEY_OF: Record<MachineLifecycleState, SshKey> = {
   'given-up': 'status.givenUp',
 }
 
-/** The status line: live progress text while an operation is in flight, else the state label. */
 function statusTextOf(status: MachineStatus | undefined, t: (key: SshKey) => string): string {
   const progress = status?.progress
   if (progress?.phase === 'handshake')
@@ -529,32 +525,23 @@ function statusTextOf(status: MachineStatus | undefined, t: (key: SshKey) => str
   return base
 }
 
-/** Parse a number input; non-numbers fall back to the default. */
 function numberOf(raw: string, fallback: number): number {
   const parsed = Number(raw)
   return raw !== '' && Number.isFinite(parsed) ? parsed : fallback
 }
 
-/** Render one notice: host words verbatim, store literals through the locale table. */
 function noticeTextOf(notice: MachinesNotice, t: (key: SshKey) => string): string {
   if (notice.kind === 'text')
     return notice.text
   let text = t(notice.key)
   for (const [name, value] of Object.entries(notice.params ?? {}))
-    text = text.replace(`{${name}}`, value)
+    text = text.replace(`{${name}}`, String(value))
   return text
 }
 
-/**
- * The add-machine dialog: one focused form, saved immediately on submit
- * (the parent appends the row to the store). The id auto-derives from the
- * host until the operator touches the field. Remount per open (the parent
- * keys it by the open flag) so every open starts from a clean form.
- */
 function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
   t: (key: SshKey) => string
   saving: boolean
-  /** Ids the new machine must not collide with. */
   takenIds: ReadonlySet<string>
   onSubmit: (row: MachineRow) => void
   onClose: () => void
@@ -609,12 +596,10 @@ function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
         </>
       )}
     >
-      {/* 新增表单同样按 12 栅格成组：主机 + 端口一行（8+4），
-          名称 / ID / 用户一行（4×3），远端端口 + 远端档案一行（6+6） */}
-      <div className={cls.grid}>
+      <div className={GRID}>
         <Field label={t('field.host')} span={8}>
           <Input
-            className={cls.fieldInput}
+            className={FIELD_INPUT}
             value={host}
             autoFocus
             disabled={saving}
@@ -622,14 +607,14 @@ function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
           />
         </Field>
         <Field label={t('field.port')} span={4}>
-          <Input className={cls.fieldInput} value={port} disabled={saving} onChange={event => setPort(event.target.value)} />
+          <Input className={FIELD_INPUT} value={port} disabled={saving} onChange={event => setPort(event.target.value)} />
         </Field>
         <Field label={t('field.name')} span={4}>
-          <Input className={cls.fieldInput} value={name} disabled={saving} onChange={event => setName(event.target.value)} />
+          <Input className={FIELD_INPUT} value={name} disabled={saving} onChange={event => setName(event.target.value)} />
         </Field>
         <Field label={t('field.id')} span={4}>
           <Input
-            className={cls.fieldInput}
+            className={FIELD_INPUT}
             value={idTouched ? id : effectiveId}
             placeholder={t('add.id_auto')}
             disabled={saving}
@@ -640,36 +625,26 @@ function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
           />
         </Field>
         <Field label={t('field.user')} span={4}>
-          <Input className={cls.fieldInput} value={user} disabled={saving} onChange={event => setUser(event.target.value)} />
+          <Input className={FIELD_INPUT} value={user} disabled={saving} onChange={event => setUser(event.target.value)} />
         </Field>
         <Field label={t('field.remotePort')} span={6}>
-          <Input className={cls.fieldInput} value={remotePort} disabled={saving} onChange={event => setRemotePort(event.target.value)} />
+          <Input className={FIELD_INPUT} value={remotePort} disabled={saving} onChange={event => setRemotePort(event.target.value)} />
         </Field>
         <Field label={t('field.profileName')} span={6}>
-          <Input className={cls.fieldInput} value={profileName} placeholder="remote" disabled={saving} onChange={event => setProfileName(event.target.value)} />
+          <Input className={FIELD_INPUT} value={profileName} placeholder="remote" disabled={saving} onChange={event => setProfileName(event.target.value)} />
         </Field>
       </div>
       {errorKey === null
-        ? <p className={cls.hint}>{t('add.id_auto')}</p>
-        : <p className={cls.error} role="alert">{errorKey === null ? '' : t(errorKey)}</p>}
+        ? <p className={HINT}>{t('add.id_auto')}</p>
+        : <p className={ERROR} role="alert">{errorKey === null ? '' : t(errorKey)}</p>}
     </Modal>
   )
 }
 
-/**
- * Render the SSH-machines settings page.
- *
- * Rows are display-first: identity + live status + actions. Editing a manual
- * machine expands an inline editor whose save applies to that row alone and
- * immediately (no page-level staging); add is a focused modal; remove is
- * confirmed then applied at once.
- * @returns the page element tree.
- */
-export function MachinesSection({ t, store, bridge }: MachinesSectionProps): ReactNode {
-  const state = useSyncExternalStore(store.subscribe, store.getSnapshot)
+export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionProps): ReactNode {
+  const state = useStore(store.machines)
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
   const [dirty, setDirty] = useState<DirtySecrets>({})
-  /** The one row whose inline editor is open (null = all collapsed). */
   const [editingId, setEditingId] = useState<string | null>(null)
   const [savingId, setSavingId] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
@@ -681,12 +656,9 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null)
 
   useEffect(() => {
-    void store.load()
-  }, [store])
+    void service.load()
+  }, [])
 
-  // Probe the desktop bridge once: an answer means the popup affordance
-  // exists; a timeout or rejection means pure web, where it never shows.
-  // (No bridge at all settled synchronously in the initial state.)
   useEffect(() => {
     const probe = bridge?.probe
     if (probe === undefined)
@@ -707,21 +679,6 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
     }
   }, [bridge])
 
-  // While any machine has an operation in flight, poll the host every 1.5 s
-  // so the live progress (handshake / starting / probing) and the event log
-  // stay current.
-  const anyInFlight = Object.keys(state.busy).length > 0
-    || Object.values(state.statuses).some(status =>
-      status.state === 'connecting' || status.state === 'reconnecting' || status.state === 'testing')
-  useEffect(() => {
-    if (!anyInFlight)
-      return
-    const timer = setInterval(() => void store.poll(), 1500)
-    return () => clearInterval(timer)
-  }, [anyInFlight, store])
-
-  // Initialize the draft buffer once the first load lands; the buffer only
-  // exists while a row editor is open (opened editors re-seed from the row).
   useEffect(() => {
     if (initialized || state.status !== 'ready')
       return
@@ -742,13 +699,11 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
     setDirty(previous => ({ ...previous, [key]: { ...previous[key], [field]: value } }))
   }
 
-  /** Open a row's editor, re-seeding its buffer from the latest saved row. */
   const openEditor = (row: MachineRow): void => {
     setDrafts(previous => ({ ...previous, [row.id]: { key: row.id, row: { ...row } } }))
     setEditingId(row.id)
   }
 
-  /** Discard a row's buffer and collapse its editor. */
   const closeEditor = (key: string): void => {
     const saved = state.machines.find(row => row.id === key)
     if (saved !== undefined)
@@ -761,17 +716,16 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
     setEditingId(null)
   }
 
-  /** Save one row: persist the stored set with this row's buffer substituted. */
   const saveRow = async (key: string): Promise<void> => {
     const draft = drafts[key]
     if (draft === undefined)
       return
     setSavingId(key)
     const secrets = dirty[key] ?? {}
-    const rows = store.getSnapshot().machines.map(row => row.id === draft.row.id ? draft.row : row)
-    const ok = await store.persist(rows, { [key]: secrets })
+    const rows = store.machines.machines.map(row => row.id === draft.row.id ? draft.row : row)
+    const result = await service.persist({ machines: rows, secrets: { [key]: secrets } })
     setSavingId(null)
-    if (!ok)
+    if (!result.ok)
       return
     setDirty((previous) => {
       const next = { ...previous }
@@ -781,14 +735,11 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
     setEditingId(null)
   }
 
-  /**
-   * Add = create-and-save now: persist the saved set plus the new row.
-   */
   const submitAdd = async (row: MachineRow): Promise<void> => {
     setAddSaving(true)
-    const ok = await store.persist([...store.getSnapshot().machines, row], {})
+    const result = await service.persist({ machines: [...store.machines.machines, row], secrets: {} })
     setAddSaving(false)
-    if (!ok)
+    if (!result.ok)
       return
     setDrafts(previous => ({ ...previous, [row.id]: { key: row.id, row: { ...row } } }))
     setAddOpen(false)
@@ -799,9 +750,8 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
       return
     const { key, id } = removeTarget
     setRemoveTarget(null)
-    // 删除立即生效：确认即调 machine.remove，成功后摘掉草稿与脏密钥
-    void store.remove(id).then((ok) => {
-      if (!ok)
+    void service.remove({ machineId: id }).then((result) => {
+      if (!result.ok)
         return
       setDrafts((previous) => {
         const next = { ...previous }
@@ -818,13 +768,9 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
     })
   }
 
-  /**
-   * Ask the desktop shell for the remote window; failures surface per machine.
-   *  While the call is in flight the Open button shows an opening label.
-   */
   const openRemoteWindow = (id: string): void => {
     const url = state.statuses[id]?.tunnelBaseUrl
-    if (url === undefined || bridge === undefined || openingId !== null)
+    if (url === undefined || openingId !== null)
       return
     setOpeningId(id)
     bridge.openWindow(id, url).then(
@@ -844,44 +790,40 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
   }
 
   const bridgeOpen = availability === 'desktop'
-  // 桌面桥探测未落定前给「新窗口打开」留禁用占位：落定后桌面端原位点亮、
-  // 纯 Web 端移除，避免按钮闪现造成布局跳动。
   const bridgePending = availability === 'unknown'
 
-  // 远端会话：本实例自己就是 SSH 目标，机器管理在发起端——整页只剩告示卡
-  // （列表/添加/刷新全部让位），并点明回发起端用「同步到远端…」搬插件与 Skill。
   if (state.role?.remote === true) {
     return (
-      <div className={cls.section} data-testid="remote-session">
-        <h2 className={cls.title}>{t('title')}</h2>
-        <div className={cls.remoteCard} data-testid="remote-session-banner">
-          <span className={cls.remoteIcon} aria-hidden="true">
+      <div className={SECTION} data-testid="remote-session">
+        <h2 className={TITLE}>{t('title')}</h2>
+        <div className={REMOTE_CARD} data-testid="remote-session-banner">
+          <span className={REMOTE_ICON} aria-hidden="true">
             <svg fill="none" height="22" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.6" viewBox="0 0 24 24" width="22">
               <path d="M4 17l6-6-6-6" />
               <path d="M12 19h8" />
             </svg>
           </span>
-          <p className={cls.remoteTitle}>{t('session.remoteTitle')}</p>
-          <p className={cls.remoteHint}>
+          <p className="m-0 text-[22px] leading-[32px] font-semibold text-primary">{t('session.remoteTitle')}</p>
+          <p className="m-0 max-w-[460px] text-[13px] leading-[21px] text-secondary">
             {state.role.origin !== undefined && state.role.origin !== ''
               ? t('session.remoteHintNamed').replace('{name}', state.role.origin)
               : t('session.remoteHint')}
           </p>
-          <p className={cls.remoteNote} data-testid="remote-session-sync-hint">{t('session.remoteSyncHint')}</p>
+          <p className="m-0 max-w-[460px] rounded-[8px] bg-[var(--dsw-alias-surface-tinted)] px-[12px] py-[8px] text-[12px] leading-[19px] text-tertiary" data-testid="remote-session-sync-hint">{t('session.remoteSyncHint')}</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className={cls.section}>
-      <div className={cls.sectionHead}>
+    <div className={SECTION}>
+      <div className={SECTION_HEAD}>
         <div>
-          <h2 className={cls.title}>{t('title')}</h2>
-          <p className={cls.intro}>{t('intro')}</p>
+          <h2 className={TITLE}>{t('title')}</h2>
+          <p className={INTRO}>{t('intro')}</p>
         </div>
-        <div className={cls.chrome}>
-          <Button variant="outline" size="sm" disabled={state.status === 'loading'} onClick={() => void store.load()}>
+        <div className={CHROME}>
+          <Button variant="outline" size="sm" disabled={state.status === 'loading'} onClick={() => void service.load()}>
             {t('refresh')}
           </Button>
           <Button variant="primary" size="sm" disabled={state.status === 'loading'} onClick={() => setAddOpen(true)}>
@@ -889,29 +831,29 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
           </Button>
         </div>
       </div>
-      {state.notice !== null ? <p className={cls.notice} data-testid="notice">{noticeTextOf(state.notice, t)}</p> : null}
+      {state.notice !== null ? <p className={NOTICE} data-testid="notice">{noticeTextOf(state.notice, t)}</p> : null}
       {state.error !== null
         ? (
-            <p className={cls.error} role="alert">
+            <p className={ERROR} role="alert">
               {t('error.banner')}
               {errorTextOf(state.error, t)}
             </p>
           )
         : null}
-      {state.status === 'loading' ? <p className={cls.hint}>{t('loading')}</p> : null}
+      {state.status === 'loading' ? <p className={HINT}>{t('loading')}</p> : null}
       {state.status === 'error'
         ? (
-            <div className={cls.emptyBlock}>
-              <p className={cls.empty}>{t('loadFailed')}</p>
-              <Button variant="outline" size="sm" onClick={() => void store.load()}>{t('refresh')}</Button>
+            <div className={EMPTY_BLOCK}>
+              <p className={EMPTY}>{t('loadFailed')}</p>
+              <Button variant="outline" size="sm" onClick={() => void service.load()}>{t('refresh')}</Button>
             </div>
           )
         : null}
       {state.status === 'ready' && state.machines.length === 0 && state.discovered.length === 0
-        ? <p className={cls.empty}>{t('empty')}</p>
+        ? <p className={EMPTY}>{t('empty')}</p>
         : null}
       <>
-        <ul className={cls.rows}>
+        <ul className={ROWS}>
           {state.machines.map((row) => {
             const draft = drafts[row.id] ?? { key: row.id, row }
             return (
@@ -934,16 +876,16 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
                     bridgeOpen={bridgeOpen}
                     bridgePending={bridgePending}
                     opening={openingId === row.id}
-                    onTest={id => void store.test(id)}
-                    onConnect={id => void store.connect(id)}
-                    onDisconnect={id => void store.disconnect(id)}
+                    onTest={id => void service.test({ machineId: id })}
+                    onConnect={id => void service.connect({ machineId: id })}
+                    onDisconnect={id => void service.disconnect({ machineId: id })}
                     onOpen={openRemoteWindow}
                     extras={(
                       <>
                         <Button variant="outline" size="sm" disabled={editingId !== null && editingId !== row.id} onClick={() => editingId === row.id ? closeEditor(row.id) : openEditor(row)}>
                           {t('edit')}
                         </Button>
-                        <Button variant="ghost" size="sm" className={cls.dangerAction} disabled={state.busy[row.id] !== undefined} onClick={() => setRemoveTarget({ key: row.id, id: row.id, name: row.name === '' ? row.id : row.name })}>
+                        <Button variant="ghost" size="sm" className={DANGER_ACTION} disabled={state.busy[row.id] !== undefined} onClick={() => setRemoveTarget({ key: row.id, id: row.id, name: row.name === '' ? row.id : row.name })}>
                           {t('remove')}
                         </Button>
                       </>
@@ -974,7 +916,7 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
                   bridgeError={bridgeErrors[row.id]}
                   installResult={state.installResults[row.id]}
                   t={t}
-                  onInstall={id => void store.install(id)}
+                  onInstall={id => void service.install({ machineId: id })}
                 />
               </RowShell>
             )
@@ -983,11 +925,11 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
         {state.discovered.length > 0
           ? (
               <>
-                <div className={cls.group}>
-                  <h3 className={cls.groupTitle}>{t('configHosts')}</h3>
-                  <p className={cls.groupHint}>{t('configHostsHint')}</p>
+                <div className={GROUP}>
+                  <h3 className={GROUP_TITLE}>{t('configHosts')}</h3>
+                  <p className={GROUP_HINT}>{t('configHostsHint')}</p>
                 </div>
-                <ul className={cls.rows}>
+                <ul className={ROWS}>
                   {state.discovered.map(row => (
                     <RowShell
                       key={row.id}
@@ -1008,9 +950,9 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
                           bridgeOpen={bridgeOpen}
                           bridgePending={bridgePending}
                           opening={openingId === row.id}
-                          onTest={id => void store.test(id)}
-                          onConnect={id => void store.connect(id)}
-                          onDisconnect={id => void store.disconnect(id)}
+                          onTest={id => void service.test({ machineId: id })}
+                          onConnect={id => void service.connect({ machineId: id })}
+                          onDisconnect={id => void service.disconnect({ machineId: id })}
                           onOpen={openRemoteWindow}
                         />
                       )}
@@ -1023,7 +965,7 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
                         bridgeError={bridgeErrors[row.id]}
                         installResult={state.installResults[row.id]}
                         t={t}
-                        onInstall={id => void store.install(id)}
+                        onInstall={id => void service.install({ machineId: id })}
                       />
                     </RowShell>
                   ))}
@@ -1055,7 +997,7 @@ export function MachinesSection({ t, store, bridge }: MachinesSectionProps): Rea
         footer={(
           <>
             <Button variant="ghost" onClick={() => setRemoveTarget(null)}>{t('remove.confirm.cancel')}</Button>
-            <Button variant="primary" className={cls.dangerAction} onClick={confirmRemove}>{t('remove.confirm.ok')}</Button>
+            <Button variant="primary" className={DANGER_ACTION} onClick={confirmRemove}>{t('remove.confirm.ok')}</Button>
           </>
         )}
       />

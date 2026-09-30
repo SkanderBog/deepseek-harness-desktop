@@ -1,17 +1,7 @@
 /* eslint-disable no-console -- the run's console output IS the recorded evidence */
-/**
- * arm64 substitute evidence (spec S2 acceptance 6): no arm64 machine exists,
- * so the dry run resolves the REAL linux/arm64 install plan against the live
- * npm registry and proves every download URL answers — without writing any
- * bytes to disk. Gated behind `DSH_SSH_ARM64_DRYRUN=1`:
- *
- *   DSH_SSH_ARM64_DRYRUN=1 pnpm --filter dsh-tauri-ssh exec vitest run \
- *     src/host/service/bootstrap.arm64-dryrun.test.ts
- * @module dsh-tauri-ssh/host/service/bootstrap.arm64-dryrun
- */
 
 import { describe, expect, it } from 'vitest'
-import { buildInstallScript, planRemoteInstall } from './bootstrap'
+import { buildInstallScript, planRemoteInstall } from './bootstrap.utils'
 
 const RUN = process.env.DSH_SSH_ARM64_DRYRUN === '1'
 

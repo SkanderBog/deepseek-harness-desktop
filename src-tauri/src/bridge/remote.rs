@@ -82,7 +82,7 @@ fn open_window_args(machine_id: &str, url: &str) -> Result<(String, Option<tauri
 /// 打开（已开则聚焦）`remote-<machineId>` 弹窗窗口，加载壳层应用。
 ///
 /// 壳不自存机器状态：前端按窗口 label 自解析目标机器并切换（机器状态经
-/// `/api-ssh` 轮询获取）；`url` 只做回环校验。重复调用聚焦已有窗口（不
+/// `/api/desktop/dsh-tauri-ssh/machines` 轮询获取）；`url` 只做回环校验。重复调用聚焦已有窗口（不
 /// 重复建窗）；失败返回带前缀的可读错误，由调用方（S4 面板按钮）呈现。
 #[tauri::command]
 pub fn remote_open_window(

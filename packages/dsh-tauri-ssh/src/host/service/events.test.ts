@@ -1,13 +1,20 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { EVENT_RING_CAPACITY } from '../config/constants'
+import { clearHostRuntime, setEventCapacity } from '../config/runtime'
 import { MachineId } from '../types/index'
-import { EVENT_RING_CAPACITY, SshMachineEvents } from './events'
+import { events } from './events'
 
 const m1 = MachineId('m1')
 const m2 = MachineId('m2')
 
+beforeEach(() => {
+  clearHostRuntime()
+  setEventCapacity(EVENT_RING_CAPACITY)
+})
+
 describe('sshMachineEvents', () => {
   it('assigns per-machine monotonic seqs starting at 1', () => {
-    const log = new SshMachineEvents()
+    const log = events
     log.append(m1, 'probe', 'one')
     log.append(m1, 'download', 'two')
     log.append(m2, 'probe', 'other machine')
@@ -18,7 +25,7 @@ describe('sshMachineEvents', () => {
   })
 
   it('stamps ts and machineId on every event and carries terminal/reason only when present', () => {
-    const log = new SshMachineEvents()
+    const log = events
     const first = log.append(m1, 'probe', 'probing')
     expect(first.machineId).toBe(m1)
     expect(first.ts).toBeTruthy()
@@ -32,7 +39,7 @@ describe('sshMachineEvents', () => {
   })
 
   it('drains incrementally by sinceSeq', () => {
-    const log = new SshMachineEvents()
+    const log = events
     for (let i = 0; i < 5; i++)
       log.append(m1, 'install', `line ${i}`)
     const first = log.since(m1)
@@ -45,12 +52,13 @@ describe('sshMachineEvents', () => {
   })
 
   it('anchors unknown machines at an empty page', () => {
-    const log = new SshMachineEvents()
+    const log = events
     expect(log.since(MachineId('nope'))).toEqual({ events: [], nextSeq: 1 })
   })
 
   it('keeps only the newest events per machine (ring buffer)', () => {
-    const log = new SshMachineEvents(3)
+    setEventCapacity(3)
+    const log = events
     for (let i = 0; i < 6; i++)
       log.append(m1, 'download', `url ${i}`)
     const page = log.since(m1)
@@ -61,14 +69,14 @@ describe('sshMachineEvents', () => {
   })
 
   it('uses the documented default capacity', () => {
-    const log = new SshMachineEvents()
+    const log = events
     for (let i = 0; i < EVENT_RING_CAPACITY + 25; i++)
       log.append(m1, 'install', `line ${i}`)
     expect(log.since(m1).events).toHaveLength(EVENT_RING_CAPACITY)
   })
 
   it('forgets a removed machine independently of its neighbors', () => {
-    const log = new SshMachineEvents()
+    const log = events
     log.append(m1, 'probe', 'one')
     log.append(m2, 'probe', 'two')
     log.forget(m1)

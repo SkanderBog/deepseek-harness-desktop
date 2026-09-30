@@ -1,6 +1,6 @@
-/** The SSH-machines settings page dictionary (zh is the key-set source of truth). */
+import { defineLocale } from 'dsh-tauri/client'
+import { PLUGIN_ID } from '../constants/index'
 
-/** Simplified Chinese dictionary. */
 export const zh = {
   'nav': '服务器',
   'tabs.machines': 'SSH 机器',
@@ -9,7 +9,6 @@ export const zh = {
   'hero.desc': '把本机作为发起端，用 SSH 连接其他机器上的 dsh 实例：直连使用本机 ~/.ssh 的配置与密钥，可管理多台机器并一键切换、同步插件与 Skill。默认关闭，开启后才建立连接。',
   'hero.enable': '启用 SSH',
   'hero.enabling': '正在启用…',
-  'hero.loadFailed': '无法读取 SSH 状态。',
   'error.unavailable': 'SSH 服务不可用：插件未加载或本地实例未就绪。',
   'title': 'SSH 远程机器',
   'intro': '连接直接使用本机 ~/.ssh 的配置与密钥：支持 config 别名、IdentityFile 与默认密钥；密码和私钥口令可选，仅在密钥不可用时作为回退。',
@@ -63,7 +62,6 @@ export const zh = {
   'status.nextRetry': '（下次重试：{hint}）',
   'retry.now': '即刻',
   'retry.inSeconds': '{seconds}s 后',
-  'log.title': '日志',
   'remove.confirm.title': '删除机器',
   'remove.confirm.description': '将删除「{name}」的机器配置；已保存的密码/口令会一并删除。',
   'remove.confirm.cancel': '取消',
@@ -120,13 +118,11 @@ export const zh = {
   'install.done.copied': '安装完成，已复制本机 API Key，正在自动连接…',
   'install.done.nokey': '安装完成。本机未找到 DEEPSEEK_API_KEY，请在远端 dsh Web 的 Models 页面配置后使用。',
   'install.done.error': '安装完成，但凭据复制失败：',
-} satisfies Record<string, string>
+} as const
 
-/** The dictionary key union. */
 export type SshKey = keyof typeof zh
 
-/** English dictionary, checked complete against the zh key set. */
-export const en = {
+export const en: Record<keyof typeof zh, string> = {
   'nav': 'Service',
   'tabs.machines': 'SSH machines',
   'tabs.sync': 'Sync to remote',
@@ -134,7 +130,6 @@ export const en = {
   'hero.desc': 'Drive other machines\' dsh instances from this one over SSH: connections use this machine\'s ~/.ssh directly, and you can keep several machines, switch between them, and sync plugins and skills. Off by default — nothing connects until you enable it.',
   'hero.enable': 'Enable SSH',
   'hero.enabling': 'Enabling…',
-  'hero.loadFailed': 'Could not read the SSH state.',
   'error.unavailable': 'The SSH service is unavailable: the plugin is not loaded or the local instance is not ready.',
   'title': 'SSH Remote Machines',
   'intro': 'Connections use this machine\'s ~/.ssh directly: config aliases, IdentityFile, and the default keys are honored; password and passphrase are optional fallbacks.',
@@ -188,7 +183,6 @@ export const en = {
   'status.nextRetry': ' (next retry: {hint})',
   'retry.now': 'now',
   'retry.inSeconds': 'in {seconds}s',
-  'log.title': 'Log',
   'remove.confirm.title': 'Remove machine',
   'remove.confirm.description': 'This removes the "{name}" machine profile; any stored password or passphrase goes with it.',
   'remove.confirm.cancel': 'Cancel',
@@ -245,4 +239,6 @@ export const en = {
   'install.done.copied': 'Installed. Your API key was copied to the remote; auto-connecting…',
   'install.done.nokey': 'Installed. No DEEPSEEK_API_KEY found locally; configure one on the remote Models page to use it.',
   'install.done.error': 'Installed, but copying credentials failed: ',
-} satisfies Record<SshKey, string>
+}
+
+export const locale = defineLocale(PLUGIN_ID, { zh, en })

@@ -1,52 +1,110 @@
-/**
- * Structural types of the DSH client services this plugin consumes. The
- * @deepseek-ai packages are private to the harness and never published; the
- * plugin declares local mirrors of the exact surfaces it touches (shapes
- * copied from the harness's own registrants) and never imports the private
- * packages at runtime — the loader calls `apply` with the real context and
- * duck-typing does the rest.
- * @module dsh-tauri-ssh/client/types
- */
+export type MachineLifecycleState
+  = | 'disconnected'
+    | 'testing'
+    | 'connecting'
+    | 'connected'
+    | 'reconnecting'
+    | 'given-up'
 
-/** One settings-section registration option set. */
-export interface SlotRegisterOptions {
-  name: string
+export interface ServiceResult {
+  ok: boolean
+  error?: string
+}
+
+export function isLifecycleState(value: unknown): value is MachineLifecycleState {
+  return value === 'disconnected'
+    || value === 'testing'
+    || value === 'connecting'
+    || value === 'connected'
+    || value === 'reconnecting'
+    || value === 'given-up'
+}
+
+export interface MachineRow {
   id: string
-  order: number
-  label: () => string
-  locale?: string
-  inject?: () => Record<string, unknown>
+  name: string
+  host: string
+  port: number
+  user: string
+  hasPassword: boolean
+  hasPassphrase: boolean
+  remotePort: number
+  profileName?: string
+  startCommand?: string
+  color?: string
+  tintBorder?: boolean
 }
 
-/** The slots ledger face (a subset of the runtime SlotsService). */
-export interface SlotsService {
-  inject: (name: string, contribution: () => unknown) => void
-  register: (options: SlotRegisterOptions, component: unknown) => unknown
+export interface SecretValues {
+  password?: string
+  passphrase?: string
 }
 
-/** The locale face (a subset of the locale service). */
-export interface LocaleService {
-  register: (ns: string, dictionaries: { zh: Record<string, string>, en: Record<string, string> }) => void
-  bind: (ns: string) => (key: string) => string
+export type ProgressPhase = 'handshake' | 'installing' | 'starting' | 'probing' | 'syncing'
+
+export interface MachineStatus {
+  state: MachineLifecycleState
+  nextRetryAt?: number
+  authMethod?: 'agent' | 'key' | 'password'
+  tunnelBaseUrl?: string
+  lastError?: string
+  dshMissing?: boolean
+  progress?: { phase: ProgressPhase, attempt?: number, total?: number, item?: string, log?: string }
 }
 
-/** The client root context this plugin's apply receives. */
-export interface UiContext {
-  effect: (execute: () => (() => void) | void, label?: string) => unknown
-  get: <T = unknown>(name: string) => T
-  on: (name: string, listener: (...args: unknown[]) => void) => () => boolean
-  slots: SlotsService
-  locale: LocaleService
+export interface MachineListSnapshot {
+  machines: MachineRow[]
+  discovered: MachineRow[]
+  statuses: Record<string, MachineStatus>
 }
 
-export type {
-  MachineLifecycleState,
-  RemoteBridge,
-  SshMachineEvent,
-  SyncApplyResult,
-  SyncItemResult,
-  SyncPluginItem,
-  SyncPreview,
-  SyncSkillItem,
-} from './sync'
-export { isLifecycleState } from './sync'
+export interface InstallResult {
+  dshPath: string
+  credentialsCopied: boolean
+  credentialsError?: string
+}
+
+export interface SshMachineEvent {
+  seq: number
+  ts: string
+  machineId: string
+  stage: string
+  line: string
+  terminal?: 'success' | 'failed'
+  reason?: string
+}
+
+export interface SyncPluginItem {
+  name: string
+  spec: string
+  syncable: boolean
+  reason?: string
+}
+
+export interface SyncSkillItem {
+  name: string
+  root: string
+}
+
+export interface SyncPreview {
+  plugins: SyncPluginItem[]
+  skills: SyncSkillItem[]
+}
+
+export interface SyncItemResult {
+  kind: 'plugin' | 'skill'
+  name: string
+  root?: string
+  ok: boolean
+  error?: string
+  log?: string
+}
+
+export interface SyncApplyResult {
+  items: SyncItemResult[]
+}
+
+export interface RemoteBridge {
+  probe: () => Promise<unknown>
+  openWindow: (machineId: string, url: string) => Promise<unknown>
+}

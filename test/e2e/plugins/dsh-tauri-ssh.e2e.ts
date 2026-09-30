@@ -1,10 +1,14 @@
 /**
  * dsh-tauri-ssh 远程机插件 E2E：真实 ssh2 传输层与真实 SSH 协议往返。
  *
- * 四条契约各占一个 describe，共用同一套 `bootHarness` 脚手架——真实的
- * `Ssh2Transport`、宿主自身 `~/.ssh` 的别名与身份文件解析、带时间戳的
- * status/event 证据日志。断言对象是外部世界（HTTP 字节、服务端记录的认证方法
- * 序列、被杀的 sshd 会话进程），不采信插件自报：
+ * 四条契约各占一个 describe，共用同一套 `bootHarness` 脚手架——装配真实的
+ * 运行时单例（`transport` 服务 + `config/runtime.ts` 的 use* 装配面），宿主
+ * 自身 `~/.ssh` 的别名与身份文件解析，带时间戳的 status/event 证据日志。
+ * 事件证据走公开读面 `events.since(machineId, fromSeq)` 轮询：重构后事件类
+ * 已不存在，轮询读回的每一行按 `event <stage>[/<terminal>]: <line>` 打平，
+ * `at` 取事件自报的 `ts`，因此重连退避的间隔算术与轮询延迟无关。断言对象是
+ * 外部世界（HTTP 字节、服务端记录的认证方法序列、被杀的 sshd 会话进程），
+ * 不采信插件自报：
  * - reconnect：真实 linux x64 机器上杀掉服务端会话 → 自动重连 → 同一隧道 URL 继续服务；
  * - give-up：持续不可达的本机端口上的指数退避节奏与 given-up 终态；
  * - password-chain：回环 ssh2 协议服务器上的 agent→key→password 认证链与三类失败分类；
@@ -18,37 +22,22 @@
  */
 
 import type { Connection, Server as SshServer } from 'ssh2'
-import type { MachineProfile, SshMachineStage, SshMachineTerminal } from '../../../packages/dsh-tauri-ssh/src/host/types/index'
+import type { MachineProfile, SshHostContext, SshSession } from '../../../packages/dsh-tauri-ssh/src/host/types/index'
 import { execSync } from 'node:child_process'
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, connect as tcpConnect } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
+import process from 'node:process'
 import { join } from 'pathe'
 import { Server } from 'ssh2'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { SshMachineEvents } from '../../../packages/dsh-tauri-ssh/src/host/service/events'
-import { KnownHostsStore } from '../../../packages/dsh-tauri-ssh/src/host/service/host-keys'
-import { SshManager } from '../../../packages/dsh-tauri-ssh/src/host/service/manager'
-import { SshConfigResolver } from '../../../packages/dsh-tauri-ssh/src/host/service/ssh-config'
-import { Ssh2Transport } from '../../../packages/dsh-tauri-ssh/src/host/service/transport'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { clearHostRuntime, machineProfiles, setCurrentHostInstance, setHostConfig, setMachineDeps } from '../../../packages/dsh-tauri-ssh/src/host/config/runtime'
+import { events } from '../../../packages/dsh-tauri-ssh/src/host/service/events'
+import { machine } from '../../../packages/dsh-tauri-ssh/src/host/service/machine'
+import { transport } from '../../../packages/dsh-tauri-ssh/src/host/service/transport'
 import { MachineId } from '../../../packages/dsh-tauri-ssh/src/host/types/index'
-
-/**
- * The machine event channel with evidence logging: every appended line is
- * echoed into the harness log (`event <stage>[/<terminal>]: <line>`) before
- * it lands in the ring buffer, so the specs can grep the emitted stream.
- */
-class LoggingMachineEvents extends SshMachineEvents {
-  constructor(private readonly log: (text: string) => void) {
-    super()
-  }
-
-  override append(machineId: MachineId, stage: SshMachineStage, line: string, options: { terminal?: SshMachineTerminal, reason?: string } = {}) {
-    this.log(`event ${stage}${options.terminal === undefined ? '' : `/${options.terminal}`}: ${line}`)
-    return super.append(machineId, stage, line, options)
-  }
-}
+import { EMPTY_ALLOWLIST } from '../../../packages/dsh-tauri-ssh/src/host/utils/allowlist'
 
 /** One timestamped evidence line. */
 interface EvidenceLine {
@@ -56,10 +45,11 @@ interface EvidenceLine {
   text: string
 }
 
-/** The E2E harness: manager plus captured evidence. */
+/** The E2E harness: the assembled runtime service plus captured evidence. */
 interface Harness {
-  manager: SshManager
+  manager: typeof machine
   evidence: EvidenceLine[]
+  drain: () => void
   log: (text: string) => void
   dispose: () => Promise<void>
 }
@@ -76,9 +66,29 @@ function freshRsaPem(): string {
 }
 
 /**
- * Boot one real-transport manager with scratch TOFU storage and the given
- * connect/reconnect timing, logging every status and event emission with a
- * timestamp.
+ * The minimal host context the runtime needs: the E2E suite drives the
+ * services directly, so nothing is ever registered on the web server and no
+ * effect is ever mounted.
+ */
+function hostContextStub(): SshHostContext {
+  return {
+    webServer: { register: () => () => {} },
+    effect: () => undefined,
+  }
+}
+
+/** Every `it` leaves no runtime behind (assembly is process-global state). */
+afterEach(() => {
+  clearHostRuntime()
+})
+
+/**
+ * Boot one real-transport runtime with scratch TOFU/state storage and the
+ * given connect/reconnect timing, logging every status and event emission
+ * with a timestamp.
+ *
+ * Assembly order is the production one (`apply.ts` is the only other caller):
+ * clear the runtime → bind the host instance → `setHostConfig` → `setMachineDeps`.
  */
 function bootHarness(options: {
   connectTimeoutMs?: number
@@ -93,37 +103,62 @@ function bootHarness(options: {
 } = {}): Harness {
   const evidence: EvidenceLine[] = []
   const t0 = now()
+  const root = mkdtempSync(join(tmpdir(), 'dsh-ssh-e2e-'))
+  const seenSeq = new Map<MachineId, number>()
+
+  /**
+   * Read the public event surface forward from the last seen seq. `at` is the
+   * event's own timestamp, so the retry spacing is exact regardless of how
+   * often this poller happens to run.
+   */
+  const drain = (): void => {
+    for (const machineId of machineProfiles.keys()) {
+      const after = seenSeq.get(machineId) ?? 0
+      const page = events.since(machineId, after)
+      // Advance only past events actually handed over: `nextSeq` is the
+      // buffer's own next seq and would skip events appended after the poll.
+      const last = page.events.at(-1)?.seq
+      if (last !== undefined)
+        seenSeq.set(machineId, last)
+      for (const event of page.events) {
+        const at = Date.parse(event.ts)
+        evidence.push({
+          at: Number.isNaN(at) ? now() : at,
+          text: `event ${event.stage}${event.terminal === undefined ? '' : `/${event.terminal}`}: ${event.line}`,
+        })
+      }
+    }
+  }
+
   const log = (text: string): void => {
+    drain()
     const line = { at: now(), text }
     evidence.push(line)
     // eslint-disable-next-line no-console -- the E2E evidence log is the point
     console.log(`[+${(line.at - t0).toString().padStart(6)}ms] ${text}`)
   }
-  const root = mkdtempSync(join(tmpdir(), 'dsh-ssh-e2e-'))
-  const manager = new SshManager({
-    transport: new Ssh2Transport(
-      options.connectTimeoutMs ?? 15_000,
-      // The host's real ~/.ssh: config aliases and identity files, exactly
-      // what the plugin in the desktop app would resolve against.
-      new SshConfigResolver(options.sshDir ?? join(homedir(), '.ssh'), homedir()),
-      {
-        keepaliveIntervalMs: options.keepaliveIntervalMs ?? 3_000,
-        keepaliveCountMax: options.keepaliveCountMax ?? 3,
-      },
-    ),
-    knownHosts: new KnownHostsStore(join(root, 'known-hosts.json')),
-    config: {
-      connectTimeoutMs: options.connectTimeoutMs ?? 15_000,
-      healthCheckTimeoutMs: 3_000,
-      healthPollIntervalMs: options.healthPollIntervalMs ?? 500,
-      healthPollAttempts: options.healthPollAttempts ?? 30,
-      keepaliveIntervalMs: options.keepaliveIntervalMs ?? 3_000,
-      keepaliveCountMax: options.keepaliveCountMax ?? 3,
-      reconnectInitialDelayMs: options.reconnectInitialDelayMs ?? 1_000,
-      reconnectMaxDelayMs: options.reconnectMaxDelayMs ?? 5_000,
-      reconnectMaxAttempts: options.reconnectMaxAttempts ?? 6,
-    },
-    events: new LoggingMachineEvents(log),
+
+  clearHostRuntime()
+  setCurrentHostInstance(hostContextStub())
+  setHostConfig({
+    connectTimeoutMs: options.connectTimeoutMs ?? 15_000,
+    healthCheckTimeoutMs: 3_000,
+    healthPollIntervalMs: options.healthPollIntervalMs ?? 500,
+    healthPollAttempts: options.healthPollAttempts ?? 30,
+    keepaliveIntervalMs: options.keepaliveIntervalMs ?? 3_000,
+    keepaliveCountMax: options.keepaliveCountMax ?? 3,
+    reconnectInitialDelayMs: options.reconnectInitialDelayMs ?? 1_000,
+    reconnectMaxDelayMs: options.reconnectMaxDelayMs ?? 5_000,
+    reconnectMaxAttempts: options.reconnectMaxAttempts ?? 6,
+    // The host's real ~/.ssh: config aliases and identity files, exactly
+    // what the plugin in the desktop app would resolve against.
+    sshDir: options.sshDir ?? join(homedir(), '.ssh'),
+    // Scratch TOFU + machine table: the suite must never touch ~/.dsh.
+    knownHostsPath: join(root, 'known-hosts.json'),
+    statePath: join(root, 'machines.json'),
+  })
+  setMachineDeps({
+    transport,
     emitStatus: (statusId, status) => {
       const hints = [
         status.state,
@@ -134,13 +169,21 @@ function bootHarness(options: {
       ]
       log(`status ${String(statusId)}: ${hints.join(' ')}`)
     },
+    localAllowlist: () => ({ ...EMPTY_ALLOWLIST }),
   })
+  const poller = setInterval(drain, 50)
+
   return {
-    manager,
+    manager: machine,
     evidence,
+    drain,
     log,
     dispose: async () => {
-      await manager.dispose()
+      clearInterval(poller)
+      drain()
+      await machine.dispose()
+      clearHostRuntime()
+      rmSync(root, { recursive: true, force: true })
     },
   }
 }
@@ -360,6 +403,7 @@ describe('e2e give-up (local unreachable port)', () => {
 
       // The retry schedule from the event log: one auth failure per attempt,
       // one reconnect line per scheduled retry, gaps growing 300→600→1200→1200.
+      harness.drain()
       const retryLines = harness.evidence.filter(line => line.text.includes('event reconnect: retrying'))
       const gaps: number[] = []
       let previous: number | undefined
@@ -414,15 +458,37 @@ describe('e2e password chain (loopback ssh2 protocol server)', () => {
   const attempts: AuthAttempt[] = []
   let server: SshServer
   let serverPort = 0
+  let scratchHome: string
   let scratchSshDir: string
+  const envBefore: { USERPROFILE: string | undefined, HOME: string | undefined } = {
+    USERPROFILE: process.env.USERPROFILE,
+    HOME: process.env.HOME,
+  }
 
+  /**
+   * A scratch identity file is fed to the host as `~/.ssh/id_rsa` of a scratch
+   * HOME, not as an absolute path: `resolveSshAuth` treats every identity path
+   * that does not literally start with `/` as home-relative
+   * (`host/utils/ssh-config.ts:37-41`), so a Windows drive path such as
+   * `C:/…/.ssh/id_rsa` is joined onto the home dir twice and resolves to no
+   * key at all. Going through the home-relative branch keeps the production
+   * path (config discovery → identity files → transport auth order) real on
+   * every platform; the absolute-path defect is the package's own problem
+   * (`utils/ssh-config.test.ts` is red on Windows for exactly that reason).
+   */
   beforeAll(async () => {
     // A fresh host key pair for the server and one for the client's (rejected)
     // identity file.
     const hostKey = freshRsaPem()
     const clientKey = freshRsaPem()
-    scratchSshDir = mkdtempSync(join(tmpdir(), 'dsh-ssh-e2e-sshdir-'))
+    scratchHome = mkdtempSync(join(tmpdir(), 'dsh-ssh-e2e-home-'))
+    scratchSshDir = join(scratchHome, '.ssh')
+    mkdirSync(scratchSshDir, { recursive: true })
     writeFileSync(join(scratchSshDir, 'id_rsa'), clientKey)
+    // `homeDir()` is read when the runtime is assembled, so it must already
+    // point at the scratch home before the first `bootHarness` in each `it`.
+    process.env.USERPROFILE = scratchHome
+    process.env.HOME = scratchHome
 
     server = new Server({ hostKeys: [hostKey] }, (client: Connection) => {
       client.on('authentication', (ctx) => {
@@ -455,7 +521,13 @@ describe('e2e password chain (loopback ssh2 protocol server)', () => {
 
   afterAll(() => {
     server.close()
-    rmSync(scratchSshDir, { recursive: true, force: true })
+    rmSync(scratchHome, { recursive: true, force: true })
+    if (envBefore.USERPROFILE === undefined)
+      delete process.env.USERPROFILE
+    else process.env.USERPROFILE = envBefore.USERPROFILE
+    if (envBefore.HOME === undefined)
+      delete process.env.HOME
+    else process.env.HOME = envBefore.HOME
   })
 
   function profileWith(password?: string): MachineProfile {
@@ -472,7 +544,7 @@ describe('e2e password chain (loopback ssh2 protocol server)', () => {
 
   it('authenticates with the stored password after agent and keys are refused', async () => {
     attempts.length = 0
-    const harness = bootHarness({ sshDir: scratchSshDir, connectTimeoutMs: 5_000 })
+    const harness = bootHarness({ sshDir: '.ssh', connectTimeoutMs: 5_000 })
     try {
       const profile = profileWith(PASSWORD)
       harness.manager.refreshProfiles(new Map([[profile.id, profile]]))
@@ -496,7 +568,7 @@ describe('e2e password chain (loopback ssh2 protocol server)', () => {
 
   it('classifies a wrong stored password as password-rejected', async () => {
     attempts.length = 0
-    const harness = bootHarness({ sshDir: scratchSshDir, connectTimeoutMs: 5_000 })
+    const harness = bootHarness({ sshDir: '.ssh', connectTimeoutMs: 5_000 })
     try {
       const profile = profileWith('wrong-password')
       harness.manager.refreshProfiles(new Map([[profile.id, profile]]))
@@ -511,7 +583,7 @@ describe('e2e password chain (loopback ssh2 protocol server)', () => {
 
   it('classifies exhausted keys without a password as key-rejected', async () => {
     attempts.length = 0
-    const harness = bootHarness({ sshDir: scratchSshDir, connectTimeoutMs: 5_000 })
+    const harness = bootHarness({ sshDir: '.ssh', connectTimeoutMs: 5_000 })
     try {
       const profile = profileWith()
       harness.manager.refreshProfiles(new Map([[profile.id, profile]]))
@@ -531,6 +603,9 @@ describe('e2e password chain (loopback ssh2 protocol server)', () => {
  * what a NAT/firewall drop looks like); ssh2's keepalive misses its
  * heartbeat budget and must declare the session closed, surfacing through
  * the session's onClosed callback (the manager's reconnect trigger).
+ *
+ * The session comes from `machine.openSession`, i.e. the keepalive budget is
+ * the assembled Config's, not a hand-built transport's.
  */
 describe('e2e keepalive watchdog (silent connection freeze)', () => {
   const PASSWORD = 'e2e-watchdog'
@@ -617,11 +692,6 @@ describe('e2e keepalive watchdog (silent connection freeze)', () => {
 
   it('declares a hung session closed after the heartbeat budget', async () => {
     const proxy = await startStallingProxy()
-    const transport = new Ssh2Transport(
-      5_000,
-      new SshConfigResolver(scratchSshDir, homedir()),
-      { keepaliveIntervalMs: KEEPALIVE_INTERVAL_MS, keepaliveCountMax: KEEPALIVE_COUNT_MAX },
-    )
     const profile: MachineProfile = {
       id: MachineId('watchdog'),
       name: 'watchdog',
@@ -631,12 +701,21 @@ describe('e2e keepalive watchdog (silent connection freeze)', () => {
       password: PASSWORD,
       remotePort: 3080,
     }
+    const harness = bootHarness({
+      connectTimeoutMs: 5_000,
+      keepaliveIntervalMs: KEEPALIVE_INTERVAL_MS,
+      keepaliveCountMax: KEEPALIVE_COUNT_MAX,
+      sshDir: scratchSshDir,
+    })
+    let session: SshSession | undefined
     try {
-      const session = await transport.connect(profile, () => true)
-      expect(session.authMethod).toBe('password')
+      harness.manager.refreshProfiles(new Map([[profile.id, profile]]))
+      const opened = await harness.manager.openSession(profile.id)
+      session = opened
+      expect(opened.authMethod).toBe('password')
 
       const closedAt = new Promise<number>((resolve) => {
-        session.onClosed(() => resolve(Date.now()))
+        opened.onClosed(() => resolve(Date.now()))
       })
       const frozeAt = Date.now()
       proxy.freeze()
@@ -655,7 +734,9 @@ describe('e2e keepalive watchdog (silent connection freeze)', () => {
       expect(elapsed).toBeLessThan(20_000)
     }
     finally {
+      await session?.close().catch(() => undefined)
       proxy.close()
+      await harness.dispose()
     }
   }, 60_000)
 })

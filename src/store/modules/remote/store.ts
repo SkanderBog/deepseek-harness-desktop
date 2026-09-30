@@ -1,7 +1,7 @@
 /**
  * 远端机器模块（壳层）：机器列表轮询、iframe 切换目标（activeId/粘性隧道
- * URL）与降级态。数据面完全来自本地实例 `/api-ssh`（dsh-tauri-ssh 插件，
- * S1 契约）——壳不自存任何机器，连接/隧道/bootstrap 全部由插件引擎推进。
+ * URL）与降级态。数据面完全来自本地实例上 dsh-tauri-ssh 插件的 REST 路由
+ * （`src/apis/remote.ts`）——壳不自存任何机器，连接/隧道/bootstrap 全部由插件引擎推进。
  *
  * 节奏（KISS，无推送通道）：秒级轮询 + 窗口聚焦触发刷新（监听在组件侧
  * hook 装配）；本地实例不可达时进入降级态（保留列表、静默重试，不弹错误
@@ -12,12 +12,12 @@
  * @module store/remote/store
  */
 
-import type { SshApiClient } from './api'
-import type { SshMachineRow, SshProgressPhase } from './types'
+import type { SshApiClient, SshMachineRow, SshProgressPhase } from './types'
 import { defineStore } from 'valtio-define'
-import { harness } from '../harness'
-import { createSshApiClient, SshApiHttpError } from './api'
+import { SshApiHttpError } from '@/apis/http'
+import { getMachines, getMachinesEvents, postMachinesConnect, postMachinesDisconnect } from '@/apis/remote'
 import { reconcileSwitcher } from './logic'
+import { eventEntriesOf, machineRowsOf } from './machines'
 
 /** 轮询间隔（毫秒）：秒级即可让切换器跟上连接/重连状态流转。 */
 const POLL_INTERVAL_MS = 2000
@@ -36,26 +36,19 @@ function messageOf(error: unknown): string {
 /** 模块级轮询句柄（与 harness store 的定时器管理模式一致）。 */
 let pollTimer: ReturnType<typeof setInterval> | undefined
 
-/** 数据面客户端：默认走全局 fetch 与 harness 的 serviceUrl（测试可替换）。 */
-let api = createSshApiClient(
-  (input, init) => fetch(input, init),
-  () => harness.$state.serviceUrl,
-)
-
-/** 当前数据面客户端（管理面板复用同一实例；测试经 bindSshApiForTests 替换）。 */
-export function sshApi(): SshApiClient {
-  return api
+/** 数据面：REST 端点经 `@tauri-apps/plugin-http` 从内核发出（无 Origin，跨源守卫不适用）。 */
+let api: SshApiClient = {
+  listMachines: async () => machineRowsOf(await getMachines()),
+  connect: async machineId => ({ tunnelBaseUrl: (await postMachinesConnect({ machineId })).tunnelBaseUrl ?? '' }),
+  disconnect: async (machineId) => {
+    await postMachinesDisconnect({ machineId })
+  },
+  events: async (machineId, sinceSeq = 0) => ({ items: eventEntriesOf(await getMachinesEvents({ machineId, sinceSeq })) }),
 }
 
-/** 测试注入口：替换数据面客户端并复位切换状态（仅测试使用）。 */
+/** 测试注入口：替换数据面客户端（仅测试使用）。 */
 export function bindSshApiForTests(client: Partial<SshApiClient> & Pick<SshApiClient, 'listMachines' | 'connect' | 'disconnect'>): void {
-  api = {
-    save: async () => {},
-    remove: async () => {},
-    test: async () => ({ ok: true }),
-    events: async () => ({ items: [] }),
-    ...client,
-  }
+  api = { ...api, ...client }
 }
 
 export const remote = defineStore({
@@ -72,7 +65,7 @@ export const remote = defineStore({
     pendingBootMachineId: null as string | null,
     /** 活动机器最近已知的隧道 URL（重连窗口粘性保留，避免指向空端口）。 */
     activeTunnelUrl: '',
-    /** `/api-ssh` 是否可达；不可达时切换器降级（禁用远端项 + 提示）。 */
+    /** SSH 路由是否可达；不可达时切换器降级（禁用远端项 + 提示）。 */
     available: true,
     /** 连接进度弹窗：本次连接实际走过的管线阶段（落定后保留供失败复盘）。 */
     connectTrail: [] as SshProgressPhase[],
@@ -159,7 +152,7 @@ export const remote = defineStore({
           // （插件操作会停服）时会连续失败几百轮，每轮带一份堆栈就是把日志淹掉，而这行
           // 信息的增量是零——`available` 已经表达了降级态。
           if (this.available)
-            console.warn('[remote] /api-ssh unreachable:', messageOf(err))
+            console.warn('[remote] ssh api unreachable:', messageOf(err))
           this.available = false
         }
       }

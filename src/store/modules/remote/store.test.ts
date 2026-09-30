@@ -1,15 +1,14 @@
-import type { SshMachineList } from './api'
 import type { SshMachineRow } from './types'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { SshApiHttpError } from './api'
+import { SshApiHttpError } from '@/apis/http'
 import { bindSshApiForTests, disposeRemoteForTests, remote } from './store'
 
 function machineOf(partial: Partial<SshMachineRow>): SshMachineRow {
   return { id: 'm1', name: 'machine', state: 'disconnected', ...partial }
 }
 
-/** SSH 已启用的 machine.list 应答。 */
-function listOf(machines: SshMachineRow[]): SshMachineList {
+/** SSH 已启用的机器列表应答。 */
+function listOf(machines: SshMachineRow[]): { enabled: boolean, machines: SshMachineRow[] } {
   return { enabled: true, machines }
 }
 
