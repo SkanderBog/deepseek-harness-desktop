@@ -1,9 +1,9 @@
 import type { ClientContext } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../shared/constants'
-import { LOCALE_EFFECT, NOTIFY_EFFECT, SECTION_EFFECT } from './constants'
+import { LOCALE_EFFECT, NOTIFY_EFFECT, SETTINGS_EFFECT } from './constants'
 import { locale } from './locales'
 import { notifyFeature } from './register/notify'
-import { sectionFeature } from './register/section'
+import { settingsFeature } from './register/settings'
 import { notificationSettings } from './store/modules/settings'
 
 export const name = PLUGIN_ID
@@ -19,6 +19,6 @@ export function apply(ctx: ClientContext): void {
   // 不 hydrate 的话每次启动都从默认值开始，用户改过的选项会被首次写回覆盖。
   void notificationSettings.hydrate()
   ctx.effect(locale.registerLocale, LOCALE_EFFECT)
-  ctx.effect(sectionFeature, SECTION_EFFECT)
+  ctx.effect(settingsFeature, SETTINGS_EFFECT)
   ctx.effect(notifyFeature, NOTIFY_EFFECT)
 }
