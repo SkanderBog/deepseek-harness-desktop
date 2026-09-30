@@ -64,9 +64,12 @@ fn patch_plugin_manager(source: &str) -> PatchOutcome {
 /// 插件市场名单补丁的纯函数部分：把 `names` 里尚未登记的名字追加进
 /// `INBOX_BUNDLES` 字面量。
 ///
-/// 按名字逐个判定是否已存在，因此插件增减后再次启动会自动补齐（不做「整体已打过」
-/// 的粗判，否则新增的 `dsh-tauri-*` 永远进不了名单）；名字全在名单里则返回
-/// [`PatchOutcome::AlreadyPatched`]。找不到字面量时返回
+/// 插入点取名单本体最后一个非空白字符之后，换行与分隔符都只看**名单本体**（不看锚点
+/// 之前的文件内容）：本体含换行则每个名字独占一行、按首个元素的对齐缩进；本体非空且
+/// 末项没有尾逗号（单行数组，或末项没写逗号的多行数组）时先补一个逗号，保证生成的字面
+/// 量始终合法。按名字逐个判定是否已存在，因此插件增减后再次启动会自动补齐（不做
+/// 「整体已打过」的粗判，否则新增的 `dsh-tauri-*` 永远进不了名单）；名字全在名单里则
+/// 返回 [`PatchOutcome::AlreadyPatched`]。找不到字面量时返回
 /// [`PatchOutcome::AnchorMissing`]。
 fn patch_inbox_bundles(source: &str, names: &[String]) -> PatchOutcome {
     let Some(start) = source.find(INBOX_ANCHOR) else {
@@ -76,42 +79,40 @@ fn patch_inbox_bundles(source: &str, names: &[String]) -> PatchOutcome {
     let Some(end) = source[body_start..].find("])") else {
         return PatchOutcome::AnchorMissing;
     };
-    let body_end = body_start + end;
+    let body = &source[body_start..body_start + end];
     let missing: Vec<&str> = names
         .iter()
         .map(String::as_str)
-        .filter(|name| !source[body_start..body_end].contains(&format!("'{name}'")))
+        .filter(|name| !body.contains(&format!("'{name}'")))
         .collect();
     if missing.is_empty() {
         return PatchOutcome::AlreadyPatched;
     }
 
-    let before = &source[..body_end];
-    let close_indent = trailing_blank(before);
-    let insert_at = body_end - close_indent.len();
-    let mut patched = source.to_string();
-    if before.contains('\n') {
-        let indent = element_indent(source, body_start);
-        let mut inserted = String::new();
-        for name in missing {
-            inserted.push_str(indent);
-            inserted.push('\'');
-            inserted.push_str(name);
-            inserted.push_str("',\n");
-        }
-        patched.insert_str(insert_at, &inserted);
+    let multiline = body.contains('\n');
+    let indent = if multiline {
+        element_indent(source, body_start)
     } else {
-        let mut inserted = String::new();
-        if !before.trim_end().ends_with(',') {
-            inserted.push(',');
+        ""
+    };
+    let last = body.trim_end_matches([' ', '\t', '\r', '\n']);
+    let separator = if last.is_empty() || last.ends_with(',') {
+        ""
+    } else {
+        ","
+    };
+    let mut inserted = String::from(separator);
+    for name in missing {
+        if multiline {
+            inserted.push('\n');
+            inserted.push_str(indent);
         }
-        for name in missing {
-            inserted.push('\'');
-            inserted.push_str(name);
-            inserted.push_str("',");
-        }
-        patched.insert_str(insert_at, &inserted);
+        inserted.push('\'');
+        inserted.push_str(name);
+        inserted.push_str("',");
     }
+    let mut patched = source.to_string();
+    patched.insert_str(body_start + last.len(), &inserted);
     PatchOutcome::Patched(patched)
 }
 
@@ -127,14 +128,20 @@ fn element_indent(source: &str, anchor_end: usize) -> &str {
     &source[line_start..line_start + leading_blank_len(&source[line_start..line_end])]
 }
 
-/// 文本末尾的连续空白（换行前的对齐用：`])` 所在行的前导缩进）。
-fn trailing_blank(text: &str) -> &str {
-    &text[text.trim_end_matches([' ', '\t']).len()..]
-}
-
 /// 文本开头连续空白（空格/制表符）的字节数。
 fn leading_blank_len(text: &str) -> usize {
     text.len() - text.trim_start_matches([' ', '\t']).len()
+}
+
+/// 名单里允许登记的包名：只接受 npm 包名的合法字符。
+///
+/// 名字来自 profile / 清单，直接拼进市场前端的单引号字面量；名字若含引号或换行会写坏
+/// 产物，故此处按字符集白名单收口，异常名字直接不进名单。
+fn is_safe_bundle_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '/' | '.' | '-' | '_'))
 }
 
 /// 把 `dsh-tauri-*` 从官方插件页与插件市场隐藏。
@@ -166,7 +173,7 @@ pub fn apply_at(core_dir: &Path) -> Result<(), String> {
 /// 内置插件取自清单（debug 下含 `packages/*` 的发现结果）而非 profile，这样尚未装进
 /// 档案、或正在自愈重装的新内置插件在第一次启动就被隐藏；profile 一侧覆盖早期以普通
 /// 插件身份装进档案、已不在清单里的 `dsh-tauri-*`（例如 `dsh-tauri-session`）。任一侧
-/// 读不到时退化为空，仍由另一侧决定名单。
+/// 读不到时退化为空，仍由另一侧决定名单；名字另按 [`is_safe_bundle_name`] 收口。
 fn hidden_bundle_names(app_handle: &AppHandle) -> Vec<String> {
     let internal = load_presets(app_handle)
         .into_iter()
@@ -175,7 +182,7 @@ fn hidden_bundle_names(app_handle: &AppHandle) -> Vec<String> {
     let declared = declared_packages(app_handle).unwrap_or_default();
     internal
         .chain(declared)
-        .filter(|name| name.starts_with(PLUGIN_PREFIX))
+        .filter(|name| name.starts_with(PLUGIN_PREFIX) && is_safe_bundle_name(name))
         .collect::<BTreeSet<String>>()
         .into_iter()
         .collect()
@@ -271,5 +278,42 @@ mod tests {
             patch_inbox_bundles("const OTHER = new Set([]);\n", &names()),
             PatchOutcome::AnchorMissing
         );
+    }
+
+    /// 单行字面量出现在文件首行之后（此前按「锚点之前有没有换行」判断会漏补分隔符）。
+    #[test]
+    fn market_lists_handle_single_line_literal_after_a_header() {
+        let source =
+            "// header line\nexport const INBOX_BUNDLES = new Set(['@deepseek-ai/dsh-base']);\n";
+        match patch_inbox_bundles(source, &names()) {
+            PatchOutcome::Patched(patched) => assert_eq!(
+                patched,
+                "// header line\nexport const INBOX_BUNDLES = new Set(['@deepseek-ai/dsh-base','dsh-tauri','dsh-tauri-ui',]);\n"
+            ),
+            other => panic!("expected Patched, got {other:?}"),
+        }
+    }
+
+    /// 多行字面量末项没有尾逗号（此前按「锚点之前有没有换行」判断会漏补分隔符）。
+    #[test]
+    fn market_lists_handle_multi_line_literal_without_trailing_comma() {
+        let source = "export const INBOX_BUNDLES = new Set([\n    '@deepseek-ai/dsh-base'\n]);\n";
+        let PatchOutcome::Patched(patched) = patch_inbox_bundles(source, &names()) else {
+            panic!("expected Patched");
+        };
+        assert_eq!(
+            patched,
+            "export const INBOX_BUNDLES = new Set([\n    '@deepseek-ai/dsh-base',\n    'dsh-tauri',\n    'dsh-tauri-ui',\n]);\n"
+        );
+        assert_eq!(patch_inbox_bundles(&patched, &names()), PatchOutcome::AlreadyPatched);
+    }
+
+    #[test]
+    fn bundle_names_must_be_plain_package_names() {
+        assert!(is_safe_bundle_name("dsh-tauri-session"));
+        assert!(is_safe_bundle_name("@scope/dsh-tauri.inner_v2"));
+        assert!(!is_safe_bundle_name("dsh-tauri');evil('"));
+        assert!(!is_safe_bundle_name("dsh-tauri\n"));
+        assert!(!is_safe_bundle_name(""));
     }
 }

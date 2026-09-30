@@ -480,6 +480,11 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         log::warn!("ensure preset plugins failed: {e}");
     }
     mark_phase("ensure_preset_plugins", &mut phase_started);
+    // 插件自愈（内置插件重装 / 预装插件完整性自检）可能刚把插件市场装进档案，而上一轮补丁
+    // 执行时它还不存在、已被安全跳过；自愈完成后按需重打一次（逐名字判定，已登记则跳过）。
+    if let Err(e) = crate::service::patch::plugin_visibility::apply(&app_handle) {
+        log::warn!("plugin visibility patch after plugin self-healing failed: {e}");
+    }
     // 预打包核心运行时自愈：把 app 内置插件与 profile 插件入口链接进活动核心的
     // node_modules（dsh 的 loader 以核心根为裸包解析根），并核验/修复 sharp/koffi
     // 原生可选依赖。只作用于 CoreSource::App，本地核心由用户自行管理。dsh 在缺失
