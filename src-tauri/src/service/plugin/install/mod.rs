@@ -612,7 +612,9 @@ pub async fn allow_version_exemptions(
 }
 
 /// 记录用户明确授权的发布时长策略豁免：把精确 `包名@版本` 写进档案的
-/// `minimumReleaseAgeExclude`，pnpm 的解析与 lockfile 校验随后都会放行这些条目。
+/// `minimumReleaseAgeExclude`，pnpm 的解析随后会放行这些条目；lockfile 校验阶段
+/// 仍按默认窗口拦截，因此升级调用还会附上 `--config.minimumReleaseAge=0`
+/// （见 `single::update_many`），否则授权过的版本依旧装不上。
 ///
 /// 与 [`allow_version_exemptions`] 的分工：那个针对 dsh 的**版本兼容性**（写档案的
 /// `compatibility.json`），这个针对 pnpm 的**发布时长门禁**（写 `pnpm-workspace.yaml`）。

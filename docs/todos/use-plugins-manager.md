@@ -271,7 +271,8 @@ interface PluginsState {
 * 宿主返回授权拦截码（如 `PLUGIN_VERSION_INCOMPATIBLE`）时，通过 `parseBlockedRefusal` 匹配目标进程。
 * 匹配成功的进程切换为 `unauthorized` 并挂载 `refusal` 载荷；同组其他未被拦截的进程**重置回 `pending**`。
 * 隐藏当前组的加载 Toast，暂停队列推进，等待用户决策。
-* 例外：升级返回 `PLUGIN_UPDATE_NO_CHANGE` 且 `retryable === false`（该精确版本已授权过仍未生效），说明档案把来源钉死了（catalog / git / link 或精确版本），`--latest` 越不过声明范围，插件本身没有损坏——**不存在可授权的动作**，因此不进入 `unauthorized`，也不产生常驻 Toast：被拦截项直接以 `ok: false, reason: 'update-hold'` 结算，宿主本次已核验通过的其余进程按成功结算，队列继续推进。
+* 例外：升级返回 `PLUGIN_UPDATE_NO_CHANGE` 且 `retryable === false`（不存在可授权的动作：该精确版本已授权过仍未生效，或探测缓存里没有可比较的 registry 目标），说明档案把来源钉死了（catalog / git / link 或精确版本）、`--latest` 越不过声明范围，插件本身没有损坏。此时不进入 `unauthorized`，也不产生常驻 Toast：被拦截项直接以 `ok: false, reason: 'update-hold'` 结算，宿主本次已核验通过的其余进程按成功结算，队列继续推进。
+* 注意：**已授权过的精确版本必须真的装得上**。pnpm 的发布时长豁免（`minimumReleaseAgeExclude`）只被解析阶段采信，lockfile 校验阶段照旧按默认窗口拦截，因此宿主在升级调用里为「本批可升级目标全部已授权」的情况追加 `--config.minimumReleaseAge=0`（见 §8.1）。缺了这一步，用户在界面上点了授权，重跑依旧只得到 `PLUGIN_UPDATE_NO_CHANGE`——「没有可授权的新版本」是假象。
 
 
 3. **重新提交剩余集合**：
@@ -352,7 +353,9 @@ interface PluginsState {
 | 命令 (Command) | 参数类型 | 返回类型 | 修改说明 |
 | --- | --- | --- | --- |
 | `install_plugin_specs` | `specs: Vec<String>` | `Result<(), String>` | **新增**：支持传入多个 Spec，合并为单次 `dsh plugin add` 执行 |
-| `update_dsh_plugins` | `ids: Vec<String>` | `Result<(), String>` | **变更**：替代原 `update_dsh_plugin`，支持批量更新 |
+| `update_dsh_plugins` | `ids: Vec<String>` | `Result<(), String>` | **变更**：替代原 `update_dsh_plugin`，支持批量更新；拿到授权过的精确版本时追加 `--config.minimumReleaseAge=0`（见下） |
+
+> `update_dsh_plugins` 的发布时长放宽：档案的 `minimumReleaseAgeExclude` 只被 pnpm 的解析阶段采信，lockfile 校验阶段照旧按默认窗口拦截，授权过的精确版本因此「退出 0 但版本没动」。因此当**本批每个可升级的 registry 目标都已在豁免清单里**时，该次 `dsh plugin update <ids> --latest` 追加 `--config.minimumReleaseAge=0`；批里混进未授权的可升级目标就保持默认窗口，界面照旧先请用户授权（放宽是全调用生效的，不能让未授权的包顺带越过窗口）。
 | `remove_dsh_plugins` | `ids: Vec<String>` | `Result<(), String>` | **变更**：替代原 `remove_dsh_plugin`，支持批量移除 |
 | `inspect_plugin_specs` | `specs: Vec<String>, dsh: Option<String>` | `Result<Vec<PluginInspect>, String>` | **新增**：只读检查 Spec 兼容性，不改动本地 Profile |
 | `cancel_plugin_processes` | 无 | `Result<(), String>` | **重命名**：由 `cancel_preinstall_plugins` 重命名，提升为通用方法 |
