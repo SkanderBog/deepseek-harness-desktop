@@ -18,6 +18,8 @@ export interface HarnessCore {
   present: boolean
   /** 当前是否使用中 */
   active: boolean
+  /** 能否卸载：磁盘上存在独立槽位目录才有落点；就地安装的激活副本没有槽位（issue #790） */
+  removable: boolean
   /** 是否预览版（GitHub Pre-release label 或 tag 命名判定）：预览版不参与更新提示，仅列表展示 */
   preview: boolean
   /** 是否高于资源清单 engines.dsh.recommend 中的推荐版本 */

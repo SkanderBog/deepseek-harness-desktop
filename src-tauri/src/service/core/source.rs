@@ -59,6 +59,10 @@ pub struct HarnessCore {
     pub present: bool,
     /// 当前是否使用中的核心
     pub active: bool,
+    /// 能否卸载：只有磁盘上存在独立槽位目录（`dependencies/<tag>`）的行才有卸载落点。
+    /// 就地安装的激活副本只有 `dependencies/dsh` 一份目录，按 tag 找不到槽位，卸载必然
+    /// 失败（issue #790）。
+    pub removable: bool,
     /// 是否预览版（GitHub Release 标记 Pre-release，或 tag 命名含预览标记，见
     /// `download::is_preview_tag`）：预览版不参与自动更新提示，但可在核心列表
     /// 手动下载安装，并以「预览版」标签展示。

@@ -189,9 +189,14 @@ pub async fn install_dependencies(app_handle: AppHandle) -> Result<bool, String>
                 &legacy_tags,
             ) {
                 // 安装文件已是最新 release，只是记录滞后：修正记录后下次
-                // 启动直接走 commit 快速比对，不再误判、也绝不整包重下
+                // 启动直接走 commit 快速比对，不再误判、也绝不整包重下。
+                // tag 记录同时是核心面板判定 release 身份的唯一依据（就地安装的
+                // 副本没有槽位目录）：缺 tag 会让它把已下载的核心当成没下载过，并
+                // 吞掉核心更新提示（issue #790），所以 commit 相符也要补齐 tag。
                 download::UpdateCheck::UpToDate | download::UpdateCheck::HealUpToDate => {
-                    if record_commit.as_deref() != Some(latest.commit.as_str()) {
+                    if record_tag.as_deref() != Some(latest.tag.as_str())
+                        || record_commit.as_deref() != Some(latest.commit.as_str())
+                    {
                         log::info!(
                             "Installed Harness files already at latest release, healing stale record: {} ({})",
                             latest.tag,

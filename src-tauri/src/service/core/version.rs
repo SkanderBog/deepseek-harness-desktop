@@ -142,6 +142,7 @@ fn rows_with_release_catalog(
             .unwrap_or_default(),
         present: local.is_some(),
         active: source == CoreSource::Local,
+        removable: false,
         preview: false,
         above_recommended: local
             .as_ref()
@@ -171,6 +172,7 @@ fn rows_with_release_catalog(
                 dir: dir_str,
                 present: dir.join(config::dependencies::entry_relative(app_handle, config::dependencies::DEP_DSH)).is_file(),
                 active: bundled_active,
+                removable: false,
                 preview: false,
                 orphaned: false,
                 bundled: true,
@@ -187,24 +189,22 @@ fn rows_with_release_catalog(
     // 激活核心按「版本」而非 tag 匹配版本行：pkg 仓库会对同一版本重打包/打
     // 测试 tag，版本行去重后保留的 tag 未必等于本机安装时的记录 tag。按 tag
     // 精确匹配会让激活版本行误标「未下载」并在列表底部多出一条重复激活行。
+    // 激活副本的引擎版本：发行包清单里 `dependencies["@deepseek-ai/dsh"]` 是打包时钉住的
+    // 引擎版本（版本行的版本号就是它），顶层 `version` 还滞后一个发行版。旧记录没有版本
+    // 号时从激活目录兜底读取。
+    let manifest_version = config::get_dsh_version(app_handle).or_else(|| {
+        (source == CoreSource::App && active_present)
+            .then(|| read_manifest_dsh_version(&active_dir))
+            .flatten()
+    });
+    // 就地安装的激活副本（`dependencies/dsh` 那一份目录）的 release 身份只认 store 里的
+    // tag 记录：引擎版本号只是"版本行的版本号"，凭它认领版本行会把这份目录标成另一个
+    // tag 的已装行——切换找不到槽位（CORE_VERSION_NOT_DOWNLOADED）、卸载找不到目录
+    // （CORE_VERSION_NOT_FOUND），并吞掉核心更新提示（issue #790）。
     // 随包内核激活时（`app-bundled` 行已经代表它）不再让版本行认领同一份目录。
-    let active_version = if source == CoreSource::App && !bundled_active {
-        active_app_version(&active_tag, config::get_dsh_version(app_handle))
-    } else {
-        None
-    };
-    // 已安装的预打包版本号（无论当前以哪种来源运行都存在）：用于保证预打包行
-    // 始终如实呈现为"已安装"，即便本次以本地核心运行，也不会把它标成"未下载"。
-    // 旧记录可能没有版本号，稍后从激活目录 package.json 兜底读取。
-    let installed_version = if bundled_active {
-        None
-    } else {
-        config::get_dsh_version(app_handle).or_else(|| {
-            (source == CoreSource::App && active_present)
-                .then(|| read_manifest_dsh_version(&active_dir))
-                .flatten()
-        })
-    };
+    let installed_release = (!bundled_active)
+        .then(|| trusted_release_version(active_tag.as_deref(), manifest_version.as_deref()))
+        .flatten();
 
     // 版本行：GitHub releases（最新在前，含 Pre-release label）→ 按版本去重，
     // 同版本只保留最后一个 tag。releases 拉取失败（离线/限流）时回退 git tags，
@@ -237,38 +237,43 @@ fn rows_with_release_catalog(
 
     // 激活行就地标记：按版本匹配激活核心（不置顶，作为普通版本行标 active）
     let mut active_rendered = false;
-    for (version, tag, preview) in &version_tags {
-        let is_active = active_version.as_deref() == Some(version.as_str());
+    for (version, catalog_tag, preview) in &version_tags {
         // 已安装的预打包核心：即使本次以本地核心运行（source=Local）也要如实标为
         // "已安装"，避免本地核心出现后预打包被当作未下载/消失（issue #54）。
-        let is_installed = installed_version.as_deref() == Some(version.as_str());
-        if is_active || is_installed {
+        let in_place = installed_release.as_deref() == Some(version.as_str());
+        let is_active = in_place && source == CoreSource::App;
+        // 就地安装的副本没有槽位目录，它的 release 身份取 store 里的 tag 记录：同版本被
+        // 重打包时版本行去重后保留的 tag 未必是本机安装时的那个，按它生成的 id 切换/
+        // 卸载会找不到目录（issue #790）。
+        let tag = if in_place {
+            active_tag.as_deref().unwrap_or(catalog_tag.as_str())
+        } else {
+            catalog_tag.as_str()
+        };
+        if in_place {
             active_rendered = true;
         }
         let slot = existing_slot_dir(app_handle, tag);
-        let present = if is_active || is_installed {
-            active_present
-        } else {
-            slot.is_some()
-        };
-        let (path, dir) = if is_active || is_installed {
+        let removable = !in_place && slot.is_some();
+        let (present, path, dir) = if in_place {
             let s = active_dir.to_string_lossy().into_owned();
-            (s.clone(), s)
+            (active_present, s.clone(), s)
         } else if let Some(slot) = slot {
             let s = slot.to_string_lossy().into_owned();
-            (s.clone(), s)
+            (true, s.clone(), s)
         } else {
-            (String::new(), String::new())
+            (false, String::new(), String::new())
         };
         rows.push(HarnessCore {
             id: format!("app-{tag}"),
             source: CoreSource::App,
             version: version.clone(),
-            tag: tag.clone(),
+            tag: tag.to_string(),
             path,
             dir,
             present,
             active: is_active,
+            removable,
             preview: *preview,
             above_recommended: config::is_dsh_version_above_recommended(app_handle, version),
             orphaned: false,
@@ -278,29 +283,29 @@ fn rows_with_release_catalog(
         });
     }
 
-    // 已安装的预打包版本未出现在版本列表（离线/限流/tag 被移除/旧版无 tag 记录）：
+    // 激活副本没能对上任何版本行（离线/限流/tag 被移除/记录与清单不一致）：补一行没有
+    // release 身份的旧激活行，按清单引擎版本如实呈现为"已安装"，激活入口走
+    // `set_active("app")`。它没有槽位目录，因此既不列 tag 也不提供卸载（issue #790）。
     // 纳入版本行之后，保持列表不置顶；无论当前是否以本地核心运行都要列出，
     // 避免"本地核心出现后预打包消失"。
     // 随包内核已独立成行时不再兜底：`active_dir` 就是随包目录，再补一行会把下载版本
     // 的旧 tag 指向随包目录，出现重复且错误的「当前使用中」。
     if !active_rendered && active_present && !bundled_active {
         rows.push(HarnessCore {
-            id: active_tag
-                .as_ref()
-                .map(|t| format!("app-{t}"))
-                .unwrap_or_else(|| "app".to_string()),
+            id: "app".to_string(),
             source: CoreSource::App,
-            version: installed_version.clone().unwrap_or_default(),
-            tag: active_tag.clone().unwrap_or_default(),
+            version: manifest_version.clone().unwrap_or_default(),
+            tag: String::new(),
             path: active_dir.to_string_lossy().into_owned(),
             dir: active_dir.to_string_lossy().into_owned(),
             present: true,
             active: source == CoreSource::App,
+            removable: false,
             orphaned: false,
             bundled: false,
             // 无远程元数据（离线/限流）：预览标记按 tag 命名兜底
             preview: active_tag.as_deref().is_some_and(download::is_preview_tag),
-            above_recommended: installed_version
+            above_recommended: manifest_version
                 .as_deref()
                 .is_some_and(|v| config::is_dsh_version_above_recommended(app_handle, v)),
             recommended_version: config::recommended_dsh_version(app_handle),
@@ -315,11 +320,10 @@ fn rows_with_release_catalog(
         version_tags.iter().map(|(v, _, _)| v.clone()).collect();
     let known_tags: HashSet<String> = version_tags.iter().map(|(_, tag, _)| tag.clone()).collect();
     let mut seen_tags = known_tags.clone();
-    if let Some(v) = &active_version {
-        seen_versions.insert(v.clone());
-    }
-    if let Some(v) = &installed_version {
-        seen_versions.insert(v.clone());
+    if !bundled_active {
+        if let Some(v) = &manifest_version {
+            seen_versions.insert(v.clone());
+        }
     }
     if let Ok(entries) = std::fs::read_dir(dependencies_dir(app_handle)) {
         for entry in entries.flatten() {
@@ -354,6 +358,7 @@ fn rows_with_release_catalog(
                 dir: dir.to_string_lossy().into_owned(),
                 present: true,
                 active: false,
+                removable: true,
                 // 无远程元数据（离线/限流）：预览标记按 tag 命名兜底
                 preview: download::is_preview_tag(&tag),
                 above_recommended: config::is_dsh_version_above_recommended(app_handle, &version),
@@ -368,25 +373,47 @@ fn rows_with_release_catalog(
     rows
 }
 
-/// 已装核心列表中是否包含给定 semver 版本（含 active 和非 active 槽位）。
+/// 已装核心列表中是否有「带着 release 身份」的槽位包含给定 semver 版本。
 ///
 /// `check_dsh_update` 用它跳过「最新版本的核心已下载但未激活」场景的 toast：
-/// 只要最新 release 的 semver 已存在于某个已装槽位就不提示，避免用户白点
+/// 只要最新 release 的 semver 已存在于某个已装槽位（或随包内核）就不提示，避免用户白点
 /// 一次「立即更新」做无意义的整包重下。版本号按字符串相等比较（dsh 的版本
 /// 字符串已是 semver，build-id 不参与版本号识别——同 semver 的不同 build-id
-/// 在用户视角下都算「同版本」）。
+/// 在用户视角下都算「同版本」）。就地安装的激活副本只有引擎版本号、没有 release
+/// 身份，不能凭它判定某个 release 已安装，否则会吞掉核心更新提示（issue #790）。
 pub async fn has_installed_version(app_handle: &AppHandle, version: &str) -> bool {
-    // 双路径：「激活版本」快速匹配 + 「磁盘扫描」确认非激活槽位也包含此版本。
-    // 仅靠 `list().present` 不够：若 version_tags 里有某版本、磁盘上没有对应
-    // 槽位，`present` 会是 false，但实际激活的核心可能就是那个版本（`installed_version`
-    // 读自激活槽位的 `package.json`，与 version_tags 不同步时尤为常见）。
-    if config::get_dsh_version(app_handle).as_deref() == Some(version) {
-        return true;
-    }
-    list(app_handle)
-        .await
-        .into_iter()
-        .any(|c| c.present && c.version == version)
+    any_release_installed(&list(app_handle).await, version)
+}
+
+/// 已装核心列表里是否有行的 semver 等于给定版本、且带着 release 身份（见
+/// [`release_installed_on_disk`]）。
+fn any_release_installed(cores: &[HarnessCore], version: &str) -> bool {
+    cores
+        .iter()
+        .any(|c| release_installed_on_disk(c) && c.version == version)
+}
+
+/// 这一行能否作为「对应版本的核心已经装好」的证据：release 身份在盘上——磁盘槽位目录
+/// （tag 即目录名，含已不在目录里的历史槽位）或 store 里与清单一致的 tag 记录；随包
+/// 内核随应用分发也算。无 release 身份的 `app` 兜底行只是"激活目录里有一份版本号相同
+/// 的副本"，证明不了某个 release 已下载（issue #790）。
+fn release_installed_on_disk(core: &HarnessCore) -> bool {
+    core.present && core.source == CoreSource::App && (core.bundled || !core.tag.is_empty())
+}
+
+/// 就地安装的激活副本（`dependencies/dsh`）的 release 身份：只认 store 里的 tag 记录，
+/// 且记录里的版本号必须与清单里的引擎版本一致。
+///
+/// 发行包 package.json 里 `dependencies["@deepseek-ai/dsh"]` 是打包时钉住的引擎版本、
+/// 顶层 `version` 还滞后一个发行版，都不是 release 身份；记录与清单不一致说明记录停在
+/// 上一次安装（切换中断/就地覆盖），此时任何版本行都不能认领这份目录，交给无 tag 的
+/// `app` 兜底行如实呈现（issue #790）。
+fn trusted_release_version(
+    active_tag: Option<&str>,
+    manifest_version: Option<&str>,
+) -> Option<String> {
+    let version = active_tag.and_then(download::parse_version_from_tag)?;
+    (Some(version.as_str()) == manifest_version).then_some(version)
 }
 
 /// 停止并清扫旧核心进程，确保核心来源变更时不会继续使用旧入口。
@@ -758,18 +785,6 @@ pub async fn remove_version(app_handle: &AppHandle, id: &str) -> Result<(), Stri
     Ok(())
 }
 
-/// 解析激活预打包核心的版本号：优先记录 tag（`dsh-<version>-<commit>`），
-/// 解析不出（无 tag 记录/格式不符）时用安装目录清单版本兜底。
-fn active_app_version(
-    active_tag: &Option<String>,
-    manifest_version: Option<String>,
-) -> Option<String> {
-    active_tag
-        .as_deref()
-        .and_then(download::parse_version_from_tag)
-        .or(manifest_version)
-}
-
 /// 构造某个已下载 tag 的核心行（下载完成/已存在时返回）。
 fn row_for_tag(app_handle: &AppHandle, tag: &str, dir: &Path) -> HarnessCore {
     let active = config::get_dsh_pkg_tag(app_handle).as_deref() == Some(tag)
@@ -784,6 +799,7 @@ fn row_for_tag(app_handle: &AppHandle, tag: &str, dir: &Path) -> HarnessCore {
         dir: dir_str,
         present: true,
         active,
+        removable: true,
         preview: download::is_preview_tag(tag),
         above_recommended: download::parse_version_from_tag(tag)
             .is_some_and(|version| config::is_dsh_version_above_recommended(app_handle, &version)),
@@ -879,5 +895,126 @@ mod tests {
         // 预览标记以保留的 tag 为准：rc.8 最终保留普通 release → 非预览；
         // 预览版（label 或命名）→ 预览
         assert_eq!(previews, vec![true, false, false, false, true]);
+    }
+
+    #[test]
+    fn trusted_release_version_requires_record_manifest_agreement() {
+        // 记录与清单引擎版本一致（正常安装/切换）：可信
+        assert_eq!(
+            trusted_release_version(Some("dsh-0.2.0-rc.2-36556493178"), Some("0.2.0-rc.2")),
+            Some("0.2.0-rc.2".to_string())
+        );
+        // 记录停在上一份安装（就地覆盖安装/切换中断）：不可信，交给无 tag 的兜底行，
+        // 否则会把激活目录认领成记录里那个 tag 的已装行（issue #790）
+        assert_eq!(
+            trusted_release_version(Some("dsh-0.1.7-rc.2-36024748146"), Some("0.2.0-rc.2")),
+            None
+        );
+        // 无 tag 记录 / tag 解析不出 / 清单读不到版本：都不可信
+        assert_eq!(trusted_release_version(None, Some("0.2.0-rc.2")), None);
+        assert_eq!(
+            trusted_release_version(Some("dsh-latest"), Some("0.2.0-rc.2")),
+            None
+        );
+        assert_eq!(
+            trusted_release_version(Some("dsh-0.2.0-rc.2-36556493178"), None),
+            None
+        );
+    }
+
+    fn core_row(
+        id: &str,
+        source: CoreSource,
+        tag: &str,
+        present: bool,
+        bundled: bool,
+    ) -> HarnessCore {
+        HarnessCore {
+            id: id.to_string(),
+            source,
+            version: "0.2.0-rc.2".to_string(),
+            tag: tag.to_string(),
+            path: String::new(),
+            dir: String::new(),
+            present,
+            active: false,
+            removable: false,
+            preview: false,
+            above_recommended: false,
+            orphaned: false,
+            bundled,
+            recommended_version: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn release_installed_on_disk_needs_release_identity() {
+        // 槽位行（tag 即目录名）：算已装
+        assert!(release_installed_on_disk(&core_row(
+            "app-dsh-0.2.0-rc.2-36556493178",
+            CoreSource::App,
+            "dsh-0.2.0-rc.2-36556493178",
+            true,
+            false
+        )));
+        // 随包内核（版本由清单给出，没有独立 tag）：算已装
+        assert!(release_installed_on_disk(&core_row(
+            "app-bundled",
+            CoreSource::App,
+            "",
+            true,
+            true
+        )));
+        // 无 release 身份的兜底行：只是激活目录里有一份版本号相同的副本，证明不了
+        // 某个 release 已下载——凭它判定会吞掉核心更新提示（issue #790）
+        assert!(!release_installed_on_disk(&core_row(
+            "app",
+            CoreSource::App,
+            "",
+            true,
+            false
+        )));
+        // 本地核心与文件缺失的行都不算
+        assert!(!release_installed_on_disk(&core_row(
+            "local",
+            CoreSource::Local,
+            "dsh-0.2.0-rc.2-36556493178",
+            true,
+            false
+        )));
+        assert!(!release_installed_on_disk(&core_row(
+            "app-dsh-0.2.0-rc.2-36556493178",
+            CoreSource::App,
+            "dsh-0.2.0-rc.2-36556493178",
+            false,
+            false
+        )));
+    }
+
+    #[test]
+    fn ghost_row_does_not_report_the_version_as_installed() {
+        let tag = "dsh-0.2.0-rc.2-36556493178";
+        // 修复后：只有带 release 身份的槽位行才算已装
+        assert!(any_release_installed(
+            &[core_row(
+                &format!("app-{tag}"),
+                CoreSource::App,
+                tag,
+                true,
+                false
+            )],
+            "0.2.0-rc.2"
+        ));
+        // 修复前：无 tag 的兜底行（激活目录里有一份版本号相同的副本）也会被当成
+        // 「已下载」，于是 check_dsh_update 吞掉更新提示（issue #790）
+        assert!(!any_release_installed(
+            &[core_row("app", CoreSource::App, "", true, false)],
+            "0.2.0-rc.2"
+        ));
+        assert!(!any_release_installed(
+            &[core_row("local", CoreSource::Local, tag, true, false)],
+            "0.2.0-rc.2"
+        ));
     }
 }
