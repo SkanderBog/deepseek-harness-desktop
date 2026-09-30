@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "shell-http",
+  "description": "Loopback HTTP scope for the desktop shell windows: src/apis/http.ts reaches the local dsh service through @tauri-apps/plugin-http (the request leaves from the Rust side, so there is no Origin). The pet window keeps the remote-asset-only scope of capabilities/default.json.",
+  "windows": [
+    "main",
+    "window-*"
+  ],
+  "permissions": [
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "http://127.0.0.1:*"
+        }
+      ]
+    }
+  ]
+}
