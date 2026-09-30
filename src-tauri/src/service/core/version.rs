@@ -316,12 +316,15 @@ fn rows_with_release_catalog(
     // 磁盘扫描：tags 拉取失败/限流，或存在已下载但不在 tags 列表的版本（被移除的
     // 测试打包）时，把已下载的 `dsh-*` 槽位补进列表；同样按版本去重。
     // 激活版本已由版本行（或底部激活行）呈现，先放入 seen 避免扫描再补一条重复行。
+    // 只放可信的 release 身份：认不出身份时就别拿清单引擎版本顶替，否则版本号相同的
+    // 真实槽位会被跳过，既看不见也卸不掉，更新提示还会当成「没装过」再让用户重下一遍
+    // （issue #790）。
     let mut seen_versions: HashSet<String> =
         version_tags.iter().map(|(v, _, _)| v.clone()).collect();
     let known_tags: HashSet<String> = version_tags.iter().map(|(_, tag, _)| tag.clone()).collect();
     let mut seen_tags = known_tags.clone();
     if !bundled_active {
-        if let Some(v) = &manifest_version {
+        if let Some(v) = &installed_release {
             seen_versions.insert(v.clone());
         }
     }
