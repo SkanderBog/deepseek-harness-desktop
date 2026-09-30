@@ -80,77 +80,66 @@
         "id": "dsh-tauri",
         "spec": "dsh-tauri",
         "name": "DSH Tauri",
-        "description": "Message bridge for the DeepSeek Harness desktop shell. Also carries the desktop authentication adaptation: the embedded sandboxed WebView is cross-origin, so it cannot complete the SameSite=Strict browser-session cookie exchange.",
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri"
       },
       {
         "id": "dsh-tauri-ui",
         "spec": "dsh-tauri-ui",
         "name": "DSH Tauri UI",
-        "description": "Customized Tauri UI plugin for the DeepSeek Harness desktop shell: provides the settings sidebar, settings sections, and shared UI integration points",
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-ui"
       },
       {
         "id": "dsh-tauri-worktree",
         "spec": "dsh-tauri-worktree",
         "name": "DSH Tauri Worktree",
-        "description": "Per-session isolated Git Worktree for the desktop shell: switch a conversation to its own isolated worktree, then check changes back into a local dsh/ branch or discard them.",
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-worktree"
       },
       {
         "id": "dsh-tauri-extension",
         "spec": "dsh-tauri-extension",
         "name": "DSH Tauri Extension",
-        "description": "Skills, MCP, and the plugin market in the DeepSeek Harness desktop extension panel.",
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-extension"
       },
       {
         "id": "dsh-tauri-scheduler",
         "spec": "dsh-tauri-scheduler",
         "name": "DSH Tauri Scheduler",
-        "description": "Scheduled tasks for the DeepSeek Harness desktop panel: create daily/interval/workday/weekly automations, run them in fresh sessions on schedule, and review run history.",
         "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-scheduler"
       },
       {
         "id": "dsh-tauri-archive",
         "spec": "dsh-tauri-archive",
         "name": "DSH Tauri Archive",
-        "description": "Session archive for the desktop: rewrites the workspace browser's 'delete workspace' action into 'archive workspace', and adds an 'Archived chats' settings page with search, sort, grouping, project filter and unarchive.",
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-archive"
       },
       {
         "id": "dsh-tauri-pet",
         "spec": "dsh-tauri-pet",
         "name": "DSH Tauri Pet",
-        "description": "Persistent animated desktop pets with conversation activity states, bubbles, and Chat/Codex pet libraries.",
         "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-pet"
       },
       {
         "id": "dsh-tauri-rightclick",
         "spec": "dsh-tauri-rightclick",
         "name": "DSH Tauri Rightclick Menu",
-        "description": "Native-style right-click context menu for the desktop shell: quick actions for sessions, workspaces, conversation text, links, and inputs — in-house successor to the deprecated dsh-session-context-menu.",
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-rightclick"
       },
       {
         "id": "dsh-tauri-model",
         "spec": "dsh-tauri-model",
         "name": "DSH Tauri Model",
-        "description": "Model selection and parameter configuration for the DeepSeek Harness desktop shell",
         "repo": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins/tree/main/packages/dsh-tauri-model"
       },
       {
         "id": "dsh-tauri-ssh",
         "spec": "dsh-tauri-ssh",
         "name": "DSH Tauri SSH",
-        "description": "Remote-machine plugin for the desktop: SSH connection management with TOFU host keys, ~/.ssh/config discovery, remote dsh web auto-start, loopback tunnels, the same-origin /api-ssh route, and the settings page for machine CRUD, connect/test/disconnect and one-click remote install.",
         "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-ssh"
       },
       {
         "id": "dsh-tauri-notification",
         "spec": "dsh-tauri-notification",
         "name": "DSH Tauri Notification",
-        "description": "Native desktop notifications for the DeepSeek Harness desktop shell: turn-completion, permission-approval and question alerts with an Approve action, click-to-focus the originating session, and a notification settings page.",
         "repo": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-notification"
       }
     ],

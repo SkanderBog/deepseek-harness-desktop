@@ -347,6 +347,33 @@ pub(crate) fn bundled_plugin_dir(app_handle: &AppHandle, id: &str) -> Option<Pat
     legacy.join("package.json").exists().then_some(legacy)
 }
 
+/// 内置插件 `package.json` 中本模块使用的字段。
+#[derive(Deserialize)]
+struct PluginPackageJson {
+    #[serde(default)]
+    description: String,
+}
+
+/// 内置插件描述的唯一真值：插件捆绑目录下 `package.json` 的 `description`。
+///
+/// 描述属于插件自身元数据，与发布到 npm 的那份 `package.json` 同源；清单
+/// `plugins.built-in` 只登记「随包分发哪些插件」，不再重复登记描述，避免同一句话
+/// 在两处各存一份、升级时互相漂移。debug 的 dev 发现与 release 的随包清单最终都落到
+/// 同一个 `package.json`，两种构建因此得到同值。读取失败（目录缺失、JSON 损坏、
+/// 描述为空）返回 `None`，调用方沿用清单登记的空描述——不阻断启动。
+fn bundled_plugin_description(app_handle: &AppHandle, id: &str) -> Option<String> {
+    let dir = bundled_plugin_dir(app_handle, id)?;
+    let raw = std::fs::read_to_string(dir.join("package.json")).ok()?;
+    package_json_description(&raw)
+}
+
+/// [`bundled_plugin_description`] 的纯函数部分：从 `package.json` 原文取描述。
+fn package_json_description(raw: &str) -> Option<String> {
+    let manifest = serde_json::from_str::<PluginPackageJson>(raw).ok()?;
+    let description = manifest.description.trim();
+    (!description.is_empty()).then(|| description.to_string())
+}
+
 /// 删除旧版随包资源目录 `resources/preset-plugins` 与 `resources/internal-plugins`，
 /// 避免升级安装保留不再使用/已迁至 `resources/node_modules/<name>` 的内置插件副本。
 /// 仅处理 Tauri 运行时资源根下的目录，绝不删除源码 checkout；逐个尝试所有布局后
@@ -444,6 +471,15 @@ pub(crate) fn load_presets(app_handle: &AppHandle) -> Vec<PreinstallPluginInfo> 
         .collect();
     #[cfg(debug_assertions)]
     let internal = merge_dev_internal_plugins(internal);
+    let internal: Vec<PreinstallPluginInfo> = internal
+        .into_iter()
+        .map(|mut plugin| {
+            if let Some(description) = bundled_plugin_description(app_handle, &plugin.id) {
+                plugin.description = description;
+            }
+            plugin
+        })
+        .collect();
     plugins.extend(internal);
     plugins
 }
@@ -1215,5 +1251,50 @@ mod tests {
         // dev 覆盖语义不变：条目仍来自仓库源码
         assert!(renamed.internal);
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn package_json_description_is_the_description_source() {
+        assert_eq!(
+            package_json_description(r#"{"description":"  hello  "}"#).as_deref(),
+            Some("hello")
+        );
+        assert_eq!(package_json_description(r#"{"description":"   "}"#), None);
+        assert_eq!(package_json_description(r#"{"name":"x"}"#), None);
+        assert_eq!(package_json_description("not json"), None);
+    }
+
+    /// 清单只登记「随包分发哪些插件」：描述回归插件自身的 `package.json`。
+    #[test]
+    fn internal_manifest_entries_carry_no_description() {
+        let declared: Vec<String> = load_internal_for_test()
+            .into_iter()
+            .filter(|plugin| !plugin.description.is_empty())
+            .map(|plugin| plugin.id)
+            .collect();
+        assert!(
+            declared.is_empty(),
+            "内置插件描述的唯一真值是 package.json，清单不该再登记：{declared:?}"
+        );
+    }
+
+    /// release 从捆绑目录读描述，因此每个内置插件的 `package.json` 都必须声明它。
+    #[cfg(debug_assertions)]
+    #[test]
+    fn every_builtin_plugin_package_declares_a_description() {
+        let missing: Vec<String> = load_internal_for_test()
+            .into_iter()
+            .filter(|plugin| {
+                dev_plugin_dir(&plugin.id)
+                    .and_then(|dir| std::fs::read_to_string(dir.join("package.json")).ok())
+                    .and_then(|raw| package_json_description(&raw))
+                    .is_none()
+            })
+            .map(|plugin| plugin.id)
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "内置插件必须在 package.json 声明 description：{missing:?}"
+        );
     }
 }

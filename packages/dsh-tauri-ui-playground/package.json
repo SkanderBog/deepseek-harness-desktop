@@ -2,7 +2,7 @@
   "name": "dsh-tauri-ui-playground",
   "type": "module",
   "version": "0.1.0",
-  "description": "Dev-only UI component playground panel for the DSH Tauri desktop shell.",
+  "description": "仅供开发使用的 DSH Tauri 桌面壳 UI 组件演练面板。",
   "author": "Hairyf <wwu710632@gmail.com>",
   "license": "MIT",
   "homepage": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins#readme",

@@ -2,7 +2,7 @@
   "name": "dsh-tauri-pet",
   "type": "module",
   "version": "0.1.0",
-  "description": "Desktop pet for DeepSeek Harness — toggle, pet selection and a transparent always-on-top window bridged through Tauri invoke.",
+  "description": "DeepSeek Harness 桌面宠：常驻动画宠物按会话活动切换状态并显示气泡，内置 Chat/Codex 宠物库，经 Tauri invoke 桥接透明置顶窗口。",
   "author": "Hairyf <wwu710632@gmail.com>",
   "license": "MIT",
   "homepage": "https://github.com/dsh-tauri-desk/dsh-tauri-plugins#readme",

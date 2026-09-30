@@ -243,3 +243,10 @@ first-run checklist. On startup the app removes the legacy
 workspace packages under `packages/*` are discovered directly, so a new built-in
 plugin only needs its `dsh` field and a `plugins.built-in` entry for release
 builds.
+
+Unlike `plugins.preset`, a built-in entry declares **no `description`**: the text
+shown in the desktop plugin dialog is read from the plugin's own
+`package.json` (`resources/node_modules/<name>/package.json` in release builds,
+the workspace package in debug builds), so it stays in sync with what the package
+publishes instead of being maintained twice. Every built-in plugin package must
+declare a `description`.

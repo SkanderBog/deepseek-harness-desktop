@@ -2,7 +2,7 @@
   "name": "dsh-tauri-ssh",
   "type": "module",
   "version": "0.6.7",
-  "description": "DSH remote-machine host plugin: SSH connection management, TOFU host keys, remote dsh web auto-start, loopback tunnels, and the same-origin /api-ssh route",
+  "description": "DSH 远程主机宿主插件：SSH 连接管理（TOFU 主机密钥、~/.ssh/config 自动发现）、远程 dsh web 自动启动、回环隧道、同源 /api-ssh 路由，以及机器增删改、连接/测试/断开与一键远程安装的设置页。",
   "author": "Hairyf <wwu710632@gmail.com>",
   "license": "MIT",
   "homepage": "https://github.com/dsh-tauri-desk/deepseek-harness-desktop/tree/main/packages/dsh-tauri-ssh",
