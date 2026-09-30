@@ -114,6 +114,15 @@ html[data-theme="light"] {
   animation: load-spin 0.8s linear infinite;
 }
 
+/* 加载态气泡（HeroUI 默认气泡里带 Spinner 的那种）由 Store 持有整个生命周期，
+   用户关闭只会让共享进度气泡消失、随后又被重建，故不提供关闭入口。HeroUI 的默认
+   children 无条件渲染 ToastCloseButton 且 Toast.Provider 不可注入 slots，只能按库
+   自己的 data-slot 标记隐藏。:has() 需 WebView2 105+ / WKWebView 15.4+，旧引擎下
+   选择器失效、按钮照常显示，仅退化不影响功能。 */
+[data-slot="toast"]:has([data-slot="spinner"]) [data-slot="toast-close"] {
+  display: none;
+}
+
 @layer base {
   html,
   body,
