@@ -13,6 +13,7 @@ import { isDesktopHost } from '../service/restart.utils'
 import { McpEditorForm } from './mcp-editor-form'
 import { McpImportDialog } from './mcp-import-dialog'
 import { mapToPairs, parseMcpJson, parsePairs } from './mcp-tab.utils'
+import { failText } from './outcome.utils'
 
 export function McpTab({ t }: McpTabProps): ReactElement {
   const [servers, setServers] = useState<McpRow[] | null>(null)
@@ -70,7 +71,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     }
     catch (error) {
       setImportItems([])
-      setOutcome({ ok: false, text: `${t('failed')}: ${String(error instanceof Error ? error.message : error)}` })
+      setOutcome({ ok: false, text: failText(t, error) })
     }
   }
 
@@ -90,7 +91,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
       setReload(value => value + 1)
     }
     catch (error) {
-      setOutcome({ ok: false, text: `${t('failed')}: ${String(error instanceof Error ? error.message : error)}` })
+      setOutcome({ ok: false, text: failText(t, error) })
     }
     finally {
       setBusy(false)
@@ -234,7 +235,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
       reloadList(true)
     }
     catch (error) {
-      setOutcome({ ok: false, text: `${t('failed')}: ${String(error instanceof Error ? error.message : error)}` })
+      setOutcome({ ok: false, text: failText(t, error) })
     }
     finally {
       setBusy(false)
@@ -251,7 +252,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
       reloadList(true)
     }
     catch (error) {
-      setOutcome({ ok: false, text: `${t('failed')}: ${String(error instanceof Error ? error.message : error)}` })
+      setOutcome({ ok: false, text: failText(t, error) })
     }
     finally {
       setBusy(false)

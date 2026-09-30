@@ -118,6 +118,37 @@ afterEach(() => {
 })
 
 describe('sidebarNewSessionFeature', () => {
+  it('rechecks composer capability on each click after a previous fallback', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mocks.composerWorkspaceLess = false
+    const dispose = sidebarNewSessionFeature.call(ctx)
+    const controller = mocks.controller as ControllerStub
+    controller.click(clickEvent(buttonTarget('新建会话')))
+    mocks.composerWorkspaceLess = true
+    const event = clickEvent(buttonTarget('新建会话'))
+    controller.click(event)
+    expect(event.preventDefault).toHaveBeenCalledTimes(1)
+    expect(event.stopImmediatePropagation).toHaveBeenCalledTimes(1)
+    expect(mocks.startUngroupedSession).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  it('keeps warning suppression local to each registration', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mocks.composerWorkspaceLess = false
+    const first = sidebarNewSessionFeature.call(ctx)
+    const firstController = mocks.controller as ControllerStub
+    const second = sidebarNewSessionFeature.call(ctx)
+    const secondController = mocks.controller as ControllerStub
+    firstController.click(clickEvent(buttonTarget('新建会话')))
+    firstController.click(clickEvent(buttonTarget('新建会话')))
+    secondController.click(clickEvent(buttonTarget('新建会话')))
+    expect(warn).toHaveBeenCalledTimes(2)
+    first()
+    second()
+  })
+
   it('捕获阶段吞掉官方「新建会话」点击并改走未分组新建', () => {
     const dispose = sidebarNewSessionFeature.call(ctx)
     const controller = mocks.controller as ControllerStub

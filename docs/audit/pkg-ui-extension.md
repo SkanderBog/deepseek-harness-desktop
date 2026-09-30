@@ -72,3 +72,15 @@ Over-engineering only. Protocol/bridge surface (`useListen*`, `useInvoke*`, `def
 ## net: -265 lines, -1 dependency possible.
 
 > Lead 复核修正：原 net -285 含 `Card.*` 五成员删除（-20），已按协议面出口契约降级为 `keep:`（见上），不计入 net。findings 计数相应为 17 条裁剪 + 5 条 `keep:`（原 18 + 4）。
+
+## 执行复核（2026-09-30）
+
+以下执行结论覆盖原审计建议；原 net 为估计，不是实际删除承诺。
+
+- 已执行：20 条（原报告误记 19 条）refork 元数据行改成现有函数的紧凑参数行，不增加中间表；保留全部字段、版本、顺序和 primitive 行。两组新建会话监听共用内部工厂，仍在点击时探测能力，每次注册独立抑制告警。`useMountStyle` 直接使用 effect cleanup，保留样式引用计数和 owner 隔离。
+- 已执行：复用 `HostPluginLoader`，保留原 `PlatformModuleLoader` / `PlatformPluginLoader` interface 名称及声明合并能力；内联私有 `MarketTab` / `startProvider`，共享九处相同错误文案；移除 extension 无引用的 cordis devDependency 和 lock importer 声明，保留 bundle patch 与真实传递依赖。
+- 已执行：仅 Cursor/Gemini 共用 JSON 扫描；Claude 必须先按文件顺序合并原始配置再校验，较晚无效条目仍覆盖较早有效条目，不能统一成逐文件过滤后合并。保留映射差异、agent 顺序及原有异常语义。
+- `keep:` `clearReadOnly`。原建议 `chmodSync(path, mode, { recursive: true })` 不是 Node API；逐路径 chmod、文件/目录模式与 best-effort 错误处理不删。
+- `keep:` Card 全部成员、SettingsSidebar/SettingsTrigger 槽位 props、异步 Query 签名、生成 DTO、restartHost 返回契约、profile.peek 服务方法、scope/layer 兼容字段、Button 由 tv 派生的尺寸类型及公共常量/类型出口。
+- 未新增 `useRemoteResource` / `pollUntil` / `OutcomeNotice`：生命周期、轮询与标记并不完全相同；仅复用实际相同的文案，避免为预计几行收益引入抽象或行为变化。
+- 验证：UI metadata、style cleanup/refcount、点击时能力检查和独立注册告警回归；extension 配置合并/扫描、市场参数、provider 生命周期、loader 契约及文案回归。各范围至少五次乱序通过并做变异验证；最终五包汇总 52 文件 / 386 用例通过，限定真实源码别名类型检查通过，Lint 零错误（仅既有警告）。

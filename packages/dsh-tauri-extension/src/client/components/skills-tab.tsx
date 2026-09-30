@@ -8,6 +8,7 @@ import { deleteSkill, getSkill, getSkills, postOpenDir, postRoots, postSkill, po
 import { MarkdownPreview } from '../components/markdown'
 import { IMPORT_REFRESH_DELAYS_MS, SKILL_REFRESH_INTERVAL_MS, SKILL_REFRESH_TIMEOUT_MS, SOURCE_LOCALE_KEYS } from '../constants'
 import { useTimers } from '../hooks/use-timers'
+import { failText } from './outcome.utils'
 import { normalizeRepository, policyTag } from './skills-tab.utils'
 
 export interface SkillEditorState {
@@ -52,7 +53,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
       (error: unknown) => {
         if (current) {
           setSkills([])
-          setOutcome({ ok: false, text: `${t('failed')}: ${error instanceof Error ? error.message : String(error)}` })
+          setOutcome({ ok: false, text: failText(t, error) })
         }
       },
     )
@@ -97,7 +98,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
       setPreview(!skill.editable)
       setEditor({ mode: skill.editable ? 'edit' : 'view', name: skill.name, description: skill.description, whenToUse: skill.whenToUse ?? '', modelInvocable: skill.invocation.modelInvocable, userInvocable: skill.invocation.userInvocable, content: body.content })
     }
-    catch (error) { setOutcome({ ok: false, text: `${t('failed')}: ${error instanceof Error ? error.message : String(error)}` }) }
+    catch (error) { setOutcome({ ok: false, text: failText(t, error) }) }
     finally { setBusy(false) }
   }
 
@@ -127,7 +128,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
       setOutcome({ ok: true, text: t('saved') })
       refreshUntil(rows => !rows.some(row => row.name === name))
     }
-    catch (error) { setOutcome({ ok: false, text: `${t('failed')}: ${error instanceof Error ? error.message : String(error)}` }) }
+    catch (error) { setOutcome({ ok: false, text: failText(t, error) }) }
     finally {
       setBusy(false)
       setConfirmName(null)
@@ -145,7 +146,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
         return row !== undefined && row.invocation.modelInvocable === !enabled && row.invocation.userInvocable === !enabled
       })
     }
-    catch (error) { setOutcome({ ok: false, text: `${t('failed')}: ${error instanceof Error ? error.message : String(error)}` }) }
+    catch (error) { setOutcome({ ok: false, text: failText(t, error) }) }
     finally { setBusy(false) }
   }
 
@@ -153,7 +154,7 @@ export function SkillsTab({ t, createSkill }: SkillsTabProps): ReactElement {
     try {
       await postOpenDir(target)
     }
-    catch (error) { setOutcome({ ok: false, text: `${t('failed')}: ${error instanceof Error ? error.message : String(error)}` }) }
+    catch (error) { setOutcome({ ok: false, text: failText(t, error) }) }
   }
 
   const doCreate = async (): Promise<void> => {

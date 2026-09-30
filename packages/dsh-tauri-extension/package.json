@@ -68,7 +68,6 @@
     "yaml": "catalog:testing"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "catalog:dsh",
     "@deepseek-ai/dsh-skill-filesystem": "catalog:dsh",
     "@types/lodash-es": "catalog:types",
     "dompurify": "catalog:ui",
