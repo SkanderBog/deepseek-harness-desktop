@@ -6,7 +6,7 @@ authors = [ "deepseek-harness-desktop contributors" ]
 edition = "2021"
 
 [workspace]
-members = ["vendor/tauri-plugin-notifications"]
+members = [ "vendor/tauri-plugin-notifications" ]
 resolver = "2"
 
 [lib]
