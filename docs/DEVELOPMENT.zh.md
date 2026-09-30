@@ -1,45 +1,81 @@
 # 开发
 
-DeepSeek Harness Desktop 是 **Tauri 2 + React 19** 应用：前端位于 `src/`，Rust 后端位于 `src-tauri/`。仓库使用 pnpm 11，桌面端捆绑运行时为 Node.js 22.22.0。
+[English](<./DEVELOPMENT.md>) · [中文](<./DEVELOPMENT.zh.md>) · [README](<../README.md>)
+
+Tauri 2 + React 19：前端位于 [`src/`](<../src/>)，Rust 后端位于 [`src-tauri/`](<../src-tauri/>)，插件位于 [`packages/`](<../packages/>)。当前桌面端：`0.20.0-beta.1`；推荐 Harness 内核：`0.2.0-rc.2`。
+
+修改前先读 [AGENTS.md](<../AGENTS.md>) 与[路由规范](<./specs/devlopment.md>)。禁止查看受限归档目录，插件改动期间禁止执行构建。
 
 ## 环境要求
 
-| 工具 | 版本 |
+| 工具 | 要求 / 来源 |
 | --- | --- |
-| Node.js | 22.19+（CI 与捆绑运行时：22.22.0） |
-| Rust | 1.77.2+ |
-| pnpm | 11.x（`pnpm@11.7.0`） |
+| Node.js | 托管运行时要求 `22.22.0+`，CI 使用 Node 22.x（[清单](<../src-tauri/resources/manifest.jsonc>)、[CI 配置](<../.github/actions/setup-node-pnpm/action.yml>)） |
+| pnpm | `11.7.0`，由 [package.json](<../package.json>) 固定 |
+| Rust | `1.93+`，推荐当前 stable；本地修补的[通知 crate](<../src-tauri/vendor/tauri-plugin-notifications/Cargo.toml#L14>) 声明了该最低版本。 |
 
-以及平台编译工具链：
+| 平台 | 编译工具链 |
+| --- | --- |
+| Windows | MSVC C++ 构建工具与 WebView2 |
+| macOS | Xcode 16+、Swift 6；通知后端不能仅靠 Command Line Tools 编译（[Cargo.toml](<../src-tauri/Cargo.toml#L46-L48>)） |
+| Linux | WebKit2GTK 4.1 开发库；CI 安装 `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`（[CI](<../.github/workflows/ci.yml>)） |
 
-- **Windows** — MSVC 构建工具 + WebView2
-- **macOS** — Xcode Command Line Tools
-- **Linux** — WebKit2GTK
+macOS 运行时最低版本为 12+，Web 界面需要 Safari 17.4+ 能力。Linux 运行问题的处理见[在线文档](https://dshtauri.mintlify.site)。
 
-## 常用命令
+## 开发命令
+
+在仓库根目录执行：
+
+| 命令 | 用途 |
+| --- | --- |
+| `pnpm install` | 安装工作区依赖 |
+| `pnpm dev` | 仅启动 Vite 前端 |
+| `pnpm dev:plugins` | 监听插件；修改时复用已有 watcher |
+| `pnpm tauri dev` | 调试桌面端；通过 `beforeDevCommand` 启动 Vite |
+| `pnpm dev:desktop` | 插件监听与桌面组合命令；`&` 行为取决于 shell |
+| `pnpm typecheck` | 前端 TypeScript 检查 |
+| `pnpm lint` | ESLint |
+
+跨平台开发建议分别在两个终端运行插件 watcher 与 `pnpm tauri dev`。
+
+**构建保护：** [AGENTS.md](<../AGENTS.md>) 禁止在插件改动期间执行构建。`pnpm build:plugins`、`pnpm build`、`pnpm build:debug`、`pnpm tauri build` 仅用于明确的产物准备 / 发布；`pnpm build` 还会触发插件 prebuild。
+
+## 验证
+
+[package.json](<../package.json>) 中的测试脚本对应以下显式非 watch 命令（[测试规范](<./specs/testing.md>)）：
+
+| 脚本 | 直接执行命令 |
+| --- | --- |
+| `test` | `node node_modules/vitest/vitest.mjs run` |
+| `test:unit` | `node node_modules/vitest/vitest.mjs run --project unit` |
+| `test:e2e:plugin` | `node node_modules/vitest/vitest.mjs run --project plugin` |
+| `test:e2e:desktop` | `node node_modules/vitest/vitest.mjs run --project desktop` |
+
+E2E 需要已准备好的夹具与运行时，桌面测试还需要 Debug 二进制。请遵循[插件测试指南](<./specs/plugin.test.md>)与[桌面测试指南](<./specs/desktop.test.md>)；不要仅为验证文档或插件修改触发构建。
+
+Rust 检查（仓库根目录）：
 
 ```bash
-pnpm install          # 安装依赖
-pnpm dev              # 前端开发服务器（Vite）
-pnpm dev:plugins      # 监听内置插件构建
-pnpm typecheck        # 前端 TypeScript 检查
-pnpm build:plugins    # 构建内置插件 bundle
-pnpm tauri dev        # 调试模式运行桌面端
-pnpm tauri build      # 构建安装包
+cargo check --manifest-path src-tauri/Cargo.toml --locked
+cargo test --manifest-path src-tauri/Cargo.toml --all-features --locked
 ```
 
-后端检查（在 `src-tauri/` 下执行）：
+文档修改使用 `git diff --check`。测试数据必须隔离，不能使用真实用户档案。
 
-```bash
-cargo check
-cargo test
-```
+## 运行时隔离
 
-macOS 的 Developer ID 签名、公证与 GitHub Actions Secrets 配置见 [`.github/workflows/build-macos.yml`](../.github/workflows/build-macos.yml) 与 [`.github/workflows/release.yml`](../.github/workflows/release.yml)。
+| 模式 | Harness 数据 | Store | 默认回环端口 |
+| --- | --- | --- | --- |
+| Debug | `~/.dsh.dev` | `.store.dev.dat` | `3081` |
+| Release | `~/.dsh` | `.store.dat` | `3080` |
 
-若要新增一个随安装包分发、内置在应用里的插件，请参阅 [内置插件（Internal Plugins）](../src-tauri/resources/README.md#built-in-internal-plugins)。
+- Debug 的运行时、内核与依赖位于 `<AppData>/dev/`；日志为 `<AppData>/dev/logs/dsh-web.dev.log`。
+- Debug 忽略继承的 `DSH_HOME`，固定使用 `~/.dsh.dev`，不迁移正式版数据或修改生产 CLI PATH。
+- 端口可配置，占用时可能回退；不保证并行启动时始终使用上述值。
+- 档案隔离的是配置，不是操作系统权限。
 
-## 小贴士
+## 发布参考
 
-- 调试模式使用 **3081** 端口，正式版使用 **3080** —— 两者互不冲突，可以同时运行已安装版本与开发构建。
-- 调试数据与正式版隔离：使用 `~/.dsh.dev` 和 `.store.dev.dat`，不会迁移正式版数据，也不会注册生产版 `dsh` PATH shim。
+- [内置插件与资源指南](<../src-tauri/resources/README.md#built-in-internal-plugins>) — 注册与随包资源
+- [macOS 工作流](<../.github/workflows/build-macos.yml>)与[发布工作流](<../.github/workflows/release.yml>) — Developer ID 签名、公证与 CI Secrets
+- [资源清单](<../src-tauri/resources/manifest.jsonc>) — 运行时版本、插件清单与预设兼容规则
