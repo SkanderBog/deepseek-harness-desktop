@@ -392,7 +392,16 @@ export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, o
       return
     switch (event.payload) {
       case 'desktop-config':
-        handleOpenConfig()
+        handleOpenConfig('application')
+        break
+      case 'desktop-profiles':
+        handleOpenConfig('profiles')
+        break
+      case 'desktop-plugins':
+        handleOpenConfig('plugins')
+        break
+      case 'desktop-harness':
+        handleOpenConfig('harness')
         break
       case 'desktop-about':
         handleOpenAbout()

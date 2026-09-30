@@ -273,11 +273,32 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
     let config = MenuItem::with_id(
         app,
         "desktop-config",
-        crate::config::i18n::t("menu.settings"),
+        crate::config::i18n::t("menu.application"),
         true,
         Some("CmdOrCtrl+,"),
     )?;
-    let application_separator = PredefinedMenuItem::separator(app)?;
+    let profiles = MenuItem::with_id(
+        app,
+        "desktop-profiles",
+        crate::config::i18n::t("menu.profiles"),
+        true,
+        None::<&str>,
+    )?;
+    let plugins = MenuItem::with_id(
+        app,
+        "desktop-plugins",
+        crate::config::i18n::t("menu.plugins"),
+        true,
+        None::<&str>,
+    )?;
+    let harness = MenuItem::with_id(
+        app,
+        "desktop-harness",
+        crate::config::i18n::t("menu.harness"),
+        true,
+        None::<&str>,
+    )?;
+    let run_separator = PredefinedMenuItem::separator(app)?;
     let is_fullscreen = app
         .get_webview_window("main")
         .and_then(|window| window.is_fullscreen().ok())
@@ -288,12 +309,19 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         "menu.enter_fullscreen"
     });
     let fullscreen = PredefinedMenuItem::fullscreen(app, Some(&fullscreen_label))?;
-    let application_menu = Submenu::with_id_and_items(
+    let run_menu = Submenu::with_id_and_items(
         app,
-        "desktop-application-menu",
-        crate::config::i18n::t("menu.application"),
+        "desktop-run-menu",
+        crate::config::i18n::t("menu.run"),
         true,
-        &[&config, &application_separator, &fullscreen],
+        &[
+            &config,
+            &profiles,
+            &plugins,
+            &harness,
+            &run_separator,
+            &fullscreen,
+        ],
     )?;
 
     let hide = PredefinedMenuItem::hide(app, None)?;
@@ -302,7 +330,7 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
     let quit_separator = PredefinedMenuItem::separator(app)?;
     let quit = PredefinedMenuItem::quit(app, None)?;
     // macOS 会把首个菜单标题强制显示为应用名称；这里只承载必要的系统动作，
-    // 真正可见的“应用”功能菜单放在其后，避免再次被系统改名。
+    // 文件、运行、帮助菜单放在其后，避免被系统改名。
     let system_application_menu = Submenu::with_id_and_items(
         app,
         "desktop-system-application-menu",
@@ -443,8 +471,8 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         app,
         &[
             &system_application_menu,
-            &application_menu,
             &file_menu,
+            &run_menu,
             &edit_menu,
             &help_menu,
         ],
@@ -1197,6 +1225,9 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
             "desktop-config"
+            | "desktop-profiles"
+            | "desktop-plugins"
+            | "desktop-harness"
             | "desktop-about"
             | "desktop-copy-run-logs"
             | "desktop-check-update"
