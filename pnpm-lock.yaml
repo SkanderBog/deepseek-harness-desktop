@@ -302,9 +302,6 @@ catalogs:
     schemastery:
       specifier: ^3.18.0
       version: 3.18.0
-    simple-git:
-      specifier: ^3.36.0
-      version: 3.36.0
     smol-toml:
       specifier: ^1.3.1
       version: 1.8.0
