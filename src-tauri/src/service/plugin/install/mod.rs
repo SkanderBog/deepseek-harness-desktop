@@ -36,7 +36,6 @@ use crate::config;
 use crate::service::cli;
 use crate::service::core;
 use crate::service::profile::{active_profile, allow_profile_release_age};
-use crate::service::workflow;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path;
@@ -259,6 +258,57 @@ fn spec_targets(app_handle: &AppHandle, specs: &[String]) -> Vec<InstallTarget> 
     targets
 }
 
+/// 被门禁拦下的条目**全部**已在 lock 中时，返回该补写的豁免条目（精确 `包名@版本`）。
+fn locked_release_age_exemptions(
+    profile: &Path,
+    blocked: &[PolicyBlockedVersion],
+) -> Option<Vec<String>> {
+    if blocked.is_empty() {
+        return None;
+    }
+    let mut entries = Vec::with_capacity(blocked.len());
+    for item in blocked {
+        if single::locked_package_version(profile, &item.name).as_deref()
+            != Some(item.version.as_str())
+        {
+            return None;
+        }
+        entries.push(format!("{}@{}", item.name, item.version));
+    }
+    Some(entries)
+}
+
+/// 这次失败是不是「lockfile 里早就有的太新条目又被门禁拦下」：是则补齐豁免并返回 `true`。
+///
+/// pnpm 的 `minimumReleaseAgeExclude` 只被**解析**阶段采信，lockfile 校验阶段照旧按窗口
+/// 判定：一旦 lock 里存在比窗口更新的条目（用户授权后放宽窗口装上的那一次就会写入），
+/// 此后**每一次**触发状态变更的插件操作都会失败——升级第二个插件卡在第一个插件的条目上，
+/// 启动期的内置插件安装失败还会让应用起不来（`INTERNAL_PLUGIN_INSTALL_FAILED`）。
+/// 已在 lock 里的版本说明它早就装到本机，不是本次要审的新版本：补进豁免清单（幂等）并让
+/// 调用方放宽窗口重跑一次，把档案带回自洽状态。
+///
+/// 被拦下的条目里只要有一个不在 lock 中（或 lock 里是别的版本），说明那是本次新解析出来
+/// 的版本：保持默认窗口、交前端走「逐项授权」，绝不放宽。
+fn heal_locked_release_age(app_handle: &AppHandle, output: &str) -> bool {
+    let blocked = policy_blocked_versions(output);
+    let Some(entries) = locked_release_age_exemptions(&profile_dir(app_handle), &blocked) else {
+        return false;
+    };
+    match allow_profile_release_age(app_handle, &entries) {
+        Ok(()) => {
+            log::warn!(
+                "pnpm release-age policy blocked {} entries that are already locked; recorded them as exempt and retrying with the window relaxed",
+                entries.len()
+            );
+            true
+        }
+        Err(error) => {
+            log::warn!("failed to record the release-age exemptions for locked entries: {error}");
+            false
+        }
+    }
+}
+
 async fn install_with_cancel(
     app_handle: &AppHandle,
     targets: &[InstallTarget],
@@ -313,35 +363,13 @@ async fn install_with_cancel(
     // 旧档案可能由早期版本创建，没有同步 Harness 的最小发布时间例外；补齐
     // 精确的已审查 zod 版本，避免 registry 元数据瞬时失败阻断插件安装（issue #222）。
     super::ensure_profile_pnpm_policy(app_handle)?;
-    // 安装前停止运行中的服务，避免资源冲突。
-    // 记录停服结果：停服失败意味着服务可能仍在运行、插件目录可能被写入，
-    // 此时创建快照会捕获不一致状态，因此停服失败时跳过快照（不终止安装）。
-    let mut stopped = true;
-    if workflow::has_owned_process() {
-        // 停服务会让用户感到"重启"，先在日志面板讲清缘由（issue #48）
-        let _ = window.emit(
-            PREINSTALL_LOG_EVENT,
-            PreinstallLogPayload {
-                line: "[harness] 正在停止运行中的服务（安装插件需要短暂重启）…".to_string(),
-            },
-        );
-        log::info!("Stopping running harness service before installing plugins");
-        stopped = match workflow::stop(app_handle.clone()).await {
-            Ok(()) => true,
-            Err(e) => {
-                log::warn!("failed to stop harness before plugin install: {e}");
-                false
-            }
-        };
-    }
-    // 安装/升级前自动快照已安装的插件（覆盖式），失败仅告警不阻断安装。
-    // 仅在服务已确认停止后执行，保证快照一致
+    // 安装/升级前自动快照已安装的插件（覆盖式），失败仅告警不阻断安装
     // （issue #303：自动快照失败不阻塞主流程，避免升级被陈旧快照问题拖垮）。
-    if stopped {
-        for target in targets {
-            if is_installed(app_handle, &target.id) {
-                super::snapshot::create_best_effort(app_handle, &target.id);
-            }
+    // 这里**不再**为了快照停掉运行中的服务：插件包只会被随后的 pnpm 改写，先停服对
+    // 快照一致性没有帮助，却让用户看到一次「服务被重启」；是否重启交给结算后的提示。
+    for target in targets {
+        if is_installed(app_handle, &target.id) {
+            super::snapshot::create_best_effort(app_handle, &target.id);
         }
     }
 
@@ -378,6 +406,29 @@ async fn install_with_cancel(
         owner,
     )
     .await?;
+
+    // 门禁自愈：lockfile 里早有的太新条目会让**每一次**状态变更都失败
+    // （见 [`heal_locked_release_age`]）。补齐豁免后放宽窗口重跑一次，仍失败就照原样分类。
+    let (exit_code, last_output, last_attempt) = if exit_code != 0
+        && heal_locked_release_age(app_handle, &last_attempt)
+    {
+        let mut retry_args = args.clone();
+        retry_args.push(OsString::from(single::RELEASE_AGE_RELAXED_FLAG));
+        run_plugin_install_with_transient_retry(
+            app_handle,
+            &node,
+            &retry_args,
+            &cwd,
+            &envs,
+            &window,
+            "install",
+            cancel.as_ref(),
+            owner,
+        )
+        .await?
+    } else {
+        (exit_code, last_output, last_attempt)
+    };
 
     if exit_code != 0 {
         log::error!("dsh plugin install failed with exit code {exit_code}");
@@ -858,6 +909,41 @@ pub(super) fn append_command_output(all_output: &mut String, captured: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locked_release_age_exemptions_require_every_blocked_entry_to_be_locked() {
+        let dir = std::env::temp_dir().join(format!("dsh-heal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("pnpm-lock.yaml"),
+            "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      dshmarket:\n        specifier: ^2.12.0\n        version: 2.12.0\n",
+        )
+        .unwrap();
+
+        let locked = PolicyBlockedVersion {
+            name: "dshmarket".to_string(),
+            version: "2.12.0".to_string(),
+        };
+        let newer = PolicyBlockedVersion {
+            name: "dshmarket".to_string(),
+            version: "2.13.0".to_string(),
+        };
+        let absent = PolicyBlockedVersion {
+            name: "elsewhere".to_string(),
+            version: "1.0.0".to_string(),
+        };
+
+        assert_eq!(
+            locked_release_age_exemptions(&dir, &[locked.clone()]),
+            Some(vec!["dshmarket@2.12.0".to_string()])
+        );
+        assert_eq!(locked_release_age_exemptions(&dir, &[newer]), None);
+        assert_eq!(locked_release_age_exemptions(&dir, &[absent]), None);
+        assert_eq!(locked_release_age_exemptions(&dir, &[]), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn command_output_retains_earlier_retry_diagnostics() {
