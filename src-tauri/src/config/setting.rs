@@ -518,6 +518,71 @@ mod tests {
     }
 
     #[test]
+    fn malformed_appearance_preserves_operational_settings() {
+        for (appearance, expected) in [
+            (
+                serde_json::json!({ "palette": "nord", "terminal": true, "opacity": 77.5 }),
+                ("nord", true, 78),
+            ),
+            (
+                serde_json::json!({ "opacity": 300 }),
+                ("default", false, 100),
+            ),
+            (serde_json::json!({ "opacity": -1 }), ("default", false, 20)),
+            (
+                serde_json::json!({ "opacity": "70" }),
+                ("default", false, 100),
+            ),
+            (
+                serde_json::json!({ "opacity": null }),
+                ("default", false, 100),
+            ),
+            (
+                serde_json::json!({ "palette": [], "terminal": "true", "opacity": 64 }),
+                ("default", false, 64),
+            ),
+            (serde_json::json!(null), ("default", false, 100)),
+            (serde_json::json!([]), ("default", false, 100)),
+            (serde_json::json!("invalid"), ("default", false, 100)),
+        ] {
+            let mut object = serde_json::json!({
+                "installed": true,
+                "port": 4099,
+                "manual_port": 4099,
+                "auto_start": false,
+                "language": "en-US",
+                "active_profile": "custom-profile",
+                "active_core": "app",
+                "dsh_pkg_commit": "saved-core",
+                "dsh_pkg_tag": "saved-release",
+                "preinstall_done": true,
+                "dsh_home_migrated": true,
+                "desktop_profile_ready": true,
+                "cli_link_enabled": false,
+                "harness_max_heap_mb": 2048,
+                "zoom_factor": 1.2,
+                "close_action": "quit"
+            });
+            object["appearance"] = appearance;
+            for value in [
+                object.clone(),
+                serde_json::Value::String(object.to_string()),
+            ] {
+                let setting = setting_from_value(Some(&value));
+                assert_eq!(setting.appearance.palette, expected.0, "{value}");
+                assert_eq!(setting.appearance.terminal, expected.1, "{value}");
+                assert_eq!(setting.appearance.opacity, expected.2, "{value}");
+                let saved = serde_json::to_value(setting).unwrap();
+                for (key, expected) in object.as_object().unwrap() {
+                    if key != "appearance" {
+                        assert_eq!(&saved[key], expected, "{key} changed for {value}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn settings_decode_object_and_wrapped_object_with_same_normalization() {
         let object = serde_json::json!({
             "installed": true,

@@ -14,6 +14,9 @@ export function ConfigAppearance() {
   const { t } = useTranslation()
   const { appearance: saved } = useStore(store.setting)
   const appearance = normalizeAppearance(saved)
+  const opacityOptions = OPACITY_OPTIONS.includes(appearance.opacity)
+    ? OPACITY_OPTIONS
+    : [...OPACITY_OPTIONS, appearance.opacity].sort((a, b) => b - a)
   const transparent = (window as Window & { __DSH_TRANSPARENT__?: boolean }).__DSH_TRANSPARENT__ === true
   const { mutate: save, isPending } = useMutation({
     mutationFn: (value: typeof appearance) => store.setting.update({ appearance: normalizeAppearance(value) }),
@@ -73,7 +76,7 @@ export function ConfigAppearance() {
         </Select.Trigger>
         <Select.Popover>
           <ListBox>
-            {OPACITY_OPTIONS.map(opacity => (
+            {opacityOptions.map(opacity => (
               <ListBox.Item key={opacity} id={String(opacity)} textValue={`${opacity}%`} data-testid={`dsh-appearance-opacity-${opacity}`}>{`${opacity}%`}</ListBox.Item>
             ))}
           </ListBox>

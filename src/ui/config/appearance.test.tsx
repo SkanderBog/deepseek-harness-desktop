@@ -18,14 +18,14 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-function setup(fail = false) {
+function setup(fail = false, opacity = 70) {
   const update = vi.fn(async (value) => {
     if (fail)
       throw new Error('disk write failed')
     mocks.setting.$patch(value)
   })
   mocks.setting = defineStore({
-    state: () => ({ appearance: { palette: 'nord', terminal: false, opacity: 70 } }),
+    state: () => ({ appearance: { palette: 'nord', terminal: false, opacity } }),
     actions: { update },
   })
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
@@ -34,6 +34,11 @@ function setup(fail = false) {
 }
 
 describe('appearance settings controls', () => {
+  it.each([21, 78, 99])('displays saved opacity %i even when it is between preset steps', async (opacity) => {
+    setup(false, opacity)
+    await waitFor(() => expect(screen.getByTestId('dsh-appearance-opacity').textContent).toContain(`${opacity}%`))
+  })
+
   it('provides an operable terminal switch and resets all preferences', async () => {
     const update = setup()
     const toggle = screen.getByRole('switch', { name: 'appearance.terminal' })
