@@ -289,15 +289,19 @@ afterEach(async () => {
     await settleRuntime()
   }
   finally {
-    await machine.dispose()
-    await settleRuntime()
-    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
-    if (harnessHomeBefore === undefined)
-      delete process.env.DSH_HOME
-    else
-      process.env.DSH_HOME = harnessHomeBefore
-    vi.unstubAllGlobals()
-    clearHostRuntime()
+    try {
+      await machine.dispose()
+      await settleRuntime()
+    }
+    finally {
+      for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+      if (harnessHomeBefore === undefined)
+        delete process.env.DSH_HOME
+      else
+        process.env.DSH_HOME = harnessHomeBefore
+      vi.unstubAllGlobals()
+      clearHostRuntime()
+    }
   }
 })
 
