@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { Key } from 'webdriverio'
 import { startDesktopApp } from '../support/desktop'
 import { completePreinstall } from '../support/preinstall'
 import { SETUP_ERROR, SHELL_IFRAME, SHELL_ROOT } from '../support/selectors'
@@ -168,9 +169,9 @@ describe.skipIf(process.platform === 'darwin')('桌面端启动冒烟', () => {
     const opacity = await browser.$('[data-testid="dsh-appearance-opacity"] input[type="range"]')
     await opacity.waitForEnabled()
     await browser.execute(() => document.querySelector<HTMLInputElement>('[data-testid="dsh-appearance-opacity"] input[type="range"]')!.focus())
-    await browser.keys('Home')
-    await browser.waitUntil(async () => (await appearance()).opacity === 20, { timeoutMsg: '原生设置未保存滑块的 20% 不透明度' })
-    expect(await appearance(), '原生设置与所选外观不一致').toEqual({ palette: 'nord', terminal: true, transparency: true, opacity: 20, sidebarOnly: false })
+    await browser.keys(Key.ArrowLeft)
+    await browser.waitUntil(async () => (await appearance()).opacity === 99, { timeoutMsg: '原生设置未保存滑块的 99% 不透明度' })
+    expect(await appearance(), '原生设置与所选外观不一致').toEqual({ palette: 'nord', terminal: true, transparency: true, opacity: 99, sidebarOnly: false })
     expect(await browser.$('[data-testid="dsh-appearance-restart"]').isDisplayed(), '切换透明窗口缺少重启提示').toBe(true)
     await click('dsh-appearance-reset')
     await browser.waitUntil(async () => (await appearance()).palette === 'default', { timeoutMsg: '原生外观设置未恢复默认值' })
