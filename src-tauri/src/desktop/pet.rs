@@ -69,13 +69,10 @@ pub fn get_pet_window_position<R: Runtime>(app: &AppHandle<R>) -> PetWindowPosit
         .store(store_dat_file_name())
         .expect("Failed to load store for pet window position");
     let raw = store.get(STORE_PET_WINDOW_STATE_KEY);
-    let value = raw.as_ref().and_then(|v| {
-        v.as_str()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .or_else(|| Some(v.clone()))
-    });
-    value
-        .and_then(|v| serde_json::from_value(v).ok())
+    raw.as_ref()
+        .and_then(|value| {
+            serde_json::from_value(crate::config::unwrap_json_value(value).into_owned()).ok()
+        })
         .unwrap_or_default()
 }
 
@@ -531,6 +528,34 @@ mod tests {
         assert!(is_builtin(Some("another-preset")));
         assert!(!is_builtin(Some("codex:blue_whale")));
         assert!(!is_builtin(Some("chat:cat")));
+    }
+
+    #[test]
+    fn pet_window_width_crosses_bubble_minimum_at_large_sizes() {
+        assert_eq!(
+            pet_window_logical_size(50.0, PET_BUILTIN_ASPECT),
+            (420.0, 143.875)
+        );
+        assert_eq!(
+            pet_window_logical_size(100.0, PET_BUILTIN_ASPECT),
+            (420.0, 205.75)
+        );
+        assert_eq!(
+            pet_window_logical_size(200.0, PET_BUILTIN_ASPECT),
+            (472.0, 329.5)
+        );
+    }
+
+    #[test]
+    fn clamp_window_position_handles_extreme_coordinates_and_sizes() {
+        assert_eq!(
+            clamp_window_position(i32::MAX, i32::MIN, 20, 10, -1920, -1080, 1920, 1080),
+            (-20, -1080)
+        );
+        assert_eq!(
+            clamp_window_position(0, 0, u32::MAX, u32::MAX, i32::MIN, i32::MIN, 0, 0),
+            (i32::MIN, i32::MIN)
+        );
     }
 
     #[test]

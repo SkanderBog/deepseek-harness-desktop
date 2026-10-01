@@ -1,6 +1,6 @@
 // @vitest-environment node
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { readSource } from './setup/read-source'
 
 /**
  * 桌宠窗口生命周期契约（issue #469）。
@@ -13,10 +13,6 @@ import { describe, expect, it } from 'vitest'
  * 另一条不变量是**关闭必须持久**：关闭写 `enabled=false` 并落盘，重启后不得再自动拉起
  * （用户报告：明明关了宠物，重开应用它又自己出来）。
  */
-function readSource(relativePath: string): string {
-  return readFileSync(new URL(relativePath, import.meta.url), 'utf8')
-}
-
 /** 截取指定函数体的源码（从 ` fn name` 起，到下一个顶层 `}` 后换行 + 空行为止）。 */
 function functionBody(source: string, name: string): string {
   const start = source.indexOf(`pub fn ${name}`)
@@ -27,7 +23,7 @@ function functionBody(source: string, name: string): string {
 }
 
 describe('pet window close (destroy, not hide)', () => {
-  const petWindow = readSource('../src-tauri/src/desktop/pet.rs')
+  const petWindow = readSource('src-tauri/src/desktop/pet.rs')
 
   it('destroys the pet webview window instead of hiding it', () => {
     const body = functionBody(petWindow, 'set_pet_window_visible')
@@ -50,7 +46,7 @@ describe('pet window close (destroy, not hide)', () => {
 })
 
 describe('pet window lifecycle never runs on the main thread', () => {
-  const bridge = readSource('../src-tauri/src/bridge/pet.rs')
+  const bridge = readSource('src-tauri/src/bridge/pet.rs')
 
   it('defers every window visibility change off the command thread', () => {
     // command handler 在主线程执行，而 tauri-runtime-wry 在主线程上：
@@ -74,8 +70,8 @@ describe('pet window lifecycle never runs on the main thread', () => {
 })
 
 describe('closing the pet persists (restart must not re-open it)', () => {
-  const bridge = readSource('../src-tauri/src/bridge/pet.rs')
-  const builder = readSource('../src-tauri/src/desktop/builder.rs')
+  const bridge = readSource('src-tauri/src/bridge/pet.rs')
+  const builder = readSource('src-tauri/src/desktop/builder.rs')
 
   it('persists enabled=false and stops the host session stream together', () => {
     const body = functionBody(bridge, 'set_pet_enabled')
@@ -101,7 +97,7 @@ describe('closing the pet persists (restart must not re-open it)', () => {
 })
 
 describe('recreated pet window keeps its mouse stream', () => {
-  const mouse = readSource('../src-tauri/src/desktop/pet_mouse.rs')
+  const mouse = readSource('src-tauri/src/desktop/pet_mouse.rs')
 
   it('rebinds the global mouse emitter to the window that just mounted', () => {
     // 窗口销毁重建后旧句柄失效：若节流线程一直握着旧窗口，重建后的桌宠收不到

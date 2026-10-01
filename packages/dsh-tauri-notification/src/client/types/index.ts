@@ -159,8 +159,3 @@ export interface NotificationSettings {
   sound: NotificationSound
   customSound: string | null
 }
-
-/** store 状态 = 持久化设置 + 一次性水合标记。 */
-export interface NotificationSettingsState extends NotificationSettings {
-  hydrated: boolean
-}

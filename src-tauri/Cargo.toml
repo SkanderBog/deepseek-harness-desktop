@@ -1,9 +1,13 @@
 [package]
 name = "deepseek-harness-desktop"
-version = "0.20.0-beta.1"
+version = "0.20.1-beta.1"
 description = "Desktop application for DeepSeek Harness (dsh)"
 authors = [ "deepseek-harness-desktop contributors" ]
 edition = "2021"
+
+[workspace]
+members = [ "vendor/tauri-plugin-notifications" ]
+resolver = "2"
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary

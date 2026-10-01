@@ -22,6 +22,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { routes } from '.'
 import { resetTestDshHome, testDshHome } from '../../../../.test/test-utils'
 import { setCurrentHostInstance } from '../config/runtime'
+import { archive } from '../service/archive'
+import { session } from '../service/session'
 
 vi.mock('dsh-tauri', async (importOriginal) => {
   const actual = await importOriginal<typeof import('dsh-tauri')>()
@@ -151,6 +153,75 @@ afterEach(async () => {
 })
 
 describe('归档路由声明', () => {
+  it.each([
+    ['POST', '/session/archive', 'single'],
+    ['DELETE', '/session/archive', 'single'],
+    ['POST', '/session/archive/restore', 'single'],
+    ['POST', '/session/open/path', 'single'],
+    ['POST', '/session/workspace/archive', 'many'],
+    ['DELETE', '/session/workspace/archive', 'many'],
+  ] as const)('%s %s preserves invalid body status and error without calling services', async (method, path, kind) => {
+    const calls = [
+      vi.spyOn(archive, 'archive'),
+      vi.spyOn(archive, 'delete'),
+      vi.spyOn(archive, 'unarchive'),
+      vi.spyOn(archive, 'archiveWorkspace'),
+      vi.spyOn(archive, 'deleteSelected'),
+      vi.spyOn(session, 'openDir'),
+    ]
+    const harness = createHarness()
+    const dispose = mount(harness)
+    const base = await listen(harness.registered)
+    const invalid = kind === 'single'
+      ? [{}, { sessionId: '' }, { sessionId: 1 }, { sessionId: [] }, { sessionId: null }, null, [], 'id']
+      : [{}, { sessionIds: [] }, { sessionIds: [''] }, { sessionIds: 'id' }, { sessionIds: null }, null, [], 'id']
+    for (const body of invalid) {
+      const response = await postJson(base, `${P}${path}`, method, JSON.stringify(body))
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({ ok: false, error: kind === 'single' ? 'invalid-session-id' : 'invalid-session-ids' })
+    }
+    for (const call of calls)
+      expect(call).not.toHaveBeenCalled()
+    dispose()
+  })
+
+  it('single routes accept whitespace without trimming and delegate to their public service methods', async () => {
+    const calls = [
+      vi.spyOn(archive, 'archive').mockResolvedValue({ archivedSessionIds: [' '], meta: {} }),
+      vi.spyOn(archive, 'delete').mockResolvedValue({ ok: true }),
+      vi.spyOn(archive, 'unarchive').mockResolvedValue({ ok: true }),
+      vi.spyOn(session, 'openDir').mockResolvedValue({ ok: true }),
+    ]
+    const paths = [['POST', '/session/archive'], ['DELETE', '/session/archive'], ['POST', '/session/archive/restore'], ['POST', '/session/open/path']]
+    const harness = createHarness()
+    const dispose = mount(harness)
+    const base = await listen(harness.registered)
+    for (const [method, path] of paths) {
+      const response = await postJson(base, `${P}${path}`, method!, JSON.stringify({ sessionId: ' ' }))
+      expect(response.status).toBe(200)
+    }
+    for (const call of calls) {
+      expect(call).toHaveBeenCalledExactlyOnceWith(' ')
+    }
+    dispose()
+  })
+
+  it.each(['POST', 'DELETE'])('workspace %s preserves String conversion, duplicates, order and optional workspaceId', async (method) => {
+    const call = method === 'POST'
+      ? vi.spyOn(archive, 'archiveWorkspace').mockResolvedValue({ archivedSessionIds: [], meta: {} })
+      : vi.spyOn(archive, 'deleteSelected').mockResolvedValue({ ok: true })
+    const harness = createHarness()
+    const dispose = mount(harness)
+    const base = await listen(harness.registered)
+    const response = await postJson(base, `${P}/session/workspace/archive`, method, JSON.stringify({
+      workspaceId: 'workspace',
+      sessionIds: ['', 'id', 'id', 0, false, null, {}, ' '],
+    }))
+    expect(response.status).toBe(200)
+    expect(call).toHaveBeenCalledExactlyOnceWith(['id', 'id', '0', 'false', 'null', '[object Object]', ' '])
+    dispose()
+  })
+
   it('按 RESTful 资源树声明 exact 路由，同路径多方法收敛为一行，卸载后清空注册', () => {
     const harness = createHarness()
     const dispose = mount(harness)

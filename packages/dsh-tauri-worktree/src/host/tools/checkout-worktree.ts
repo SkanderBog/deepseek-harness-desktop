@@ -1,5 +1,6 @@
 import { get } from 'lodash-es'
 import { worktree } from '../service/worktree'
+import { textBlock } from './create-worktree'
 
 export function checkoutWorktreeTool(): any {
   return {
@@ -63,8 +64,4 @@ export function checkoutWorktreeTool(): any {
       return { ok: true, branch: result.branch, projectPath: result.projectPath }
     },
   }
-}
-
-function textBlock(text: string): Array<{ type: 'text', text: string }> {
-  return [{ type: 'text', text }]
 }

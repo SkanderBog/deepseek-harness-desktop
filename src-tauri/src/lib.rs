@@ -3,7 +3,6 @@ mod config;
 pub mod desktop;
 mod logger;
 mod service;
-mod task;
 mod utils;
 
 /// 对显式给定的核心安装目录施加全套 dsh 补丁（`--patch-core <dir>` 的入口）。

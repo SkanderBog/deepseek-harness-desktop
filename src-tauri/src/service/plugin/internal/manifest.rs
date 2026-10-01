@@ -266,14 +266,15 @@ pub(super) fn dep_matches_spec(actual: &str, expected: &str) -> bool {
             .strip_prefix("link:")
             .or_else(|| spec.strip_prefix("file:"))
             .unwrap_or(spec);
-        // 统一用 dunce 归一化 Windows 扩展长度路径前缀（`\\?\`）：
-        // 期望值已经由 bundled_dep_spec 归一化掉前缀；若历史命中的实值仍带
-        // `//?/` / `\\?\` 前缀，先归一再比对，保证幂等（避免旧值一次次触发
-        // 不必要的重装）。先把手写正斜杠的 verbatim 形式（`//?/`）换算成反斜杠
-        // （dunce 依赖 `\\?\` 识别 verbatim），再交给 dunce::simplified，最后
-        // 统一回正斜杠，与 bundled_dep_spec 的产出可比。
-        let backslash = stripped.replace('/', "\\");
-        dunce::simplified(Path::new(&backslash))
+        let normalized = stripped.replace(['/', '\\'], std::path::MAIN_SEPARATOR_STR);
+        let path = Path::new(&normalized);
+        let resolved = if path.is_absolute() {
+            dunce::canonicalize(path).ok()
+        } else {
+            None
+        };
+        resolved
+            .unwrap_or_else(|| dunce::simplified(path).to_path_buf())
             .to_string_lossy()
             .replace('\\', "/")
             .trim_end_matches('/')
@@ -524,10 +525,39 @@ mod tests {
     }
 
     #[test]
+    fn dep_spec_does_not_reinstall_healthy_workspace_path_alias() {
+        let root = std::env::temp_dir().join(format!(
+            "dsh-dep-path-alias-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src-tauri")).unwrap();
+        std::fs::create_dir_all(root.join("packages/dsh-tauri")).unwrap();
+        let actual =
+            crate::service::plugin::preset::bundled_dep_spec(&root.join("packages/dsh-tauri"));
+        let expected = crate::service::plugin::preset::bundled_dep_spec(
+            &root.join("src-tauri/../packages/dsh-tauri"),
+        );
+        let matches = dep_matches_spec(&actual, &expected);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(
+            matches,
+            "healthy plugin must not reinstall: actual={actual}, expected={expected}"
+        );
+    }
+
+    #[test]
     fn dep_spec_rejects_wrong_path_or_source() {
         let expected = "link:C:/Apps/dsh/resources/internal-plugins/dsh-tauri";
         // 仍指向 npm 版本（用户手动从 npm 安装，非捆绑 link: 源）
         assert!(!dep_matches_spec("dsh-tauri@0.2.0", expected));
+        assert!(!dep_matches_spec("^0.2.0", expected));
+        let cwd_spec =
+            crate::service::plugin::preset::bundled_dep_spec(&std::env::current_dir().unwrap());
+        assert!(!dep_matches_spec(".", &cwd_spec));
         // 指向其它位置（旧版本安装目录等）
         assert!(!dep_matches_spec("link:D:/elsewhere/dsh-tauri", expected));
         // 同名不同宿主盘符

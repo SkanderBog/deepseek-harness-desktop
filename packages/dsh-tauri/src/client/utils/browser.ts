@@ -13,7 +13,3 @@ export function clickIfPresent(selector: string): boolean {
   element.click()
   return true
 }
-
-export function click(selector: string): void {
-  clickIfPresent(selector)
-}

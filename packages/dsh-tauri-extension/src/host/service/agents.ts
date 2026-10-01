@@ -19,7 +19,12 @@ const AGENT_SKILL_DIRECTORIES = ['.claude/skills', '.codex/skills'] as const
 export const agents = defineService({
   resolve(home: string = homedir()): ImportedServer[] {
     return uniqBy(
-      [...scanClaudeMcp(home), ...scanCodexMcp(home), ...scanCursorMcp(home), ...scanGeminiMcp(home)],
+      [
+        ...scanClaudeMcp(home),
+        ...scanCodexMcp(home),
+        ...scanJsonMcp(home, CURSOR_MCP_FILE, (name, entry) => mapMcpServersEntry('cursor', name, entry)),
+        ...scanJsonMcp(home, GEMINI_MCP_FILE, (name, entry) => mapAgentEntry('gemini', name, entry, 'httpUrl')),
+      ],
       server => `${server.agent}/${server.name}`,
     )
   },
@@ -121,8 +126,8 @@ function scanClaudeMcp(home: string): ImportedServer[] {
   return compact(Object.entries(merged).map(([name, entry]) => mapMcpServersEntry('claude-code', name, entry)))
 }
 
-function scanCursorMcp(home: string): ImportedServer[] {
-  const file = join(home, CURSOR_MCP_FILE)
+function scanJsonMcp(home: string, filename: string, mapEntry: (name: string, entry: unknown) => ImportedServer | null): ImportedServer[] {
+  const file = join(home, filename)
   if (!existsSync(file))
     return []
   let parsed: { mcpServers?: unknown }
@@ -134,23 +139,7 @@ function scanCursorMcp(home: string): ImportedServer[] {
   }
   if (!isObject(parsed.mcpServers))
     return []
-  return compact(Object.entries(parsed.mcpServers).map(([name, entry]) => mapMcpServersEntry('cursor', name, entry)))
-}
-
-function scanGeminiMcp(home: string): ImportedServer[] {
-  const file = join(home, GEMINI_MCP_FILE)
-  if (!existsSync(file))
-    return []
-  let parsed: { mcpServers?: unknown }
-  try {
-    parsed = JSON.parse(readFileSync(file, 'utf8')) as { mcpServers?: unknown }
-  }
-  catch {
-    return []
-  }
-  if (!isObject(parsed.mcpServers))
-    return []
-  return compact(Object.entries(parsed.mcpServers).map(([name, entry]) => mapAgentEntry('gemini', name, entry, 'httpUrl')))
+  return compact(Object.entries(parsed.mcpServers).map(([name, entry]) => mapEntry(name, entry)))
 }
 
 function scanCodexMcp(home: string): ImportedServer[] {

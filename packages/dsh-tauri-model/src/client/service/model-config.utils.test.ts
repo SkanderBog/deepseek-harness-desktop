@@ -1,14 +1,13 @@
 import type { LlmDiscoveredModel } from '../types/remotes.ts'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { PRESET_FIXTURE } from './__tests__/model-preset-fixtures'
 import {
   hasModelConfig,
   mergeModelCards,
   modelConfigNotice,
   withCount,
   withDetail,
-  withPath,
 } from './model-config.utils'
-import { PRESET_FIXTURE } from './model-preset-fixtures'
 import { setPresetTable } from './model-presets'
 
 const found = (id: string, extra: Partial<LlmDiscoveredModel> = {}): LlmDiscoveredModel => ({ id, ...extra })
@@ -163,7 +162,6 @@ describe('mergeModelCards with presets', () => {
 describe('copy placeholders', () => {
   it('substitutes one placeholder without treating the rest as patterns', () => {
     expect(withDetail('failed: {detail}', '$&')).toBe('failed: $&')
-    expect(withPath('opened {path}', 'C:\\a\\b')).toBe('opened C:\\a\\b')
     expect(withCount('applied to {n} models', 3)).toBe('applied to 3 models')
   })
 })

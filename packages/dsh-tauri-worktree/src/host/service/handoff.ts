@@ -75,26 +75,8 @@ export const handoff = defineService({
     const { sourceAgent, targetSessionId, binding } = pending
     const sourceSession = sourceAgent.session
     try {
-      const presets = ctx.get?.('agentPresets')
-      const parentPreset = presets?.composedPreset(sourceAgent.ctx) ?? sourceSession.header.agentPreset
       const seed = sessionEvents(sourceSession)
-      const handle = await ctx.agents.create({
-        sessionId: targetSessionId,
-        seed,
-        meta: {
-          cwd: binding.worktreePath,
-          parentSession: sourceSession.id,
-          isSeeded: true,
-          seedLength: seed.length,
-          ...(parentPreset ? { agentPreset: parentPreset } : {}),
-        },
-        inheritedEventCount: seed.length,
-        agentOptions: sourceAgent.options ?? {},
-        setup: (agentCtx: any) => {
-          if (presets && parentPreset)
-            presets.composeFrom(agentCtx, sourceAgent.ctx)
-        },
-      })
+      const handle = await createAgent(sourceSession, sourceAgent, targetSessionId, binding.worktreePath, seed)
       const workspace = await ctx.workspaceRegistry.resolveByPath(binding.projectPath)
       if (workspace)
         await workspace.attachSession(targetSessionId)
@@ -121,13 +103,7 @@ export const handoff = defineService({
 
 // --- internal ---
 
-/**
- * 继承前缀里是否已有真实的人类消息：区分「换到工作树接着聊」与「换了位置的全新任务」。
- *
- * 内核只对「无父会话 + 第一条人类消息 + 尚无标题」的全新会话自动生成标题，fork 子会话保留继承标题
- * 且永不自动生成。继承前缀里没有人类消息时（工作树模式发送首条消息即此形态），新工作树任务只会拿到
- * 首条消息的兜底标题，因此这些会话要在首个请求头落盘时显式补一次模型标题（见 service/title）。
- */
+/** 内核不给 fork 子会话生成标题，无人类对话的继承前缀需显式登记。 */
 function hasInheritedConversation(seed: readonly unknown[]): boolean {
   return seed.some((value) => {
     const event = value as { type?: unknown, data?: { source?: { kind?: unknown }, content?: unknown } }
@@ -162,29 +138,7 @@ async function createInherited(
   const { cwd, attach = false } = options
   const targetSessionId = options.targetSessionId ?? `session-${randomUUID()}`
   try {
-    const presets = ctx.get?.('agentPresets')
-    const parentPreset = agent
-      ? (presets?.composedPreset(agent.ctx) ?? sourceSession.header?.agentPreset)
-      : sourceSession.header?.agentPreset
-    const createOptions: any = {
-      sessionId: targetSessionId,
-      seed,
-      meta: {
-        cwd,
-        parentSession: options.parentSession ?? sourceSession.id,
-        isSeeded: true,
-        seedLength: seed.length,
-        ...(parentPreset ? { agentPreset: parentPreset } : {}),
-      },
-      inheritedEventCount: seed.length,
-      agentOptions: agent?.options ?? {},
-    }
-    if (agent && presets && parentPreset) {
-      createOptions.setup = (agentCtx: any) => {
-        presets.composeFrom(agentCtx, agent.ctx)
-      }
-    }
-    await ctx.agents.create(createOptions)
+    await createAgent(sourceSession, agent, targetSessionId, cwd, seed, options.parentSession)
     if (!hasInheritedConversation(seed))
       pendingWorktreeTitles.add(targetSessionId)
     if (attach) {
@@ -199,7 +153,38 @@ async function createInherited(
   }
 }
 
-/** 内核 `Session` 的日志面逐版本漂移：0.1.2-rc.1 起移除 `events` 访问器，以 `snapshotEvents()` 为准，`log` / `events` 仅作兜底。 */
+async function createAgent(
+  sourceSession: any,
+  sourceAgent: any,
+  targetSessionId: string,
+  cwd: string,
+  seed: readonly unknown[],
+  parentSession = sourceSession.id,
+): Promise<any> {
+  const ctx = getCurrentHostInstance()
+  const presets = ctx.get?.('agentPresets')
+  const parentPreset = sourceAgent
+    ? (presets?.composedPreset(sourceAgent.ctx) ?? sourceSession.header?.agentPreset)
+    : sourceSession.header?.agentPreset
+  return ctx.agents.create({
+    sessionId: targetSessionId,
+    seed,
+    meta: {
+      cwd,
+      parentSession,
+      isSeeded: true,
+      seedLength: seed.length,
+      ...(parentPreset ? { agentPreset: parentPreset } : {}),
+    },
+    inheritedEventCount: seed.length,
+    agentOptions: sourceAgent?.options ?? {},
+    ...(sourceAgent && presets && parentPreset
+      ? { setup: (agentCtx: any) => presets.composeFrom(agentCtx, sourceAgent.ctx) }
+      : {}),
+  })
+}
+
+/** 内核 0.1.2-rc.1 移除 events，旧版本以 log/events 兼容。 */
 function sessionEvents(value: unknown): readonly unknown[] {
   if (typeof value !== 'object' || value === null)
     return []

@@ -13,12 +13,10 @@ import {
   PLUGIN_ID,
   RUNNING_CHANGES_LOCALE_EFFECT,
   RUNNING_CHANGES_RUNNING_CHIP_EFFECT,
-  RUNNING_CHANGES_SUMMARY_EFFECT,
 } from './constants'
 import { locale } from './locales'
 import { pasteCollapseFeature } from './register/paste-collapse'
 import { runningChipFeature } from './register/running-chip'
-import { summaryFeature } from './register/summary'
 
 export type * from './types'
 
@@ -30,7 +28,6 @@ export const inject = ['slots', 'locale', 'sessions']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(locale.registerLocale, RUNNING_CHANGES_LOCALE_EFFECT)
-  ctx.effect(summaryFeature, RUNNING_CHANGES_SUMMARY_EFFECT)
   ctx.effect(runningChipFeature, RUNNING_CHANGES_RUNNING_CHIP_EFFECT)
   ctx.effect(pasteCollapseFeature, PASTE_COLLAPSE_EFFECT)
 }

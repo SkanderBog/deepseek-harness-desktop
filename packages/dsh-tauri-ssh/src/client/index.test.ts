@@ -1,70 +1,65 @@
-import type { UiContext } from './types/index'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ClientContext } from 'dsh-tauri/client'
+import { describe, expect, it, vi } from 'vitest'
+
 import { SshSection } from './components/ssh-section.tsx'
-import { apply, inject } from './index'
-import { en, zh } from './locales/index'
-import { desktopBridge } from './service/bridge'
-import { MachinesStore } from './store/index'
+import { LOCALE_EFFECT, PLUGIN_ID, POLL_EFFECT, SECTION_EFFECT } from './constants/index'
+import { apply, inject, name } from './index'
 
-// The desktop invoke bridge resolves through the runtime module table, which
-// does not exist under vitest; the registrant tests only need its shape.
-// (vitest hoists vi.mock above the imports, so placement here is safe.)
-vi.mock('dsh-tauri/client', () => ({
-  invoke: vi.fn(async () => undefined),
-  defineRegister: (feature: (controller: unknown) => void) => feature,
-}))
-
-// dsh-tauri-ui/client 的 dist bundle 以 ModuleLoader 工厂包裹，脱离宿主加载器
-// 无法在 node 求值；样式挂载只需要一个可观察的 mountStyle 桩，cssr 用源文件
-// 实例（与 dsh-tauri-panel 的 cssr 测试同款做法）。
-vi.mock('dsh-tauri-ui/client', async () => {
-  const mod = await import('../../../dsh-tauri-ui/src/client/utils/cssr.ts')
-  return { cssr: mod.cssr, mountStyle: vi.fn(() => () => {}) }
+vi.mock('dsh-tauri/client', async () => {
+  const seam = await import('./test-utils/client-mock')
+  return {
+    ...seam.clientMock,
+    defineLocale: () => ({ NS: 'dsh-tauri-ssh', text: (key: string) => `t:${key}`, registerLocale: () => () => {} }),
+  }
 })
 
-function scriptedCtx(): {
-  ctx: UiContext
-  locale: { register: ReturnType<typeof vi.fn>, bind: ReturnType<typeof vi.fn> }
+vi.mock('dsh-tauri-ui/client', () => ({}))
+
+interface ScriptedCtx {
+  ctx: ClientContext
   slots: { inject: ReturnType<typeof vi.fn>, register: ReturnType<typeof vi.fn> }
-  effects: Array<() => void>
-} {
-  const locale = {
-    register: vi.fn(),
-    bind: vi.fn(() => (key: string) => `t:${key}`),
-  }
-  const slots = {
-    inject: vi.fn(),
-    register: vi.fn(() => 'registration'),
-  }
-  const effects: Array<() => void> = []
-  const ctx = {
-    effect: vi.fn((callback: () => void) => { effects.push(callback) }),
-    get: vi.fn(() => undefined),
-    locale,
-    slots,
-  } as unknown as UiContext
-  return { ctx, locale, slots, effects }
+  effects: { run: (this: unknown) => unknown, label: string }[]
 }
 
-describe('ui-ssh client plugin', () => {
-  it('declares its inject topology', () => {
+function scriptedCtx(): ScriptedCtx {
+  const slots = {
+    inject: vi.fn((_slot: string, _callback: () => unknown) => () => {}),
+    register: vi.fn(() => 'registration'),
+  }
+  const effects: { run: (this: unknown) => unknown, label: string }[] = []
+  const ctx = {
+    effect: (run: (this: unknown) => unknown, label: string) => { effects.push({ run, label }) },
+    get: () => undefined,
+    locale: {},
+    slots,
+  } as unknown as ClientContext
+  return { ctx, slots, effects }
+}
+
+describe('dsh-tauri-ssh client plugin', () => {
+  it('declares its inject topology and its plugin name', () => {
     expect(inject).toEqual(['slots', 'locale'])
+    expect(name).toBe(PLUGIN_ID)
   })
 
-  it('registers the ssh dictionaries on activation', () => {
-    const { ctx, locale, effects } = scriptedCtx()
+  it('registers three declarative effects on activation and does no eager work', () => {
+    const { ctx, slots, effects } = scriptedCtx()
     apply(ctx)
-    expect(effects).toHaveLength(2)
-    effects[0]?.()
-    expect(locale.register).toHaveBeenCalledWith('ssh', { zh, en })
-    expect(locale.bind).toHaveBeenCalledWith('ssh')
+    expect(effects.map(entry => entry.label)).toEqual([LOCALE_EFFECT, SECTION_EFFECT, POLL_EFFECT])
+    for (const entry of effects)
+      expect(entry.run).toBeTypeOf('function')
+    expect(slots.inject).not.toHaveBeenCalled()
+    expect(slots.register).not.toHaveBeenCalled()
   })
 
-  it('registers the single SSH settings section with a store-backed inject face', async () => {
-    const { ctx, slots } = scriptedCtx()
+  it('registers the single SSH settings section through the slots service', () => {
+    const { ctx, slots, effects } = scriptedCtx()
     apply(ctx)
+    const section = effects.find(entry => entry.label === SECTION_EFFECT)
+    const dispose = section?.run.call(ctx)
     expect(slots.inject).toHaveBeenCalledTimes(1)
     expect(slots.inject).toHaveBeenCalledWith('settings.section', expect.any(Function))
+
     const contribution = slots.inject.mock.calls[0]?.[1] as () => unknown
     contribution()
     const options = slots.register.mock.calls[0]?.[0] as {
@@ -73,28 +68,16 @@ describe('ui-ssh client plugin', () => {
       order: number
       label: () => string
       locale: string
-      inject: () => Record<string, unknown>
+      inject?: unknown
     }
     expect(options.name).toBe('settings.section')
-    expect(options.id).toBe('dsh-tauri-ssh')
+    expect(options.id).toBe(PLUGIN_ID)
     expect(options.order).toBe(50)
     expect(options.label()).toBe('t:nav')
-    expect(options.locale).toBe('ssh')
-    const injected = options.inject()
-    expect(injected.store).toBeInstanceOf(MachinesStore)
-    expect(injected.bridge).toBe(desktopBridge)
-    // 机器管理与同步合并在同一个分区内（组件内部用 Tabs 分页）
+    expect(options.locale).toBe(PLUGIN_ID)
+    expect(options.inject).toBeUndefined()
     expect(slots.register.mock.calls[0]?.[1]).toBe(SshSection)
-    // Drive one store load so the window.fetch thunk the plugin installed
-    // actually executes (stubbed: no network in tests).
-    const fetchMock = vi.fn(async () => ({ json: async () => ({ ok: true, value: { enabled: true, items: [] } }) }) as unknown as Response)
-    vi.stubGlobal('fetch', fetchMock)
-    const store = injected.store as MachinesStore
-    await store.load()
-    expect(fetchMock).toHaveBeenCalledWith('/api-ssh', expect.objectContaining({ method: 'POST' }))
+    expect(dispose).toBeTypeOf('function')
+    ;(dispose as () => void)()
   })
-})
-
-afterEach(() => {
-  vi.unstubAllGlobals()
 })

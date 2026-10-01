@@ -2,7 +2,7 @@ import type { DiscardJob, OperationResult } from '../types'
 import { randomUUID } from 'node:crypto'
 import { clearTimeout, setTimeout } from 'node:timers'
 import { defineService } from 'dsh-tauri'
-import { filter, find, findLast, get, take } from 'lodash-es'
+import { find, findLast, get } from 'lodash-es'
 import { jobs } from './jobs'
 
 const DISCARD_JOB_RETENTION = 64
@@ -68,7 +68,7 @@ export const cleaner = defineService({
 
   unsettled(): DiscardJob[] {
     restore()
-    return filter(queueArray(), job => job.state !== 'completed')
+    return queueArray().filter(job => job.state !== 'completed')
   },
 })
 
@@ -102,8 +102,8 @@ function reuseOf(sessionId: string, worktreeKey: string, force: boolean): Discar
 function prune(): void {
   if (queue.size < DISCARD_JOB_RETENTION)
     return
-  const removable = filter(queueArray(), { state: 'completed' })
-  take(removable, queue.size - DISCARD_JOB_RETENTION + 1)
+  const removable = queueArray().filter(job => job.state === 'completed')
+  removable.slice(0, queue.size - DISCARD_JOB_RETENTION + 1)
     .forEach(job => queue.delete(job.jobId))
 }
 
@@ -123,7 +123,7 @@ function restore(): void {
 /** 串行落盘，始终写最新快照，避免乱序写回旧状态；写失败留一个补写计时器直到成功。 */
 function persist(): void {
   pendingWrite = pendingWrite
-    .then(() => jobs.save(filter(queueArray(), job => job.state !== 'completed')))
+    .then(() => jobs.save(queueArray().filter(job => job.state !== 'completed')))
     .then(() => clearPersistRetry())
     .catch(() => schedulePersistRetry())
 }

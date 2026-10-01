@@ -84,7 +84,6 @@
     "@deepseek-ai/dsh-util-values": "catalog:dsh",
     "@types/node": "catalog:types",
     "dsh-tauri-tsdown": "workspace:*",
-    "react-if-lite": "catalog:runtime",
     "tsdown": "catalog:cli",
     "vitest": "catalog:testing"
   }

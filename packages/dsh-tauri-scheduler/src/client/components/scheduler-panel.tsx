@@ -2,15 +2,14 @@ import type { ReactElement } from 'react'
 import type { Translate } from '../locales/index.types'
 import type { RunView, TaskFormState, TaskView } from '../types'
 import { Button, Card, Check, CommentPlus, Icon, Input, Magnifier, Plus, SegmentedControl, Text } from 'dsh-tauri-ui/client'
-import { filter, includes, isEmpty, lowerCase, omit, useEventListener } from 'dsh-tauri/client'
+import { filter, includes, isEmpty, lowerCase, omit, useEventListener, useStore } from 'dsh-tauri/client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { REFRESH_INTERVAL_MS } from '../constants'
-import { useScheduler } from '../hooks/use-scheduler'
 import { deleteRun, loadScheduler } from '../service/scheduler'
 import { store } from '../store'
 import { Recommendations } from './recommendations'
 import { RunsTab } from './runs-tab'
-import { countUnreadRuns, describeSchedule, formatRelative, isTaskPaused } from './schedule.utils'
+import { countUnreadRuns, describeSchedule, formatRelative } from './schedule.utils'
 import { TaskCard } from './task-card'
 import { TaskCreateDialog } from './task-create-dialog'
 
@@ -38,7 +37,7 @@ function taskToForm(task: TaskView): TaskFormState {
 }
 
 export function SchedulerPanel({ t, onViaChat, onOpenSession }: SchedulerPanelProps): ReactElement {
-  const state = useScheduler()
+  const state = useStore(store.scheduler)
   const [tab, setTab] = useState<'tasks' | 'runs'>('tasks')
   const [search, setSearch] = useState('')
   const [dialog, setDialog] = useState<DialogState>(null)
@@ -158,7 +157,7 @@ export function SchedulerPanel({ t, onViaChat, onOpenSession }: SchedulerPanelPr
                           t={t}
                           describe={describeSchedule(task.schedule, t)}
                           nextRun={task.enabled ? formatRelative(task.nextRunAt, now, t) : undefined}
-                          paused={isTaskPaused(task)}
+                          paused={!task.enabled}
                           onEdit={task => setDialog({ taskId: task.id, initial: taskToForm(task) })}
                         />
                       ))}

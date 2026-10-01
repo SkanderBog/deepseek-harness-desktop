@@ -39,6 +39,21 @@ describe('petSessionReducer (host)', () => {
     expect(pushes[0].payload.status).toBeUndefined()
   })
 
+  it('preserves the activity alias across running, waiting, error and idle wire payloads', () => {
+    const { reducer, pushes } = collect()
+    reducer.create(peer())
+    expect(pushes.at(-1)!.payload).toHaveProperty('activity', undefined)
+    reducer.apply(peer(), ev('turn/start', { turn: 1 }, 1))
+    expect(pushes.at(-1)!.payload).toMatchObject({ status: 'running', activity: 'running' })
+    reducer.apply(peer(), ev('approval/asked', { id: 'approval' }, 2))
+    expect(pushes.at(-1)!.payload).toMatchObject({ status: 'waiting', activity: 'waiting' })
+    reducer.apply(peer(), ev('turn/end', { turn: 1, reason: { kind: 'error', error: { message: 'failed' } } }, 3))
+    expect(pushes.at(-1)!.payload).toMatchObject({ status: 'error', activity: 'error' })
+    reducer.apply(peer(), ev('turn/start', { turn: 2 }, 4))
+    reducer.apply(peer(), ev('turn/end', { turn: 2, reason: { kind: 'completed' } }, 5))
+    expect(pushes.at(-1)!.payload).toHaveProperty('activity', undefined)
+  })
+
   it('turn/start 让 running=true、status=running、workStatus=thinking', () => {
     const { reducer, pushes } = collect()
     reducer.create(peer())

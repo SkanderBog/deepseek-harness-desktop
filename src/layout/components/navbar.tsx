@@ -29,7 +29,6 @@ import { ConfigDialog } from '@/ui/dialog/config'
 import { DesktopUpdateDialog } from '@/ui/dialog/update'
 import { writeClipboardText } from '@/utils/clipboard'
 import { toast } from '@/utils/toast'
-import { ConnectDialog } from './connect-dialog'
 import { RemoteSwitcher } from './remote-switcher'
 
 /**
@@ -210,7 +209,9 @@ function ShortcutLabel({ label, hint }: { label: string, hint?: string }) {
   )
 }
 
-export interface NavbarProps { /** iframe 回报的 dsh 侧边栏折叠状态（导航桥逻辑在 `iframe.tsx`） */
+export interface NavbarProps {
+  onRemoteChange: (url: string, tint: string | null) => void
+  /** iframe 回报的 dsh 侧边栏折叠状态（导航桥逻辑在 `iframe.tsx`） */
   sidebarCollapsed?: boolean
   /** 切换 iframe 内 dsh 侧边栏（向 iframe 发 `dsh://sidebar:toggle`）；传入时启用左侧导航控制 */
   onToggleSidebar?: () => void
@@ -226,7 +227,7 @@ export interface NavbarProps { /** iframe 回报的 dsh 侧边栏折叠状态（
   onOpenShortcuts?: () => void
 }
 
-export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, onOpenFolder, onOpenShortcuts, onOpenMachineManager, onOpenSyncToRemote }: NavbarProps) {
+export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSidebar, onNewChat, onOpenFolder, onOpenShortcuts, onOpenMachineManager, onOpenSyncToRemote }: NavbarProps) {
   const { t } = useTranslation()
   const isFullscreen = useMacOSFullscreen()
   const isMaximized = useMaximized()
@@ -392,7 +393,16 @@ export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, o
       return
     switch (event.payload) {
       case 'desktop-config':
-        handleOpenConfig()
+        handleOpenConfig('application')
+        break
+      case 'desktop-profiles':
+        handleOpenConfig('profiles')
+        break
+      case 'desktop-plugins':
+        handleOpenConfig('plugins')
+        break
+      case 'desktop-harness':
+        handleOpenConfig('harness')
         break
       case 'desktop-about':
         handleOpenAbout()
@@ -450,9 +460,6 @@ export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, o
             else={<LayoutSideContent />}
           />
         </Button>
-      </If>
-      <If cond={onToggleSidebar != null}>
-        <ConnectDialog />
       </If>
       <If cond={!IS_MACOS}>
         <div className="ml-1">
@@ -684,9 +691,7 @@ export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, o
 
       {/* 「本地」/ 远端机器切换器：SSH 功能启用后才出现（未启用时组件自身不渲染），
           位置固定在「更新可用」右侧，与左侧的文件/运行/帮助菜单分列两端。 */}
-      <If cond={onToggleSidebar != null}>
-        <RemoteSwitcher onManage={onOpenMachineManager} onSync={onOpenSyncToRemote} />
-      </If>
+      <RemoteSwitcher onChange={onRemoteChange} visible={onToggleSidebar != null} onManage={onOpenMachineManager} onSync={onOpenSyncToRemote} />
 
       <If cond={!IS_MACOS}>
         <Button

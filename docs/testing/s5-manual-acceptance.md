@@ -133,4 +133,4 @@ S5 验收中「数据面全旅程」「壳层命令/单测/lint」「capability�
 | 3 插件套件 | `dsh-tauri-ssh` 356 过 4 跳过（包内 vitest.config；含 wire 悬空清理/端口等待用例）；`dsh-tauri-ssh-ui` 96 过（包内 runner，含 Modal/步骤条/在飞反馈新用例） |
 | 4 capability 复核 | `builder.rs security_tests::remote_popup_windows_are_scoped_by_glob_and_stay_loopback`；白名单仅增 `remote_bridge_ping`/`remote_open_window`；命令侧回环 http 校验单测 |
 | 5 旧概念残留 | `Setting.remotes`/`remote_machine_*`/`remote-status` 等关键词全仓 grep 零命中（仅余 git-remote 无关词） |
-| 切换器/轮询/着色/降态逻辑 | `src/store/modules/remote/*.test.ts`（23 例）+ `remote-switcher.test.tsx`（9 例） |
+| 切换器/轮询/着色/降态逻辑（当前） | [useRemote 回归](<src/hooks/use-remote.test.ts>)、[切换纯逻辑](<src/hooks/use-remote.logic.test.ts>)、[载荷解析](<src/hooks/use-remote.machines.test.ts>)、[降级日志](<test/remote-poll-logging.test.ts>)、[切换器](<src/layout/components/remote-switcher.test.tsx>)、[连接弹窗](<src/layout/components/connect-dialog.test.tsx>)；旧 remote store 已替换为 React Query hook |

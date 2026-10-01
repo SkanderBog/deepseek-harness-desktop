@@ -7,7 +7,6 @@ use tauri::{AppHandle, Manager, Runtime};
 
 use super::constants::*;
 use super::dependencies;
-use super::format::get_dsh_service_url;
 use super::utils::search_node_binary;
 use super::{detect_region, Region};
 
@@ -70,12 +69,6 @@ pub fn get_node_download_url() -> Result<String, String> {
     ))
 }
 
-/// 打包的 DeepSeek Harness 发行版下载前缀：恒为 GitHub Release 官方直连，
-/// 作为首选下载源（镜像 ghfast.top 中转不稳定，仅作官方失败后的兜底）。
-fn dsh_core_base_url() -> &'static str {
-    DSH_CORE_URL
-}
-
 /// Harness 发行版资产文件名（按平台与架构）
 fn dsh_pkg_asset_filename() -> Result<String, String> {
     let arch = env::consts::ARCH;
@@ -92,11 +85,7 @@ fn dsh_pkg_asset_filename() -> Result<String, String> {
 
 /// 打包的 DeepSeek Harness 发行版下载地址（GitHub 官方直连，首选源）
 pub fn get_dsh_download_url() -> Result<String, String> {
-    Ok(format!(
-        "{}{}",
-        dsh_core_base_url(),
-        dsh_pkg_asset_filename()?
-    ))
+    Ok(format!("{}{}", DSH_CORE_URL, dsh_pkg_asset_filename()?))
 }
 
 /// 为任意 GitHub Release 资产 URL 生成 ghfast.top 镜像兜底地址
@@ -111,7 +100,7 @@ pub fn mirror_download_url(asset_url: &str) -> String {
 /// `releases/download/<tag>/`，镜像/直连与平台文件名逻辑与最新版完全一致
 /// （GitHub 的 tag 下载路径是固定的 release 资产地址，可被确定性推导）。
 pub fn get_dsh_download_url_for_tag(tag: &str) -> Result<String, String> {
-    let base = dsh_core_base_url().replace(
+    let base = DSH_CORE_URL.replace(
         "releases/latest/download/",
         &format!("releases/download/{tag}/"),
     );
@@ -187,7 +176,7 @@ fn node_version_output(node: &Path) -> Option<std::process::Output> {
 }
 
 /// 获取指定 Node.js 二进制的版本号（例如 "22.22.0"）
-fn get_node_version_of(node: &Path) -> Option<String> {
+pub fn get_node_version_of_path(node: &Path) -> Option<String> {
     let output = node_version_output(node)?;
     if !output.status.success() {
         return None;
@@ -204,7 +193,7 @@ fn get_node_version_of(node: &Path) -> Option<String> {
 /// 检测本地是否存在版本兼容的 Node.js 环境，返回其二进制路径
 pub fn get_local_node_path() -> Option<PathBuf> {
     let node = find_local_node_binary()?;
-    let version = get_node_version_of(&node)?;
+    let version = get_node_version_of_path(&node)?;
     is_supported_node_version(&version).then_some(node)
 }
 
@@ -525,17 +514,12 @@ pub fn get_active_node_version() -> String {
     // 拉起的服务进程一致（否则用户看到的版本与日志里的运行时对不上）。
     if !prefer_bundled_node_runtime() {
         if let Some(local_node) = get_local_node_path() {
-            if let Some(version) = get_node_version_of(&local_node) {
+            if let Some(version) = get_node_version_of_path(&local_node) {
                 return version;
             }
         }
     }
     get_bundled_node_version()
-}
-
-/// 读取任意 node 二进制的版本号（诊断信息用，例如 "v25.8.2"）
-pub fn get_node_version_of_path(node: &Path) -> Option<String> {
-    get_node_version_of(node)
 }
 
 fn parse_node_version(output: &str) -> Option<(u64, u64, u64)> {

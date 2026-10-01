@@ -1,4 +1,4 @@
-# Vendored patch: toast text input + unpackaged click delivery (Windows)
+# Vendored patch: toast input, activation and permissions (Windows)
 
 `tauri-plugin-notifications` **0.5.0-rc.14**, copied verbatim from crates.io and wired in via
 `[patch.crates-io]` in `src-tauri/Cargo.toml`. Every change is confined to
@@ -40,6 +40,11 @@ and it never activates at all in an unpackaged build.
    attached only when a `notificationClicked` listener existed — so a subscriber that only
    listened for `actionPerformed` (the reply button) got no handler at all.
 
+5. **Permission checks block the first unpackaged toast (desktop issue #812).**
+   `ToastNotifier::Setting()` can return `ERROR_NOT_FOUND` (`0x80070490`) before Windows
+   creates per-app notification settings for an unpackaged AUMID. The pre-send permission
+   check then drops every toast, so the settings profile never gets created.
+
 One toast click also reaches Windows through *two* independent routes — the in-process
 `Activated` handler and the out-of-proc COM activator — so a naive fix delivers every click
 twice.
@@ -52,6 +57,10 @@ twice.
   `ToastActivatedEventArgs::UserInput`), `Win32_Security` (required by `RegCreateKeyExW`) and
   `Win32_System_Registry` / `Win32_UI_WindowsAndMessaging`.
 - `src/windows.rs`
+  - `notification_permission()` — allows the first toast attempt only when an unpackaged
+    notifier's settings query returns `ERROR_NOT_FOUND`. Explicit disabled settings remain
+    denied; packaged apps and other failures still propagate their errors. Windows still
+    controls actual delivery, and `show()` errors are not suppressed.
   - `input_element_id()` / `action_arguments()` — helpers for the `<input id>` naming scheme
     (`input-<action id>`) and for the JSON `arguments=` payload.
   - `build_toast_xml()` — emits one `<input id="input-<action id>" type="text"
@@ -75,8 +84,17 @@ twice.
   - `register_unpackaged_app_id()` — writes `HKCU\Software\Classes\AppUserModelId\<app_id>`
     (`DisplayName`, `IconUri`, `CustomActivator={CLSID}`) and
     `HKCU\Software\Classes\CLSID\{CLSID}\LocalServer32` = the current executable, which is the
-    AUMID mapping an unpackaged build needs. Best-effort: failures are logged and the
-    in-process path still works while the app is running.
+    AUMID mapping an unpackaged build needs. `IconUri` uses the resolved PNG resource
+    configured by `plugins.notifications.windows.iconPath`; Windows does not extract
+    the toast header icon from an EXE. The resource is explicitly included in
+    `bundle.resources`. Best-effort: failures are logged and the in-process path
+    still works while the app is running.
+  - `plain_icon_path()` — Tauri resolves `BaseDirectory::Resource` through
+    `tauri_utils::platform::current_exe`, which canonicalizes the executable, and Windows
+    canonicalization hands back the `\\?\` verbatim form. The toast platform silently ignores
+    an `IconUri` in that form and renders the notification with no app logo, so the prefix is
+    stripped (verbatim UNC mapped back to `\\server\share`) before the value is written.
+    Without this, `iconPath` is configured correctly and still has no visible effect.
   - `spawn_toast_activator()` — register `ToastActivatorFactory` on a dedicated
     single-threaded-apartment thread that then blocks in `GetMessageW` /
     `TranslateMessage` / `DispatchMessageW` for the life of the process, and is registered
@@ -86,12 +104,25 @@ The CLSID itself comes from `src-tauri/tauri.conf.json`
 (`plugins.notifications.windows.toastActivatorClsid`) and must stay in sync with any MSIX
 manifest's `ToastActivatorCLSID` / `com:Class Id`.
 
+## Tests
+
+The crate is a member of the `src-tauri` workspace so its native unit tests share the
+application's lockfile. Windows CI runs from `src-tauri`:
+
+```sh
+cargo test -p tauri-plugin-notifications --lib --no-default-features --locked
+```
+
+Disabling default features is required: `notify-rust` selects the alternative desktop
+backend and excludes `src/windows.rs`, including its permission regression tests.
+
 ## Removal
 
-Delete this directory and the `[patch.crates-io]` block plus its comment in
-`src-tauri/Cargo.toml`. `Cargo.lock` regains the `source` + `checksum` lines for the registry
-copy. Drop the `plugins.notifications` block in `src-tauri/tauri.conf.json` if upstream also
-ships unpackaged registration.
+Delete this directory and its `[patch.crates-io]` entry plus its comment and workspace
+membership in `src-tauri/Cargo.toml`. Remove the Windows native notification test step from
+`.github/workflows/ci.yml`. `Cargo.lock` regains the `source` + `checksum` lines for the
+registry copy. Drop the `plugins.notifications` block in `src-tauri/tauri.conf.json` if
+upstream also ships unpackaged registration.
 
 Upstream issue: <https://github.com/Choochmeque/tauri-plugin-notifications/issues>
 (text-box support and unpackaged activation; drop this directory once they ship).

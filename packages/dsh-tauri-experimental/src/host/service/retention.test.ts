@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { execFile } from 'node:child_process'
 import { existsSync, rmSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
 import { join } from 'pathe'
@@ -147,20 +147,31 @@ describe('容量治理', () => {
   })
 })
 
-describe('describeRepository', () => {
-  it('汇总 ref 数、体积与隔离残骸', async () => {
-    const { store } = await fixture()
-    const captured = await snapshot.capture(store, snapshot.ref('s1', 1, 'before'), 'turn 1 before')
-    expect(captured.ok).toBe(true)
+describe('retention.measure', () => {
+  it('counts nested file bytes and treats a missing directory as empty', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-running-changes-measure-'))
+    temporaryDirectories.push(root)
+    await mkdir(join(root, 'nested'))
+    await writeFile(join(root, 'a.bin'), Buffer.alloc(7))
+    await writeFile(join(root, 'nested', 'b.bin'), Buffer.alloc(11))
 
-    const described = await retention.describe(store)
-    expect(described.refs).toBeGreaterThan(0)
-    expect(described.sizeMb).toBeGreaterThanOrEqual(0)
-    expect(described.quarantineLeftover).toBe(false)
+    expect(await retention.measure(root)).toBe(18 / (1024 * 1024))
+    expect(await retention.measure(join(root, 'absent'))).toBe(0)
+  })
 
-    // 未初始化的仓（git 命令失败）不应抛，只是 ref 数为 0。
-    const empty = snapshot.resolve(join(store.gitDir, '..', 'absent-home'), store.worktree)
-    await expect(retention.describe(empty)).resolves.toMatchObject({ refs: 0, quarantineLeftover: false })
+  it('stats directory links without traversing their target files', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-running-changes-measure-link-'))
+    temporaryDirectories.push(root)
+    const measured = join(root, 'measured')
+    const outside = join(root, 'outside')
+    const link = join(measured, 'linked')
+    await mkdir(measured)
+    await mkdir(outside)
+    await writeFile(join(outside, 'large.bin'), Buffer.alloc(4096))
+    await symlink(outside, link, 'junction')
+
+    const target = await stat(outside)
+    expect(await retention.measure(measured)).toBe(target.size / (1024 * 1024))
   })
 })
 

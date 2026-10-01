@@ -1,4 +1,4 @@
-export type ZoomAction = 'increase' | 'decrease' | 'reset'
+import type { ZoomAction } from '@/store/modules/setting/types'
 
 export interface ZoomShortcutLike {
   key: string
@@ -38,47 +38,4 @@ export function zoomActionFromBridgeMessage(value: unknown): ZoomAction | null {
   if (message.action === 'increase' || message.action === 'decrease' || message.action === 'reset')
     return message.action
   return null
-}
-
-/**
- * Chromium 缩放级别底数：`factor = 1.2^level`。
- *
- * Electron `WebFrame.setZoomLevel` 内部就是这条换算（Tauri 的 WebView 只有比例、
- * 没有级别概念，级别需要在这里换算后落到 `Webview.setZoom`）。
- */
-const ZOOM_LEVEL_BASE = 1.2
-
-/** 缩放级别 → 缩放比例 */
-export function zoomFactorFromLevel(level: number): number {
-  return ZOOM_LEVEL_BASE ** level
-}
-
-/** 缩放比例 → 缩放级别（比例不是 1.2 的整数次幂时返回小数） */
-export function zoomLevelFromFactor(factor: number): number {
-  return Math.log(factor) / Math.log(ZOOM_LEVEL_BASE)
-}
-
-/** 默认缩放比例（100%），与 Rust `default_zoom_factor` 一致 */
-export const ZOOM_FACTOR_DEFAULT = 1
-/** 缩放步长，与 Rust `ZOOM_FACTOR_STEP` 一致 */
-export const ZOOM_FACTOR_STEP = 0.1
-/** 缩放下限，与 Rust `ZOOM_FACTOR_MIN` 一致 */
-export const ZOOM_FACTOR_MIN = 0.5
-/** 缩放上限，与 Rust `ZOOM_FACTOR_MAX` 一致 */
-export const ZOOM_FACTOR_MAX = 2
-
-/**
- * 归一化缩放比例：夹取到 [0.5, 2.0] 并对齐 0.1 步长
- * （等价 Rust `normalize_zoom_factor`；非有限值回落默认 100%）。
- *
- * 缩放真值存在 `store.setting.zoom_factor`（与 Rust 共享 `.store.dat`，Rust 读取时
- * 会再做一次同样的归一化），这里保证前端写入前就落在合法档位上，避免出现
- * 「设置面板选项选不中当前值」这类视觉漂移。
- */
-export function normalizeZoomFactor(value: number): number {
-  if (!Number.isFinite(value))
-    return ZOOM_FACTOR_DEFAULT
-  const grid = 1 / ZOOM_FACTOR_STEP
-  const clamped = Math.min(Math.max(value, ZOOM_FACTOR_MIN), ZOOM_FACTOR_MAX)
-  return Math.round(clamped * grid) / grid
 }

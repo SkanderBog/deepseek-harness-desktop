@@ -1,16 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
-  CLOSE_ACTION_DEFAULT,
   CLOSE_ACTION_OPTIONS,
   normalizeCloseAction,
 } from '../src/utils/close-action'
 
 describe('close action normalization', () => {
-  it('defaults to hiding in tray', () => {
-    expect(CLOSE_ACTION_DEFAULT).toBe('tray')
-  })
-
   it('exposes exactly the tray and quit options', () => {
     expect(CLOSE_ACTION_OPTIONS).toEqual(['tray', 'quit'])
   })

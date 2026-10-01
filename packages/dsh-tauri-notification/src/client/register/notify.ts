@@ -336,7 +336,6 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
   }
 
   // `uiSession` 的注册时机不由本插件决定，最多等 5 秒；等到了就订阅，等不到则维持列表兜底。
-  let statusAttached = false
   let statusAttempts = 0
   const attachStatus = (): void => {
     const source = readUiSession()?.sessionStatus
@@ -347,10 +346,8 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
       }
       return
     }
-    statusAttached = true
     controller.add(source.subscribe(observe))
     observe()
   }
   attachStatus()
-  void statusAttached
 })

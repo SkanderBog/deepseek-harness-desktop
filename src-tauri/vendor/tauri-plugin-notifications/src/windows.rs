@@ -32,7 +32,9 @@ use windows::UI::Notifications::{
     NotificationSetting, ScheduledToastNotification, ToastActivatedEventArgs, ToastNotification,
     ToastNotificationManager, ToastNotifier,
 };
-use windows::Win32::Foundation::{CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, S_FALSE, S_OK};
+use windows::Win32::Foundation::{
+    CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, ERROR_NOT_FOUND, S_FALSE, S_OK,
+};
 use windows::Win32::System::Com::{
     CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED, CoInitializeEx, CoRegisterClassObject,
     CoUninitialize, IClassFactory, IClassFactory_Impl, REGCLS_MULTIPLEUSE,
@@ -65,6 +67,27 @@ use crate::models::{ActionType, ActiveNotification, PendingNotification, Schedul
 /// family-name hash is install-time only.
 fn is_packaged() -> bool {
     Package::Current().is_ok()
+}
+
+fn notification_permission(
+    setting: windows::core::Result<NotificationSetting>,
+    packaged: bool,
+) -> crate::Result<PermissionState> {
+    let setting = match setting {
+        // Issue #812: an unpackaged AUMID may have no settings until its first toast.
+        Err(error) if !packaged && error.code() == ERROR_NOT_FOUND.to_hresult() => {
+            return Ok(PermissionState::Granted);
+        }
+        result => result?,
+    };
+    match setting {
+        NotificationSetting::Enabled => Ok(PermissionState::Granted),
+        NotificationSetting::DisabledForApplication
+        | NotificationSetting::DisabledForUser
+        | NotificationSetting::DisabledByGroupPolicy
+        | NotificationSetting::DisabledByManifest => Ok(PermissionState::Denied),
+        _ => Ok(PermissionState::Prompt),
+    }
 }
 
 /// Resolve a user-supplied image string into a URI scheme Windows toast
@@ -631,7 +654,21 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
                 .product_name
                 .clone()
                 .unwrap_or_else(|| plugin.app_id.clone());
-            if let Err(e) = register_unpackaged_app_id(&display_name, &plugin.app_id, clsid_str) {
+            let icon_path = windows_config.icon_path.as_ref().and_then(|path| {
+                match app.path().resolve(path, BaseDirectory::Resource) {
+                    Ok(resolved) if resolved.is_file() => Some(resolved),
+                    result => {
+                        log::warn!("Cannot resolve notification icon {path:?}: {result:?}");
+                        None
+                    }
+                }
+            });
+            if let Err(e) = register_unpackaged_app_id(
+                &display_name,
+                &plugin.app_id,
+                clsid_str,
+                icon_path.as_deref(),
+            ) {
                 log::error!(
                     "Failed to register AUMID {} for toast activation: {e}; \
                      Action Center clicks will fall back to shortcut launch without payload",
@@ -673,6 +710,25 @@ fn write_registry_string(key: HKEY, name: Option<&str>, value: &str) -> windows:
     }
 }
 
+/// Vendored patch: strip the `\\?\` verbatim prefix so `IconUri` is a plain
+/// `C:\…` path.
+///
+/// Tauri resolves `BaseDirectory::Resource` through
+/// `tauri_utils::platform::current_exe`, which canonicalizes the executable path,
+/// and Windows canonicalization returns the verbatim form. The toast platform
+/// silently ignores an `IconUri` in that form — the notification renders with no
+/// app logo — while the identical path without the prefix works, spaces included.
+fn plain_icon_path(path: &std::path::Path) -> std::borrow::Cow<'_, str> {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        std::borrow::Cow::Owned(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        std::borrow::Cow::Owned(rest.to_owned())
+    } else {
+        text
+    }
+}
+
 /// Vendored patch: register the AUMID an unpackaged build needs for toast
 /// activation.
 ///
@@ -691,6 +747,7 @@ fn register_unpackaged_app_id(
     display_name: &str,
     app_id: &str,
     clsid_str: &str,
+    icon_path: Option<&std::path::Path>,
 ) -> windows::core::Result<()> {
     let exe = std::env::current_exe().map_err(|e| {
         windows::core::Error::new(E_FAIL, format!("cannot resolve current executable: {e}"))
@@ -717,7 +774,10 @@ fn register_unpackaged_app_id(
         return Err(status.into());
     }
     let result = write_registry_string(aumid_key, Some("DisplayName"), display_name)
-        .and_then(|()| write_registry_string(aumid_key, Some("IconUri"), &exe))
+        .and_then(|()| match icon_path {
+            Some(path) => write_registry_string(aumid_key, Some("IconUri"), &plain_icon_path(path)),
+            None => Ok(()),
+        })
         .and_then(|()| {
             write_registry_string(
                 aumid_key,
@@ -1278,14 +1338,7 @@ impl<R: Runtime> Notifications<R> {
 
     #[allow(unknown_lints, clippy::unused_async, clippy::unused_async_trait_impl)]
     pub async fn permission_state(&self) -> crate::Result<PermissionState> {
-        match self.plugin.notifier.Setting()? {
-            NotificationSetting::Enabled => Ok(PermissionState::Granted),
-            NotificationSetting::DisabledForApplication
-            | NotificationSetting::DisabledForUser
-            | NotificationSetting::DisabledByGroupPolicy
-            | NotificationSetting::DisabledByManifest => Ok(PermissionState::Denied),
-            _ => Ok(PermissionState::Prompt),
-        }
+        notification_permission(self.plugin.notifier.Setting(), self.plugin.packaged)
     }
 
     pub fn register_action_types(&self, types: Vec<ActionType>) -> crate::Result<()> {
@@ -1503,6 +1556,83 @@ mod tests {
     /// PowerShell App User Model ID - always available on Windows.
     const POWERSHELL_APP_ID: &str =
         "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe";
+
+    #[test]
+    fn notification_permission_allows_missing_unpackaged_profile() {
+        let error = windows::core::Error::from(ERROR_NOT_FOUND.to_hresult());
+        assert_eq!(
+            notification_permission(Err(error), false).unwrap(),
+            PermissionState::Granted
+        );
+    }
+
+    #[test]
+    fn notification_permission_preserves_missing_packaged_profile_error() {
+        let error = windows::core::Error::from(ERROR_NOT_FOUND.to_hresult());
+        let error = notification_permission(Err(error), true).unwrap_err();
+        assert!(error.to_string().contains("0x80070490"));
+    }
+
+    #[test]
+    fn notification_permission_preserves_other_errors() {
+        for packaged in [false, true] {
+            let error = notification_permission(Err(E_FAIL.into()), packaged).unwrap_err();
+            assert!(error.to_string().contains("0x80004005"));
+        }
+    }
+
+    #[test]
+    fn notification_permission_respects_windows_settings() {
+        for packaged in [false, true] {
+            assert_eq!(
+                notification_permission(Ok(NotificationSetting::Enabled), packaged).unwrap(),
+                PermissionState::Granted
+            );
+            for setting in [
+                NotificationSetting::DisabledForApplication,
+                NotificationSetting::DisabledForUser,
+                NotificationSetting::DisabledByGroupPolicy,
+                NotificationSetting::DisabledByManifest,
+            ] {
+                assert_eq!(
+                    notification_permission(Ok(setting), packaged).unwrap(),
+                    PermissionState::Denied
+                );
+            }
+            assert_eq!(
+                notification_permission(Ok(NotificationSetting(-1)), packaged).unwrap(),
+                PermissionState::Prompt
+            );
+        }
+    }
+
+    #[test]
+    fn test_plain_icon_path_strips_verbatim_prefix() {
+        assert_eq!(
+            plain_icon_path(std::path::Path::new(r"\\?\C:\app\icons\32x32.png")),
+            r"C:\app\icons\32x32.png"
+        );
+        assert_eq!(
+            plain_icon_path(std::path::Path::new(r"\\?\D:\a b\icons\32x32.png")),
+            r"D:\a b\icons\32x32.png"
+        );
+    }
+
+    #[test]
+    fn test_plain_icon_path_maps_verbatim_unc_prefix() {
+        assert_eq!(
+            plain_icon_path(std::path::Path::new(r"\\?\UNC\server\share\32x32.png")),
+            r"\\server\share\32x32.png"
+        );
+    }
+
+    #[test]
+    fn test_plain_icon_path_keeps_plain_path_unchanged() {
+        assert_eq!(
+            plain_icon_path(std::path::Path::new(r"C:\app\icons\32x32.png")),
+            r"C:\app\icons\32x32.png"
+        );
+    }
 
     // ==================== Time Conversion Tests ====================
 

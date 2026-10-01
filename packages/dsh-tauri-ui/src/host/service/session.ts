@@ -1,5 +1,5 @@
 import type { PlatformModuleLoader, SessionResumeOutcome } from '../types'
-import type { CreateUserMessage } from './session.types'
+import type { CreateUserMessage, PlanSession } from './session.types'
 import { defineService } from 'dsh-tauri'
 import { getCurrentHostInstance } from '../config/runtime'
 
@@ -20,6 +20,32 @@ export const session = defineService({
     }
     catch (error) {
       return { ok: false, code: 500, error: renderThrown(error) }
+    }
+  },
+  restorePlan(value: PlanSession, messages: readonly unknown[], step: number): void {
+    if (step !== 1)
+      return
+    const kinds = messages.map(message => (message as { source?: { kind?: string } } | null)?.source?.kind)
+    if (!kinds.includes(CONTINUE_SOURCE.kind) || kinds.includes('user'))
+      return
+    const events = sessionEvents(value)
+    if (events === undefined || typeof value.append !== 'function')
+      return
+    let currentTurn = false
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index] as { type?: string, data?: { todos?: unknown } }
+      if (!currentTurn && event?.type === 'turn/end')
+        return
+      if (event?.type === 'turn/start') {
+        if (currentTurn)
+          return
+        currentTurn = true
+      }
+      if (event?.type === 'todo/write') {
+        if (currentTurn && Array.isArray(event.data?.todos))
+          value.append('todo/write', { todos: event.data.todos })
+        return
+      }
     }
   },
 })

@@ -1,4 +1,5 @@
 import type { SettingsDescribeFace } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ServiceLookup } from './remote.ts'
 import type { WelcomeSettingsForm } from './welcome-store.ts'
 import {
   WELCOME_NOTICE_SETTINGS_NAMESPACE,
@@ -21,9 +22,7 @@ export interface ModelsForms {
   welcome: WelcomeSettingsForm
 }
 
-export interface ServiceLookup {
-  get: (name: string) => unknown
-}
+export type { ServiceLookup } from './remote.ts'
 
 export function resolveModelsForms(ctx: ServiceLookup): ModelsForms | undefined {
   const forms = ctx.get('configForms') as ConfigFormsLike | undefined

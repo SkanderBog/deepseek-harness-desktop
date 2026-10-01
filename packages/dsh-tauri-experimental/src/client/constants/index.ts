@@ -26,7 +26,6 @@ export const RUNNING_CHANGES_COUNTS_STYLE_ID = `${PLUGIN_ID}/ChangeCounts.module
 
 /** effect 标签（诊断/日志）。 */
 export const RUNNING_CHANGES_LOCALE_EFFECT = `${PLUGIN_ID}: locale`
-export const RUNNING_CHANGES_SUMMARY_EFFECT = `${PLUGIN_ID}: summary retry`
 export const RUNNING_CHANGES_RUNNING_CHIP_EFFECT = `${PLUGIN_ID}: running chip`
 export const PASTE_COLLAPSE_EFFECT = `${PLUGIN_ID}: paste collapse`
 
@@ -35,19 +34,3 @@ export const PASTE_COLLAPSE_EFFECT = `${PLUGIN_ID}: paste collapse`
  * `data-composer-chip` 值（C 浏览器层的断言锚点）。
  */
 export const PASTE_CHIP_SOURCE = `${PLUGIN_ID}-paste`
-
-/**
- * 「该轮已结束但账本还没有记录」时的重试参数（指数退避：700ms → 1.4s → 2.8s → 5s 封顶，
- * 12 次累计约 50s）。
- *
- * after 快照在 turn/end 之后**后台结算**：先是队列里可能在飞的实时读数，再是 after 自身的
- * `git add --all`。实测大仓库上首次 add 要 6–20s，因此短窗口会让手动停止以及首次快照的 turn
- * 迟迟等不到账本落定。退避到 5s 既覆盖慢仓库，又不会在常见情况下持续打请求——一旦账本出现
- * 该轮的记录就立刻停止重试。
- */
-export const RUNNING_CHANGES_SUMMARY_RETRY_DELAY_MS = 700
-export const RUNNING_CHANGES_SUMMARY_RETRY_MAX_DELAY_MS = 5000
-export const RUNNING_CHANGES_SUMMARY_MAX_RETRIES = 12
-
-/** 重试调度的检查节拍（由 register 的 controller.interval 承担）。 */
-export const RUNNING_CHANGES_SUMMARY_TICK_MS = 400

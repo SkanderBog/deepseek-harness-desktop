@@ -1,7 +1,6 @@
-import type { ArchiveRegistrySurface, ArchiveTableSurface, SessionLike, WorkspaceEntryLike } from '../types'
+import type { ArchiveRegistrySurface, ArchiveTableSurface, SessionLike } from '../types'
 import type { ArchiveAccounting, ArchivedListPayload } from './ledger.types'
 import { defineService } from 'dsh-tauri'
-import { difference, keyBy, uniq } from 'lodash-es'
 import { getCurrentHostInstance } from '../config/runtime'
 import { session } from './session'
 
@@ -51,7 +50,7 @@ export const ledger = defineService({
    */
   async remove(sessionIds: readonly string[], accounting: ArchiveAccounting = 'detach'): Promise<void> {
     const registry = requireWritableRegistry(getCurrentHostInstance().workspaceRegistry)
-    const ids = uniq(sessionIds)
+    const ids = [...new Set(sessionIds)]
     await registry.enqueueOperation(async () => {
       if (accounting === 'attach')
         await restoreWorkspaceAccounting(registry, ids)
@@ -59,7 +58,7 @@ export const ledger = defineService({
         await detachWorkspaceAccounting(registry, ids)
       const state = registry.requireState()
       const archived = state.archivedSessionIds ?? []
-      const next = difference(archived, ids)
+      const next = archived.filter(id => !ids.includes(id))
       if (next.length !== archived.length)
         await registry.setState({ ...state, archivedSessionIds: next })
     })
@@ -90,7 +89,7 @@ async function detachWorkspaceAccounting(registry: ArchiveRegistrySurface, sessi
   const table = requireTable(registry)
   for (const [workspaceId, record] of table.entries()) {
     const current = record.sessionIds ?? []
-    const next = difference(current, sessionIds)
+    const next = current.filter(id => !sessionIds.includes(id))
     if (next.length !== current.length)
       await table.update(workspaceId, value => ({ ...value, sessionIds: next }))
   }
@@ -105,7 +104,7 @@ async function restoreWorkspaceAccounting(registry: ArchiveRegistrySurface, sess
   const workspaces = registry.list?.()
   if (!table || !workspaces)
     return
-  const byPath = keyBy<WorkspaceEntryLike>(workspaces, 'path')
+  const byPath = Object.fromEntries(workspaces.map(workspace => [workspace.path, workspace]))
   for (const sessionId of sessionIds) {
     const cwd = cwdOf(session.get(sessionId))
     const workspace = cwd ? byPath[cwd] : undefined

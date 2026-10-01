@@ -1,7 +1,6 @@
-export interface PlatformPluginLoader {
-  import: (name: string) => Promise<unknown>
-  unwrapExports: (exports: unknown) => unknown
-}
+import type { HostPluginLoader } from 'dsh-tauri'
+
+export interface PlatformPluginLoader extends HostPluginLoader {}
 
 export interface FilesystemSkillPlugin {
   name: string

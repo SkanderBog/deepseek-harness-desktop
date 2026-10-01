@@ -13,7 +13,9 @@
 - 本地实例：无头 `dsh web`（DSH_HOME=`~/.dsh.dev`，profile `s5e2e`，端口 3185，
   挂载本 worktree 的 `dsh-tauri-ssh` / `dsh-tauri-ssh-ui` link: 包，见下方复现步骤）
 - 远端机器：`dev`（Linux 5.4 x86_64，root + 密钥认证，`~/.ssh/config` 别名）
-- 驱动脚本：`scripts/e2e-ssh-data-plane.mjs`（/api-ssh HTTP 信封直驱，退出码 0 = 通过）
+- 驱动脚本：`scripts/e2e-ssh-data-plane.mjs`（REST 直驱 `/api/desktop/dsh-tauri-ssh`；
+  2026-10 插件重构前的 `/api-ssh` 信封已废弃，脚本相应改写，退出码 0 = 通过）
+- 下方两条转录为改造前的脚本原始输出，保留原样（步骤日志串未变，仍可直接比对）
 - 本文档转录的是脚本原始输出（`--out`），未做修饰。
 
 ## 结果：ALL STEPS PASSED ✅

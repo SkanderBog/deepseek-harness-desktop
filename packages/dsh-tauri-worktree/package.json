@@ -57,10 +57,8 @@
   },
   "dependencies": {
     "dsh-tauri": "workspace:*",
-    "hookable": "catalog:utils",
     "lodash-es": "catalog:utils",
     "pathe": "catalog:utils",
-    "simple-git": "catalog:utils",
     "unstorage": "catalog:utils"
   },
   "devDependencies": {

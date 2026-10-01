@@ -66,10 +66,6 @@ export function withDetail(template: string, detail: string): string {
   return template.replace('{detail}', () => detail)
 }
 
-export function withPath(template: string, path: string): string {
-  return template.replace('{path}', () => path)
-}
-
 export function withCount(template: string, count: number): string {
   return template.replace('{n}', () => String(count))
 }

@@ -9,6 +9,15 @@ use tauri::AppHandle;
 use tauri::Emitter;
 use tauri_plugin_opener::OpenerExt;
 
+fn mark_preinstall_done(app_handle: &AppHandle) {
+    let mut setting = config::get_store_dat_setting(app_handle);
+    setting.preinstall_done = true;
+    if let Some(hash) = plugin::current_preset_hash(app_handle) {
+        setting.preset_hash = Some(hash);
+    }
+    config::set_store_dat_setting(app_handle, setting);
+}
+
 /// 获取预装插件列表（含已安装检测结果），首次启动引导界面渲染用
 #[tauri::command]
 pub async fn get_preinstall_plugins(
@@ -31,12 +40,7 @@ pub async fn install_preinstall_plugins(
 ) -> Result<(), String> {
     // 安装与卸载均为空：无需操作，直接标记完成
     if install_ids.is_empty() && uninstall_ids.is_empty() {
-        let mut setting = config::get_store_dat_setting(&app_handle);
-        setting.preinstall_done = true;
-        if let Some(hash) = plugin::current_preset_hash(&app_handle) {
-            setting.preset_hash = Some(hash);
-        }
-        config::set_store_dat_setting(&app_handle, setting);
+        mark_preinstall_done(&app_handle);
         return Ok(());
     }
 
@@ -60,12 +64,7 @@ pub async fn install_preinstall_plugins(
         plugin::install(&app_handle, &install_ids).await?;
     }
 
-    let mut setting = config::get_store_dat_setting(&app_handle);
-    setting.preinstall_done = true;
-    if let Some(hash) = plugin::current_preset_hash(&app_handle) {
-        setting.preset_hash = Some(hash);
-    }
-    config::set_store_dat_setting(&app_handle, setting);
+    mark_preinstall_done(&app_handle);
     Ok(())
 }
 
@@ -128,12 +127,7 @@ pub async fn allow_plugin_policy_versions(
 /// 跳过预装插件引导：记录状态与预设指纹，之后不再弹出（除非清单内容变更）
 #[tauri::command]
 pub async fn skip_preinstall_plugins(app_handle: AppHandle) -> Result<(), String> {
-    let mut setting = config::get_store_dat_setting(&app_handle);
-    setting.preinstall_done = true;
-    if let Some(hash) = plugin::current_preset_hash(&app_handle) {
-        setting.preset_hash = Some(hash);
-    }
-    config::set_store_dat_setting(&app_handle, setting);
+    mark_preinstall_done(&app_handle);
     Ok(())
 }
 
@@ -297,7 +291,10 @@ pub fn enable_dsh_plugin(
 /// 创建单个插件的快照（覆盖式：已存在则整体替换），存档于
 /// `$DSH_HOME/.plugin-backups/<id>.tgz`。
 #[tauri::command]
-pub fn snapshot_plugin(app_handle: AppHandle, id: String) -> Result<plugin::snapshot::SnapshotInfo, String> {
+pub fn snapshot_plugin(
+    app_handle: AppHandle,
+    id: String,
+) -> Result<plugin::snapshot::SnapshotInfo, String> {
     plugin::snapshot::create(&app_handle, &id)
 }
 
@@ -312,10 +309,7 @@ pub fn snapshot_plugins(
 
 /// 查询单个插件的快照信息（存在性 + 时间 + 大小 + 是否含配置段）。
 #[tauri::command]
-pub fn get_plugin_backup(
-    app_handle: AppHandle,
-    id: String,
-) -> plugin::snapshot::PluginBackupInfo {
+pub fn get_plugin_backup(app_handle: AppHandle, id: String) -> plugin::snapshot::PluginBackupInfo {
     plugin::snapshot::get(&app_handle, &id)
 }
 

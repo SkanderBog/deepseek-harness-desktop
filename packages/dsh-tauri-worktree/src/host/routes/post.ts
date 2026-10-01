@@ -4,6 +4,7 @@ import { defineEventHandler, readBody } from 'dsh-tauri'
 import { handoff } from '../service/handoff'
 import { sessionContext } from '../service/session-context'
 import { worktree } from '../service/worktree'
+import { worktreeKey } from '../utils/paths'
 
 export default defineEventHandler<EventHandlerRequest, Promise<WorktreeCreate>>(async (event) => {
   const body = (await readBody<CreateBody>(event)) ?? {}
@@ -38,7 +39,7 @@ export default defineEventHandler<EventHandlerRequest, Promise<WorktreeCreate>>(
     ok: true,
     hash: binding.hash,
     dirname: binding.dirname,
-    worktreeKey: `${binding.hash}/${binding.dirname}`,
+    worktreeKey: worktreeKey(binding.hash, binding.dirname),
     worktreePath: binding.worktreePath,
     projectPath: binding.projectPath,
     sourceSessionId: binding.sourceSessionId,

@@ -1,5 +1,5 @@
 import type { ChangeEvent, ReactElement } from 'react'
-import type { PetActionResult } from '../service/pet.types'
+import type { PetActionResult, PetListItem } from '../service/pet.types'
 import { ArrowRightFromSquare, Button, Icon, Plus, SegmentedControl } from 'dsh-tauri-ui/client'
 import { useStore, useWatchImmediate } from 'dsh-tauri/client'
 import { useEffect, useId, useRef, useState } from 'react'
@@ -94,62 +94,44 @@ export function PetSettings(props: PetSettingsProps): ReactElement {
     }
   }, [])
 
-  async function enablePreset(id: string): Promise<void> {
-    if (busy || active === id)
-      return
-    setBusy(true)
-    setError(null)
-    const result = await enablePet({ id })
-    if (!result.ok)
-      setError(locale.text('setPetFailed'))
-    setBusy(false)
-  }
-
-  async function choose(id: string): Promise<void> {
-    if (busy || active === id)
-      return
-    setBusy(true)
-    setError(null)
-    const result = await choosePet({ id })
-    if (!result.ok)
-      setError(locale.text('setPetFailed'))
-    setBusy(false)
-  }
-
-  async function clearSelection(): Promise<void> {
-    if (busy || active === '')
-      return
-    setBusy(true)
-    setError(null)
-    const result = await clearPetSelection()
-    if (!result.ok)
-      setError(locale.text('clearFailed'))
-    setBusy(false)
-  }
-
-  async function toggleEnabled(): Promise<void> {
+  async function run(action: () => Promise<PetActionResult>, errorKey: Parameters<typeof locale.text>[0]): Promise<void> {
     if (busy)
       return
     setBusy(true)
     setError(null)
-    const result = await togglePet({ enabled: !enabled })
+    const result = await action()
     if (!result.ok)
-      setError(locale.text('toggleFailed'))
+      setError(locale.text(errorKey))
     setBusy(false)
+  }
+
+  async function enablePreset(id: string): Promise<void> {
+    if (active !== id)
+      await run(() => enablePet({ id }), 'setPetFailed')
+  }
+
+  async function choose(id: string): Promise<void> {
+    if (active !== id)
+      await run(() => choosePet({ id }), 'setPetFailed')
+  }
+
+  async function clearSelection(): Promise<void> {
+    if (active !== '')
+      await run(clearPetSelection, 'clearFailed')
+  }
+
+  async function toggleEnabled(): Promise<void> {
+    await run(() => togglePet({ enabled: !enabled }), 'toggleFailed')
   }
 
   /** 切换「强制 XWayland」：应用全局设置，下次启动生效。 */
   async function toggleXwayland(): Promise<void> {
-    if (busy)
-      return
-    setBusy(true)
-    setError(null)
-    const result = await toggleForceXwayland({ enabled: !forceXwayland })
-    if (result.ok)
-      setXwaylandRestart(true)
-    else
-      setError(locale.text('xwaylandFailed'))
-    setBusy(false)
+    await run(async () => {
+      const result = await toggleForceXwayland({ enabled: !forceXwayland })
+      if (result.ok)
+        setXwaylandRestart(true)
+      return result
+    }, 'xwaylandFailed')
   }
 
   async function commitSize(value: number): Promise<void> {
@@ -194,6 +176,20 @@ export function PetSettings(props: PetSettingsProps): ReactElement {
     }
   }
 
+  const cards = (items: readonly PetListItem[]) => items.map(item => (
+    <PetCard
+      key={item.id}
+      thumbnail={item.thumbnail}
+      thumbnailType={item.thumbnail ? 'spritesheet' : undefined}
+      name={item.name}
+      desc={item.description ?? ''}
+      active={active === item.id}
+      disabled={busy}
+      actionLabel={locale.text(active === item.id ? 'clear' : 'select')}
+      onAction={() => { void (active === item.id ? clearSelection() : choose(item.id)) }}
+    />
+  ))
+
   const petsPanel = (
     <>
       {busy && presetPets.length === 0 && chatPets.length === 0
@@ -212,19 +208,7 @@ export function PetSettings(props: PetSettingsProps): ReactElement {
                   onAction={() => { void (active === item.id ? clearSelection() : enablePreset(item.id)) }}
                 />
               ))}
-              {chatPets.map(item => (
-                <PetCard
-                  key={item.id}
-                  thumbnail={item.thumbnail}
-                  thumbnailType={item.thumbnail ? 'spritesheet' : undefined}
-                  name={item.name}
-                  desc={item.description ?? ''}
-                  active={active === item.id}
-                  disabled={busy}
-                  actionLabel={locale.text(active === item.id ? 'clear' : 'select')}
-                  onAction={() => { void (active === item.id ? clearSelection() : choose(item.id)) }}
-                />
-              ))}
+              {cards(chatPets)}
             </div>
           )}
     </>
@@ -234,19 +218,7 @@ export function PetSettings(props: PetSettingsProps): ReactElement {
     <div className="flex flex-col gap-[12px]">
       {codexPets.length === 0
         ? <div className="px-[16px] py-[24px] text-center text-[13px] leading-[20px] rounded-[12px] border border-dashed border-border-weak text-secondary">{locale.text('emptyImported')}</div>
-        : codexPets.map(item => (
-            <PetCard
-              key={item.id}
-              thumbnail={item.thumbnail}
-              thumbnailType={item.thumbnail ? 'spritesheet' : undefined}
-              name={item.name}
-              desc={item.description ?? ''}
-              active={active === item.id}
-              disabled={busy}
-              actionLabel={locale.text(active === item.id ? 'clear' : 'select')}
-              onAction={() => { void (active === item.id ? clearSelection() : choose(item.id)) }}
-            />
-          ))}
+        : cards(codexPets)}
     </div>
   )
 

@@ -1,6 +1,5 @@
-import type { MachineProfile } from '../types/index'
-import type { RemoteInstallPlan } from './bootstrap'
-import type { SshExecOptions, SshExecResult, SshSession } from './transport'
+import type { MachineProfile, SshExecOptions, SshExecResult, SshSession } from '../types/index'
+import type { RemoteInstallPlan } from './bootstrap.types'
 import { Buffer } from 'node:buffer'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -8,8 +7,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
 import { join } from 'pathe'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { REMOTE_ROOT } from '../config/constants'
 import { MachineId } from '../types/index'
+import { FALLBACK_DSH_TAG, RECOMMENDED_DSH_VERSION } from '../utils/version'
 import {
   buildInstallScript,
   bundleProbeCommand,
@@ -27,13 +28,11 @@ import {
   planRemoteInstall,
   readEnvCredentials,
   REMOTE_PROBE_NO_DOWNLOADER,
-  REMOTE_ROOT,
   rootProbeCommand,
   skippedVerificationSummary,
   splitBundleProbeStdout,
   startCommandFor,
-} from './bootstrap'
-import { FALLBACK_DSH_TAG, RECOMMENDED_DSH_VERSION } from './version'
+} from './bootstrap.utils'
 
 const profile: MachineProfile = {
   id: MachineId('m1'),
@@ -88,6 +87,20 @@ function healthyFetchers(overrides: Partial<{
   }
 }
 
+function githubJson(body: unknown): { ok: boolean, status: number, json: () => Promise<unknown> } {
+  return { ok: true, status: 200, json: async () => body }
+}
+
+function stubGithub(): void {
+  vi.stubGlobal('fetch', (url: string) => {
+    if (url.includes('/releases?per_page='))
+      return Promise.resolve(githubJson(RELEASES.map(release => ({ tag_name: release.tag, prerelease: release.prerelease }))))
+    if (url.includes('/releases/tags/'))
+      return Promise.resolve(githubJson({ assets: LINUX_ASSETS.map(asset => ({ name: asset.name, browser_download_url: asset.url, digest: asset.digest })) }))
+    return Promise.reject(new Error(`unexpected fetch ${url}`))
+  })
+}
+
 class FakeSession implements SshSession {
   commands: string[] = []
 
@@ -115,6 +128,17 @@ function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-remote-bootstrap-'))
   tempDirs.push(dir)
   return dir
+}
+
+function runCommand(command: string, sandbox: string): Promise<{ code: number, stdout: string, stderr: string }> {
+  const scriptPath = join(sandbox, 'command.sh')
+  writeFileSync(scriptPath, command)
+  const run = promisify(execFile)
+  return run('sh', [scriptPath], { env: { ...process.env, HOME: sandbox } }).then(
+    ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
+    (error: { code?: number, stdout?: string, stderr?: string }) =>
+      ({ code: error.code ?? -1, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }),
+  )
 }
 
 afterEach(() => {
@@ -200,6 +224,8 @@ describe('planRemoteInstall', () => {
     const plan = await planRemoteInstall('Linux 6.8.0-45-generic x86_64', {}, healthyFetchers())
     expect(plan.os).toBe('linux')
     expect(plan.arch).toBe('x64')
+    expect(plan.node.filename).toBe('node-v22.22.0-linux-x64.tar.gz')
+    expect(plan.node.version).toBe('v22.22.0')
     expect(plan.dsh.kind).toBe('pkg-zip')
     if (plan.dsh.kind !== 'pkg-zip')
       throw new Error('expected pkg-zip')
@@ -225,6 +251,8 @@ describe('planRemoteInstall', () => {
     }
     expect(plan.dshEntry).toBe('lib/bin.js')
     expect(plan.node.urls[0]).toBe('https://nodejs.org/dist/v22.22.0/node-v22.22.0-linux-arm64.tar.gz')
+    expect(plan.node.filename).toBe('node-v22.22.0-linux-arm64.tar.gz')
+    expect(plan.node.version).toBe('v22.22.0')
   })
 
   it('derives deterministic URLs and notes skipped verification when metadata fails', async () => {
@@ -540,18 +568,6 @@ describe('install script execution (real POSIX sh)', () => {
 })
 
 describe('remote pnpm shim (real POSIX sh)', () => {
-  /** Run a generated command under the real `sh` inside a sandboxed HOME. */
-  async function runCommand(command: string, sandbox: string): Promise<{ code: number, stdout: string, stderr: string }> {
-    const scriptPath = join(sandbox, 'command.sh')
-    writeFileSync(scriptPath, command)
-    const run = promisify(execFile)
-    return run('sh', [scriptPath], { env: { ...process.env, HOME: sandbox } }).then(
-      ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
-      (error: { code?: number, stdout?: string, stderr?: string }) =>
-        ({ code: error.code ?? -1, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }),
-    )
-  }
-
   it('writes a shim that runs the layout pnpm under the layout node', async () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'pnpm-shim-'))
     try {
@@ -790,18 +806,6 @@ describe('credentials', () => {
 })
 
 describe('credentials copy execution (real POSIX sh)', () => {
-  /** Run one generated command under the real `sh` inside a sandboxed HOME. */
-  function runCommand(command: string, sandbox: string): Promise<{ code: number, stdout: string, stderr: string }> {
-    const scriptPath = join(sandbox, 'cmd.sh')
-    writeFileSync(scriptPath, command)
-    const run = promisify(execFile)
-    return run('sh', [scriptPath], { env: { ...process.env, HOME: sandbox } }).then(
-      ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
-      (error: { code?: number, stdout?: string, stderr?: string }) =>
-        ({ code: error.code ?? -1, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }),
-    )
-  }
-
   it('merges into an existing remote .env, keeping unrelated variables and replacing managed keys', async () => {
     const sandbox = tempDir()
     mkdirSync(join(sandbox, '.dsh'), { recursive: true })
@@ -859,17 +863,28 @@ const BOOT_HTML = [
 ].join('')
 
 const BOOTSTRAP = {
-  config: {},
+  connectTimeoutMs: 15_000,
   healthCheckTimeoutMs: 1000,
   healthPollIntervalMs: 5,
   healthPollAttempts: 3,
-}
-
-function plannerOf(plan: RemoteInstallPlan) {
-  return async (): Promise<RemoteInstallPlan> => plan
+  installRef: DSH_TAG,
+  installTimeoutMs: 60_000,
+  keepaliveIntervalMs: 10_000,
+  keepaliveCountMax: 3,
+  reconnectInitialDelayMs: 1,
+  reconnectMaxDelayMs: 2,
+  reconnectMaxAttempts: 2,
 }
 
 describe('ensureRemoteInstance', () => {
+  beforeEach(() => {
+    stubGithub()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('is satisfied immediately when the boot manifest answers with a real bundle', async () => {
     const session = new FakeSession((command) => {
       if (command.includes('-w'))
@@ -899,7 +914,6 @@ describe('ensureRemoteInstance', () => {
   })
 
   it('bootstraps a fresh machine end to end: probe → install → launch → ready', async () => {
-    const plan = await planRemoteInstall('Linux 6.8.0-45-generic x86_64', {}, healthyFetchers())
     let started = false
     const session = new FakeSession((command) => {
       if (command === 'uname -srm')
@@ -924,7 +938,7 @@ describe('ensureRemoteInstance', () => {
     await expect(ensureRemoteInstance(session, profile, BOOTSTRAP, {
       onProgress: progress => phases.push(progress),
       onEvent: (stage, line, options) => events.push({ stage, line, ...options ?? {} }),
-    }, plannerOf(plan))).resolves.toBe('10.0.0.1:3080')
+    })).resolves.toBe('10.0.0.1:3080')
     const kinds = events.map(event => event.stage)
     expect(kinds).toEqual(['probe', 'probe', 'probe', 'launch', 'ready'])
     expect(events[0]?.line).toContain('探测远端平台')
@@ -936,7 +950,6 @@ describe('ensureRemoteInstance', () => {
   })
 
   it('skips the install when the three components are already present', async () => {
-    const plan = await planRemoteInstall('Linux 6.8.0-45-generic x86_64', {}, healthyFetchers())
     let started = false
     const session = new FakeSession((command) => {
       if (command === 'uname -srm')
@@ -956,13 +969,12 @@ describe('ensureRemoteInstance', () => {
     const events: string[] = []
     await expect(ensureRemoteInstance(session, profile, BOOTSTRAP, {
       onEvent: (stage, line) => events.push(`${stage}: ${line}`),
-    }, plannerOf(plan))).resolves.toBe('10.0.0.1:3080')
+    })).resolves.toBe('10.0.0.1:3080')
     expect(events.some(entry => entry.includes('三件套已就绪，跳过安装'))).toBe(true)
     expect(session.commands.some(command => command.includes('trap cleanup EXIT'))).toBe(false)
   })
 
   it('records the terminal failure and reason when the install script fails', async () => {
-    const plan = await planRemoteInstall('Linux 6.8.0-45-generic x86_64', {}, healthyFetchers())
     const session = new FakeSession((command) => {
       if (command === 'uname -srm')
         return { code: 0, stdout: 'Linux 6.8.0-45-generic x86_64\n', stderr: '' }
@@ -978,7 +990,7 @@ describe('ensureRemoteInstance', () => {
         if (stage === 'failed')
           failures.push({ line, ...options ?? {} })
       },
-    }, plannerOf(plan))).rejects.toThrow(/install failed on remote/)
+    })).rejects.toThrow(/install failed on remote/)
     expect(failures[0]?.terminal).toBe('failed')
     expect(failures[0]?.reason).toContain('checksum mismatch')
   })
@@ -1000,7 +1012,6 @@ describe('ensureRemoteInstance', () => {
   })
 
   it('fails loud with fallback details when the instance never becomes ready', async () => {
-    const plan = await planRemoteInstall('Linux 6.8.0-45-generic x86_64', {}, healthyFetchers())
     const session = new FakeSession((command) => {
       if (command === 'uname -srm')
         return { code: 0, stdout: 'Linux 6.8.0-45-generic x86_64\n', stderr: '' }
@@ -1021,12 +1032,11 @@ describe('ensureRemoteInstance', () => {
         if (options?.terminal === 'failed')
           failures.push({ terminal: options.terminal, ...options.reason === undefined ? {} : { reason: options.reason } })
       },
-    }, plannerOf(plan))).rejects.toThrow(/did not become ready.*fallback probe: root no answer.*err2 \| err3 \| err4 \| err5 \| err6/)
+    })).rejects.toThrow(/did not become ready.*fallback probe: root no answer.*err2 \| err3 \| err4 \| err5 \| err6/)
     expect(failures[0]?.terminal).toBe('failed')
   })
 
   it('says the remote has no downloader instead of a misleading not-ready', async () => {
-    const plan = await planRemoteInstall('Linux 6.8.0-45-generic x86_64', {}, healthyFetchers())
     const session = new FakeSession((command) => {
       if (command === 'uname -srm')
         return { code: 0, stdout: 'Linux 6.8.0-45-generic x86_64\n', stderr: '' }
@@ -1052,12 +1062,11 @@ describe('ensureRemoteInstance', () => {
         if (options?.terminal === 'failed')
           failures.push(options.reason ?? '')
       },
-    }, plannerOf(plan))).rejects.toThrow(/no downloader/)
+    })).rejects.toThrow(/no downloader/)
     expect(failures[0]).toContain('REMOTE_PROBE_NO_DOWNLOADER')
   })
 
   it('surfaces REMOTE_NOT_INSTALLED when the launch finds an incomplete runtime', async () => {
-    const plan = await planRemoteInstall('Linux 6.8.0-45-generic x86_64', {}, healthyFetchers())
     const session = new FakeSession((command) => {
       if (command === 'uname -srm')
         return { code: 0, stdout: 'Linux 6.8.0-45-generic x86_64\n', stderr: '' }
@@ -1067,7 +1076,7 @@ describe('ensureRemoteInstance', () => {
         return { code: 1, stdout: 'REMOTE_NOT_INSTALLED: 远端三件套未安装完整', stderr: '' }
       return { code: 7, stdout: '', stderr: '' }
     })
-    await expect(ensureRemoteInstance(session, profile, BOOTSTRAP, {}, plannerOf(plan)))
+    await expect(ensureRemoteInstance(session, profile, BOOTSTRAP, {}))
       .rejects
       .toThrow(/REMOTE_NOT_INSTALLED/)
   })

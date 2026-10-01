@@ -1,15 +1,10 @@
 import type { SessionIdsBody } from '../../../index.types'
 import { defineEventHandler, readBody } from 'dsh-tauri'
 import { archive } from '../../../../service/archive'
+import { validateSessionIds } from '../../../index.utils'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<SessionIdsBody>(event, { type: 'json' })
-  const sessionIds = Array.isArray(body?.sessionIds)
-    ? body.sessionIds.map(String).filter(Boolean)
-    : []
-  if (sessionIds.length === 0) {
-    event.res.status = 400
-    return { ok: false as const, error: 'invalid-session-ids' }
-  }
-  return archive.deleteSelected(sessionIds)
+  const sessionIds = validateSessionIds(event, body)
+  return Array.isArray(sessionIds) ? archive.deleteSelected(sessionIds) : sessionIds
 })

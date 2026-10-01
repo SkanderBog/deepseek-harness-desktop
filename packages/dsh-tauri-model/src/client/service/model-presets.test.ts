@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { PRESET_FIXTURE } from './model-preset-fixtures'
-import { presetFor, presetTableSize, setPresetTable } from './model-presets'
+import { PRESET_FIXTURE } from './__tests__/model-preset-fixtures'
+import { presetFor, setPresetTable } from './model-presets'
 
 const GRADED = { off: null, low: 'low', medium: 'medium', high: 'high' }
 const VISION = ['text', 'image']
@@ -50,10 +50,6 @@ describe('presetFor with the downloaded table', () => {
 
   it('hands out a fresh effort map so one row cannot mutate another', () => {
     expect(presetFor('o3')?.efforts).not.toBe(presetFor('o3')?.efforts)
-  })
-
-  it('reports how many rows are loaded', () => {
-    expect(presetTableSize()).toBe(Object.keys(PRESET_FIXTURE).length)
   })
 })
 

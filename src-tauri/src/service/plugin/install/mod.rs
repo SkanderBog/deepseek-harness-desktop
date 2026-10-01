@@ -67,11 +67,11 @@ mod spec;
 
 // 子模块对外 API：plugin 兄弟模块（verify / internal 等）与安装编排共用
 pub(crate) use env::build_plugin_envs;
+pub use inspect::inspect_specs;
 pub(crate) use pnpm::{
     bundled_pnpm_major, harness_prefer_bundled_pnpm, pnpm_major_version_at, profile_store_major,
 };
 pub(crate) use single::uninstall_deprecated_plugins;
-pub use inspect::inspect_specs;
 pub use single::{remove_many, update_many};
 // 版本兼容性/发布时长两类拦截的解析结果都要跨到 `bridge`（前端逐项确认后授权），在此定义出口
 pub use diagnose::{IncompatibleVersion, PolicyBlockedVersion};
@@ -103,13 +103,17 @@ const TRANSIENT_FS_RETRIES: usize = 8;
 /// 瞬时文件系统错误的首次重试延迟；后续延迟按指数增长，最多 64 秒。
 const TRANSIENT_FS_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
+fn capped_backoff(retry: usize, base_secs: u64, cap_secs: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(
+        base_secs
+            .checked_shl(retry.saturating_sub(1) as u32)
+            .unwrap_or(cap_secs)
+            .min(cap_secs),
+    )
+}
+
 fn transient_fs_retry_delay(retry: usize) -> std::time::Duration {
-    let seconds = TRANSIENT_FS_RETRY_DELAY
-        .as_secs()
-        .checked_shl(retry.saturating_sub(1) as u32)
-        .unwrap_or(64)
-        .min(64);
-    std::time::Duration::from_secs(seconds)
+    capped_backoff(retry, TRANSIENT_FS_RETRY_DELAY.as_secs(), 64)
 }
 
 /// lockfile supply-chain 校验因 registry 元数据拉不到而误判违规时的重试上限
@@ -122,12 +126,7 @@ const POLICY_VERIFICATION_RETRIES: usize = 4;
 const POLICY_VERIFICATION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn policy_verification_retry_delay(retry: usize) -> std::time::Duration {
-    let seconds = POLICY_VERIFICATION_RETRY_DELAY
-        .as_secs()
-        .checked_shl(retry.saturating_sub(1) as u32)
-        .unwrap_or(30)
-        .min(30);
-    std::time::Duration::from_secs(seconds)
+    capped_backoff(retry, POLICY_VERIFICATION_RETRY_DELAY.as_secs(), 30)
 }
 
 /// 一次安装操作的目标：`id` 是稳定标识（错误记录 / 快照 / bundles 对账），
@@ -409,26 +408,25 @@ async fn install_with_cancel(
 
     // 门禁自愈：lockfile 里早有的太新条目会让**每一次**状态变更都失败
     // （见 [`heal_locked_release_age`]）。补齐豁免后放宽窗口重跑一次，仍失败就照原样分类。
-    let (exit_code, last_output, last_attempt) = if exit_code != 0
-        && heal_locked_release_age(app_handle, &last_attempt)
-    {
-        let mut retry_args = args.clone();
-        retry_args.push(OsString::from(single::RELEASE_AGE_RELAXED_FLAG));
-        run_plugin_install_with_transient_retry(
-            app_handle,
-            &node,
-            &retry_args,
-            &cwd,
-            &envs,
-            &window,
-            "install",
-            cancel.as_ref(),
-            owner,
-        )
-        .await?
-    } else {
-        (exit_code, last_output, last_attempt)
-    };
+    let (exit_code, last_output, last_attempt) =
+        if exit_code != 0 && heal_locked_release_age(app_handle, &last_attempt) {
+            let mut retry_args = args.clone();
+            retry_args.push(OsString::from(single::RELEASE_AGE_RELAXED_FLAG));
+            run_plugin_install_with_transient_retry(
+                app_handle,
+                &node,
+                &retry_args,
+                &cwd,
+                &envs,
+                &window,
+                "install",
+                cancel.as_ref(),
+                owner,
+            )
+            .await?
+        } else {
+            (exit_code, last_output, last_attempt)
+        };
 
     if exit_code != 0 {
         log::error!("dsh plugin install failed with exit code {exit_code}");
@@ -444,7 +442,9 @@ async fn install_with_cancel(
         // 该拒绝几乎没有 pnpm 输出，落到通用分支只会给出一段用户无从下手的纯文本。
         let incompatible = incompatible_versions(&last_attempt);
         if !incompatible.is_empty() {
-            log::warn!("dsh rejected the install for incompatible plugin versions: {incompatible:?}");
+            log::warn!(
+                "dsh rejected the install for incompatible plugin versions: {incompatible:?}"
+            );
             let payload = serde_json::to_string(&incompatible)
                 .map_err(|e| format!("PREINSTALL_SERIALIZE: {e}"))?;
             return Err(format!("PLUGIN_VERSION_INCOMPATIBLE: {payload}"));
@@ -974,6 +974,24 @@ mod tests {
             1,
             &output.to_ascii_lowercase()
         ));
+    }
+
+    #[test]
+    fn capped_backoff_preserves_zero_and_shift_limit_boundaries() {
+        for (retry, base, cap, seconds) in [
+            (0, 1, 64, 1),
+            (0, 5, 30, 5),
+            (3, 5, 30, 20),
+            (63, 1, 64, 64),
+            (65, 1, 64, 64),
+            (65, 5, 30, 30),
+        ] {
+            assert_eq!(
+                capped_backoff(retry, base, cap),
+                std::time::Duration::from_secs(seconds),
+                "retry={retry}, base={base}, cap={cap}"
+            );
+        }
     }
 
     #[test]

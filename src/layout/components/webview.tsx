@@ -7,7 +7,6 @@ import { useDshStyle } from '@/hooks/use-dsh-style'
 import { useIframeMessage } from '@/hooks/use-iframe-message'
 import { useIframePost } from '@/hooks/use-iframe-post'
 import { store } from '@/store'
-import { borderTintOf } from '@/store/modules/remote'
 import { Recovery } from '@/ui/plugin/recovery'
 import { Iframe } from './iframe'
 import { Navbar } from './navbar'
@@ -41,11 +40,12 @@ export function Webview() {
 
   const { status, serviceHealthy } = useStore(store.harness)
   const { recovery } = useStore(store.recovery)
-  const { machines, activeId, activeTunnelUrl } = useStore(store.remote)
-  // 远端模式：活动机器的隧道 URL 就绪才切换（不指向空端口）；重连窗口内
-  // store 粘性保留上一次 URL，等待引擎按端口稳定策略恢复
+  const [{ url: activeTunnelUrl, tint: borderTint }, setRemoteView] = useState({ url: '', tint: null as string | null })
   const remoteMode = activeTunnelUrl !== ''
-  const borderTint = remoteMode ? borderTintOf(machines.find(machine => machine.id === activeId)) : null
+
+  function handleRemoteChange(url: string, tint: string | null) {
+    setRemoteView({ url, tint })
+  }
 
   // 2. Iframe 消息通信监听
   useIframeMessage<NavBridgeMessage>(iframeRef, (data) => {
@@ -98,7 +98,7 @@ export function Webview() {
   // 5. 统一布局输出
   return (
     <main className="relative flex flex-col min-h-0 flex-1" style={dshStyle.frame || {}}>
-      <Navbar sidebarCollapsed={sidebarCollapsed} {...bridge} />
+      <Navbar onRemoteChange={handleRemoteChange} sidebarCollapsed={sidebarCollapsed} {...bridge} />
       <div className="flex min-h-0 flex-1">
         {renderContent()}
       </div>

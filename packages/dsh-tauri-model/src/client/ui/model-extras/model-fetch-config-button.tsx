@@ -1,8 +1,20 @@
 import type { ReactElement } from 'react'
-import type { ModelFetchConfigButtonProps } from './model-fetch-config-button.types'
+import type { ModelDiscoveryChannel } from '../../service/model-config'
+import type { ModelDraft, ModelProbeTarget } from './model-config-toolbar'
+import type { Translate } from './types'
 import { Action, Text } from 'dsh-tauri-ui/client'
 import { hasModelConfig } from '../../service/model-config.utils'
 import { useModelConfigFetch } from './use-model-config-fetch'
+
+export interface ModelFetchConfigButtonProps {
+  t: Translate
+  modelId: string
+  models: readonly ModelDraft[]
+  probe: ModelProbeTarget
+  operations?: ModelDiscoveryChannel
+  disabled?: boolean
+  onApply?: (models: ModelDraft[], applied: number, undisclosed: string[]) => void
+}
 
 export function ModelFetchConfigButton({
   t,

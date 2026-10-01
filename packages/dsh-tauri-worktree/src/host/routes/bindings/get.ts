@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import { defineEventHandler } from 'dsh-tauri'
 import { cleaner } from '../../service/cleaner'
 import { ledger } from '../../service/ledger'
+import { worktreeKey } from '../../utils/paths'
 
 export default defineEventHandler<EventHandlerRequest, Promise<WorktreeBindings>>(async () => ({
   bindings: ledger.list()
@@ -13,7 +14,7 @@ export default defineEventHandler<EventHandlerRequest, Promise<WorktreeBindings>
       sourceSessionId: binding.sourceSessionId ?? '',
       hash: binding.hash,
       dirname: binding.dirname,
-      worktreeKey: `${binding.hash}/${binding.dirname}`,
+      worktreeKey: worktreeKey(binding.hash, binding.dirname),
       worktreePath: binding.worktreePath,
       projectPath: binding.projectPath,
       log: Array.isArray(binding.log) ? binding.log : [],

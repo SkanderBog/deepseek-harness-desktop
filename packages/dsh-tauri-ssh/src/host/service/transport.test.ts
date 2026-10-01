@@ -1,12 +1,26 @@
 import type { AddressInfo } from 'node:net'
-import type { MachineProfile } from '../types/index'
+import type { MachineProfile, SshSession } from '../types/index'
+import type { SshCredentialsResolver, SshHostKeyVerifier, SshTransportOptions } from './transport.types'
 import { Buffer } from 'node:buffer'
 import { EventEmitter } from 'node:events'
 import { Server, connect as tcpConnect } from 'node:net'
 import { PassThrough } from 'node:stream'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MachineId } from '../types/index'
-import { classifyConnectFailure, describeConnectFailure, injectCookieHead, loginShell, shQuote, Ssh2Transport } from './transport'
+import { loginShell, shQuote } from '../utils/shell'
+import { transport } from './transport'
+import { classifyConnectFailure, describeConnectFailure, injectCookieHead } from './transport.utils'
+
+const READY_TIMEOUT_MS = 15_000
+
+function newTransport(resolver: SshCredentialsResolver, options: Partial<SshTransportOptions> = {}) {
+  const settings: SshTransportOptions = { readyTimeoutMs: READY_TIMEOUT_MS, resolveProfile: resolver, ...options }
+  return {
+    async connect(profile: MachineProfile, hostKeyVerifier: SshHostKeyVerifier, signal?: AbortSignal): Promise<SshSession> {
+      return await transport.connect(profile, hostKeyVerifier, settings, signal)
+    },
+  }
+}
 
 const profile: MachineProfile = {
   id: MachineId('m1'),
@@ -25,28 +39,19 @@ function withoutPassword(profile: MachineProfile): MachineProfile {
 }
 
 /** A credential resolver double: password rides the profile, keys come from the plan. */
-class StubResolver {
-  constructor(private readonly plan: {
-    host?: string
-    port?: number
-    username?: string
-    keys?: Array<{ privateKey: string, passphrase?: string }>
-  } = {}) {}
-
-  async resolve(input: MachineProfile): Promise<{
-    host: string
-    port: number
-    username: string
-    password?: string
-    keys: Array<{ privateKey: string, passphrase?: string }>
-    proxyJump: string[]
-  }> {
+function stubResolver(plan: {
+  host?: string
+  port?: number
+  username?: string
+  keys?: Array<{ privateKey: string, passphrase?: string }>
+} = {}): SshCredentialsResolver {
+  return async (input: MachineProfile) => {
     const password = input.password === undefined || input.password === '' ? undefined : input.password
     return {
-      host: this.plan.host ?? input.host,
-      port: this.plan.port ?? input.port,
-      username: this.plan.username ?? input.user,
-      keys: this.plan.keys ?? [],
+      host: plan.host ?? input.host,
+      port: plan.port ?? input.port,
+      username: plan.username ?? input.user,
+      keys: plan.keys ?? [],
       proxyJump: [],
       ...password === undefined ? {} : { password },
     }
@@ -55,8 +60,7 @@ class StubResolver {
 
 type HostVerifier = (key: Buffer, verify: (valid: boolean) => void) => void
 
-/** Transport options with the agent step disabled — deterministic chains. */
-const noAgent = { keepaliveIntervalMs: 10_000, keepaliveCountMax: 3, agentSocket: '' }
+const keepalive = { keepaliveIntervalMs: 10_000, keepaliveCountMax: 3 }
 
 class FakeClient extends EventEmitter {
   connectConfig: Record<string, unknown> | undefined
@@ -259,8 +263,19 @@ describe('shQuote / loginShell', () => {
 })
 
 describe('ssh2Transport', () => {
+  const agentSocketBefore = process.env.SSH_AUTH_SOCK
+  beforeEach(() => {
+    delete process.env.SSH_AUTH_SOCK
+  })
+  afterEach(() => {
+    if (agentSocketBefore === undefined)
+      delete process.env.SSH_AUTH_SOCK
+    else
+      process.env.SSH_AUTH_SOCK = agentSocketBefore
+  })
+
   it('connects with password auth and resolves on ready', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver(), noAgent)
+    const transport = newTransport(stubResolver(), keepalive)
     const session = await transport.connect(profile, () => true)
     expect(session).toBeDefined()
     const client = lastClient()
@@ -276,10 +291,11 @@ describe('ssh2Transport', () => {
   })
 
   it('tries the ssh-agent first, then keys, then the stored password, then gives up', async () => {
-    const resolver = new StubResolver({
+    process.env.SSH_AUTH_SOCK = '/tmp/agent.sock'
+    const resolver = stubResolver({
       keys: [{ privateKey: 'KEY-A' }],
     })
-    const transport = new Ssh2Transport(15000, resolver, { ...noAgent, agentSocket: '/tmp/agent.sock' })
+    const transport = newTransport(resolver, keepalive)
     const session = await transport.connect(profile, () => true)
     const client = lastClient()
     const handler = authHandlerOf(client)
@@ -293,10 +309,10 @@ describe('ssh2Transport', () => {
   })
 
   it('tries the resolved keys first, then the stored password, then gives up', async () => {
-    const resolver = new StubResolver({
+    const resolver = stubResolver({
       keys: [{ privateKey: 'KEY-A' }, { privateKey: 'KEY-B', passphrase: 'PASS' }],
     })
-    const transport = new Ssh2Transport(15000, resolver, noAgent)
+    const transport = newTransport(resolver, keepalive)
     const session = await transport.connect(profile, () => true)
     const client = lastClient()
     const handler = authHandlerOf(client)
@@ -308,8 +324,8 @@ describe('ssh2Transport', () => {
   })
 
   it('tries only keys when no password is stored', async () => {
-    const resolver = new StubResolver({ keys: [{ privateKey: 'KEY', passphrase: 'PASS' }] })
-    const transport = new Ssh2Transport(15000, resolver, noAgent)
+    const resolver = stubResolver({ keys: [{ privateKey: 'KEY', passphrase: 'PASS' }] })
+    const transport = newTransport(resolver, keepalive)
     const session = await transport.connect(withoutPassword(profile), () => true)
     const client = lastClient()
     const handler = authHandlerOf(client)
@@ -319,46 +335,38 @@ describe('ssh2Transport', () => {
   })
 
   it('gives up immediately when nothing resolves', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver(), noAgent)
+    const transport = newTransport(stubResolver(), keepalive)
     const session = await transport.connect(withoutPassword(profile), () => true)
     expect(lastClient().acceptedAuth).toBe(false)
     await session.close()
   })
 
-  it('reads SSH_AUTH_SOCK when no agent socket is injected', async () => {
-    const previous = process.env.SSH_AUTH_SOCK
-    try {
-      process.env.SSH_AUTH_SOCK = '/tmp/from-env.sock'
-      const transport = new Ssh2Transport(15000, new StubResolver(), { keepaliveIntervalMs: 10_000, keepaliveCountMax: 3 })
-      const session = await transport.connect(profile, () => true)
-      expect(lastClient().acceptedAuth).toEqual({ type: 'agent', username: 'root', agent: '/tmp/from-env.sock' })
-      await session.close()
-    }
-    finally {
-      if (previous === undefined)
-        delete process.env.SSH_AUTH_SOCK
-      else
-        process.env.SSH_AUTH_SOCK = previous
-    }
+  it('reads the agent socket from SSH_AUTH_SOCK', async () => {
+    process.env.SSH_AUTH_SOCK = '/tmp/from-env.sock'
+    const transport = newTransport(stubResolver(), { keepaliveIntervalMs: 10_000, keepaliveCountMax: 3 })
+    const session = await transport.connect(profile, () => true)
+    expect(lastClient().acceptedAuth).toEqual({ type: 'agent', username: 'root', agent: '/tmp/from-env.sock' })
+    await session.close()
   })
 
   it('configures the keepalive watchdog from the injected options', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver(), { keepaliveIntervalMs: 25_000, keepaliveCountMax: 7, agentSocket: '' })
+    const transport = newTransport(stubResolver(), { keepaliveIntervalMs: 25_000, keepaliveCountMax: 7 })
     const session = await transport.connect(profile, () => true)
     expect(lastClient().connectConfig).toMatchObject({ keepaliveInterval: 25_000, keepaliveCountMax: 7 })
     await session.close()
   })
 
   it('defaults the keepalive watchdog to 10 s and 3 missed beats', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver(), { agentSocket: '' })
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     expect(lastClient().connectConfig).toMatchObject({ keepaliveInterval: 10_000, keepaliveCountMax: 3 })
     await session.close()
   })
 
   it('reports the winning auth method on the session', async () => {
-    const resolver = new StubResolver({ keys: [{ privateKey: 'KEY-A' }] })
-    const transport = new Ssh2Transport(15000, resolver, { ...noAgent, agentSocket: '/tmp/agent.sock' })
+    process.env.SSH_AUTH_SOCK = '/tmp/agent.sock'
+    const resolver = stubResolver({ keys: [{ privateKey: 'KEY-A' }] })
+    const transport = newTransport(resolver, keepalive)
     const session = await transport.connect(profile, () => true)
     // The fake server accepted the agent offer, so the session reports it.
     expect(lastClient().acceptedAuth).toMatchObject({ type: 'agent' })
@@ -367,39 +375,37 @@ describe('ssh2Transport', () => {
   })
 
   it('connects to the resolver-resolved host, port, and user', async () => {
-    const resolver = new StubResolver({ host: '10.0.0.9', port: 2222, username: 'deploy' })
-    const transport = new Ssh2Transport(15000, resolver)
+    const resolver = stubResolver({ host: '10.0.0.9', port: 2222, username: 'deploy' })
+    const transport = newTransport(resolver)
     const session = await transport.connect(profile, () => true)
     expect(lastClient().connectConfig).toMatchObject({ host: '10.0.0.9', port: 2222, username: 'deploy' })
     await session.close()
   })
 
   it('rejects when the resolver fails', async () => {
-    const failing = {
-      async resolve() {
-        throw new Error('config read failed')
-      },
+    const failing: SshCredentialsResolver = async () => {
+      throw new Error('config read failed')
     }
-    const transport = new Ssh2Transport(15000, failing as never)
+    const transport = newTransport(failing)
     await expect(transport.connect(profile, () => true)).rejects.toThrow('config read failed')
   })
 
   it('rejects on transport errors', async () => {
     const { Client } = await import('ssh2')
     vi.mocked(Client).mockImplementationOnce(errorClientOnce('ECONNREFUSED'))
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     await expect(transport.connect(profile, () => true)).rejects.toThrow('ECONNREFUSED')
   })
 
   it('rejects when already aborted', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const controller = new AbortController()
     controller.abort()
     await expect(transport.connect(profile, () => true, controller.signal)).rejects.toThrow()
   })
 
   it('aborts an in-flight handshake', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const controller = new AbortController()
     const pending = transport.connect(profile, () => true, controller.signal)
     controller.abort()
@@ -407,35 +413,35 @@ describe('ssh2Transport', () => {
   })
 
   it('propagates a string abort reason', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const controller = new AbortController()
     controller.abort('caller gave up')
     await expect(transport.connect(profile, () => true, controller.signal)).rejects.toThrow('caller gave up')
   })
 
   it('propagates an arbitrary abort reason', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const controller = new AbortController()
     controller.abort({ code: 'custom' })
     await expect(transport.connect(profile, () => true, controller.signal)).rejects.toThrow('This operation was aborted')
   })
 
   it('accepts a synchronous verifier verdict', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => false)
     expect(lastClient().hostKeyAccepted).toBe(false)
     await session.close()
   })
 
   it('accepts an asynchronous verifier verdict through the callback', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, async () => true)
     expect(lastClient().hostKeyAccepted).toBe(true)
     await session.close()
   })
 
   it('rejects when an asynchronous verifier fails', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, async () => {
       throw new Error('verifier blew up')
     })
@@ -444,7 +450,7 @@ describe('ssh2Transport', () => {
   })
 
   it('collects exec output and exit code', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     const result = await session.exec('uname -srm')
     expect(result.code).toBe(0)
@@ -454,7 +460,7 @@ describe('ssh2Transport', () => {
   })
 
   it('rejects exec when the channel cannot open', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     lastClient().execError = new Error('channel open failure')
     await expect(session.exec('x')).rejects.toThrow('channel open failure')
@@ -462,7 +468,7 @@ describe('ssh2Transport', () => {
   })
 
   it('rejects exec with a deadline even when the channel cannot open', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     lastClient().execError = new Error('channel open failure')
     await expect(session.exec('x', { timeoutMs: 1000 })).rejects.toThrow('channel open failure')
@@ -470,7 +476,7 @@ describe('ssh2Transport', () => {
   })
 
   it('clears the deadline when a command finishes normally', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     const result = await session.exec('x', { timeoutMs: 1000 })
     expect(result.code).toBe(0)
@@ -478,7 +484,7 @@ describe('ssh2Transport', () => {
   })
 
   it('rejects exec when the stream itself errors', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     lastClient().streamError = new Error('stream reset')
     await expect(session.exec('x')).rejects.toThrow('stream reset')
@@ -486,7 +492,7 @@ describe('ssh2Transport', () => {
   })
 
   it('rejects exec on a stream error with a deadline pending', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     lastClient().streamError = new Error('stream reset')
     await expect(session.exec('x', { timeoutMs: 1000 })).rejects.toThrow('stream reset')
@@ -494,7 +500,7 @@ describe('ssh2Transport', () => {
   })
 
   it('streams stdout through the onData tap', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     const chunks: string[] = []
     const result = await session.exec('x', { onData: chunk => chunks.push(chunk) })
@@ -504,7 +510,7 @@ describe('ssh2Transport', () => {
   })
 
   it('times out a hung command and closes the connection', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     lastClient().execHang = true
     await expect(session.exec('slow', { timeoutMs: 10 })).rejects.toThrow(/timed out after 10 ms/)
@@ -512,7 +518,7 @@ describe('ssh2Transport', () => {
   })
 
   it('forwards the remote port to a loopback listener', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     const tunnel = await session.openTunnel(3080)
     expect(tunnel.localPort).toBeGreaterThan(0)
@@ -521,7 +527,7 @@ describe('ssh2Transport', () => {
   })
 
   it('pipes real socket traffic through the tunnel', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     const tunnel = await session.openTunnel(3080)
     const socket = tcpConnect(tunnel.localPort, '127.0.0.1')
@@ -535,7 +541,7 @@ describe('ssh2Transport', () => {
   })
 
   it('destroys open sockets when the tunnel closes', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     const tunnel = await session.openTunnel(3080)
     const socket = tcpConnect(tunnel.localPort, '127.0.0.1')
@@ -547,7 +553,7 @@ describe('ssh2Transport', () => {
   })
 
   it('destroys the client socket when the tunnel channel fails', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     const tunnel = await session.openTunnel(3080)
     lastClient().forwardError = new Error('tunnel closed')
@@ -565,7 +571,7 @@ describe('ssh2Transport', () => {
     // 回归：插件寄宿在 dsh 进程内，隧道 socket/channel 未处理的 'error'
     // 事件会把整个 dsh 拉崩（实报 ECONNRESET 杀进程）。channel 报错必须
     // 只销毁对应连接；若仍有未处理错误，vitest worker 会直接崩溃。
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     const tunnel = await session.openTunnel(3080)
     const socket = tcpConnect(tunnel.localPort, '127.0.0.1')
@@ -584,14 +590,14 @@ describe('ssh2Transport', () => {
       queueMicrotask(() => server.emit('error', new Error('EADDRINUSE')))
       return server
     })
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     await expect(session.openTunnel(3080)).rejects.toThrow('EADDRINUSE')
     await session.close()
   })
 
   it('fires the closed callback once when the connection drops', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     const callback = vi.fn()
     session.onClosed(callback)
@@ -603,7 +609,7 @@ describe('ssh2Transport', () => {
   })
 
   it('fires the closed callback immediately for an already-closed session', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver(), noAgent)
+    const transport = newTransport(stubResolver(), keepalive)
     const session = await transport.connect(profile, () => true)
     lastClient().emit('close')
     const callback = vi.fn()
@@ -617,7 +623,7 @@ describe('ssh2Transport', () => {
     await new Promise<void>(resolve => holder.listen(0, '127.0.0.1', () => resolve()))
     const freePort = (holder.address() as AddressInfo).port
     await new Promise<void>(resolve => holder.close(() => resolve()))
-    const transport = new Ssh2Transport(15000, new StubResolver(), noAgent)
+    const transport = newTransport(stubResolver(), keepalive)
     const session = await transport.connect(profile, () => true)
     const tunnel = await session.openTunnel(3080, freePort)
     expect(tunnel.localPort).toBe(freePort)
@@ -630,7 +636,7 @@ describe('ssh2Transport', () => {
     const holder = new Server()
     await new Promise<void>(resolve => holder.listen(0, '127.0.0.1', () => resolve()))
     const takenPort = (holder.address() as AddressInfo).port
-    const transport = new Ssh2Transport(15000, new StubResolver(), noAgent)
+    const transport = newTransport(stubResolver(), keepalive)
     const session = await transport.connect(profile, () => true)
     const tunnel = await session.openTunnel(3080, takenPort)
     expect(tunnel.localPort).not.toBe(takenPort)
@@ -682,14 +688,14 @@ describe('describeConnectFailure', () => {
   it('wraps transport failures with the classified message', async () => {
     const { Client } = await import('ssh2')
     vi.mocked(Client).mockImplementationOnce(errorClientOnce('connect ECONNREFUSED 127.0.0.1:1'))
-    const transport = new Ssh2Transport(15000, new StubResolver(), noAgent)
+    const transport = newTransport(stubResolver(), keepalive)
     await expect(transport.connect(profile, () => true)).rejects.toThrow(/host unreachable: .*ECONNREFUSED/)
   })
 
   it('keeps the auth-failure message distinguishable when the chain exhausts', async () => {
     const { Client } = await import('ssh2')
     vi.mocked(Client).mockImplementationOnce(errorClientOnce('All configured authentication methods failed'))
-    const transport = new Ssh2Transport(15000, new StubResolver(), noAgent)
+    const transport = newTransport(stubResolver(), keepalive)
     // With a stored password in the chain the message points at the password.
     await expect(transport.connect(profile, () => true)).rejects.toThrow(/stored password was rejected/)
     vi.mocked(Client).mockImplementationOnce(errorClientOnce('All configured authentication methods failed'))
@@ -699,22 +705,14 @@ describe('describeConnectFailure', () => {
 })
 
 /** A resolver that answers per config alias: ops jumps through dev. */
-class JumpResolver {
-  constructor(private readonly plans: Record<string, {
-    host: string
-    port: number
-    username?: string
-    proxyJump?: string[]
-  }>) {}
-
-  async resolve(input: MachineProfile): Promise<{
-    host: string
-    port: number
-    username: string
-    keys: Array<{ privateKey: string, passphrase?: string }>
-    proxyJump: string[]
-  }> {
-    const plan = this.plans[input.host]
+function jumpResolver(plans: Record<string, {
+  host: string
+  port: number
+  username?: string
+  proxyJump?: string[]
+}>): SshCredentialsResolver {
+  return async (input: MachineProfile) => {
+    const plan = plans[input.host]
     if (plan === undefined)
       throw new Error(`unknown host ${input.host}`)
     return {
@@ -738,12 +736,12 @@ describe('ssh2Transport ProxyJump', () => {
   }
 
   it('walks the jump chain: hop connects directly, target rides the forwarded stream', async () => {
-    const resolver = new JumpResolver({
+    const resolver = jumpResolver({
       ops: { host: '192.168.42.192', port: 2222, proxyJump: ['dev'] },
       dev: { host: '10.1.0.2', port: 22 },
     })
     const labels: string[] = []
-    const transport = new Ssh2Transport(15000, resolver, noAgent)
+    const transport = newTransport(resolver, keepalive)
     const before = fakeClientInstances.length
     const session = await transport.connect(opsProfile, (label) => {
       labels.push(label)
@@ -765,12 +763,12 @@ describe('ssh2Transport ProxyJump', () => {
   })
 
   it('supports user@ and :port overrides and comma-separated multi-hop chains', async () => {
-    const resolver = new JumpResolver({
+    const resolver = jumpResolver({
       ops: { host: '192.168.42.192', port: 2222, proxyJump: ['root@dev:22', 'admin@bastion'] },
       dev: { host: '10.1.0.2', port: 22 },
       bastion: { host: '10.1.0.3', port: 2222 },
     })
-    const transport = new Ssh2Transport(15000, resolver, noAgent)
+    const transport = newTransport(resolver, keepalive)
     const before = fakeClientInstances.length
     await transport.connect(opsProfile, () => true)
     const [first, second, target] = fakeClientInstances.slice(before)
@@ -782,29 +780,29 @@ describe('ssh2Transport ProxyJump', () => {
   })
 
   it('rejects a proxy jump cycle before dialing', async () => {
-    const resolver = new JumpResolver({
+    const resolver = jumpResolver({
       ops: { host: '192.168.42.192', port: 2222, proxyJump: ['dev', 'dev'] },
       dev: { host: '10.1.0.2', port: 22 },
     })
-    const transport = new Ssh2Transport(15000, resolver, noAgent)
+    const transport = newTransport(resolver, keepalive)
     await expect(transport.connect(opsProfile, () => true)).rejects.toThrow(/proxy jump cycle/iu)
   })
 
   it('rejects a nested ProxyJump on the jump alias', async () => {
-    const resolver = new JumpResolver({
+    const resolver = jumpResolver({
       ops: { host: '192.168.42.192', port: 2222, proxyJump: ['dev'] },
       dev: { host: '10.1.0.2', port: 22, proxyJump: ['third'] },
     })
-    const transport = new Ssh2Transport(15000, resolver, noAgent)
+    const transport = newTransport(resolver, keepalive)
     await expect(transport.connect(opsProfile, () => true)).rejects.toThrow(/nested ProxyJump/iu)
   })
 
   it('closes the jump session when the target handshake fails', async () => {
-    const resolver = new JumpResolver({
+    const resolver = jumpResolver({
       ops: { host: '192.168.42.192', port: 2222, proxyJump: ['dev'] },
       dev: { host: '10.1.0.2', port: 22 },
     })
-    const transport = new Ssh2Transport(15000, resolver, noAgent)
+    const transport = newTransport(resolver, keepalive)
     const before = fakeClientInstances.length
     // 第一跳就绪，目标握手失败
     const { Client } = await import('ssh2')
@@ -840,7 +838,7 @@ describe('injectCookieHead', () => {
 
 describe('tunnel cookie injection', () => {
   it('stamps the request head with the minted cookie through the pipe', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     const injection = { cookie: 'dsh-auth-x=v1.signed' as string | undefined }
     const tunnel = await session.openTunnel(3080, undefined, injection)
@@ -861,7 +859,7 @@ describe('tunnel cookie injection', () => {
   })
 
   it('without a minted cookie the tunnel stays a plain pipe', async () => {
-    const transport = new Ssh2Transport(15000, new StubResolver())
+    const transport = newTransport(stubResolver())
     const session = await transport.connect(profile, () => true)
     const tunnel = await session.openTunnel(3080)
     const socket = tcpConnect(tunnel.localPort, '127.0.0.1')

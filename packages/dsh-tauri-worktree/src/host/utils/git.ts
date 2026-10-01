@@ -1,24 +1,32 @@
 import type { GitOptions, OperationResult } from '../types'
+import { execFile } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { promisify } from 'node:util'
 import { compact, get, partition } from 'lodash-es'
 import { basename, join, resolve } from 'pathe'
-import { simpleGit } from 'simple-git'
 
-/**
- * simple-git 只在命令写了 stderr 时抛错：静默失败（如 `--quiet`）会以 `ok: true` + 空输出返回。
- * 判断「存在 / 不存在」必须看输出，或者去掉 `--quiet` 让 git 自己报错。
- */
+const execute = promisify(execFile)
+
 export async function git(args: string[], cwd: string, options: GitOptions = {}): Promise<OperationResult<{ out: string }>> {
   try {
-    const client = simpleGit({
-      baseDir: cwd,
-      abort: options.signal,
-      ...(options.timeout === undefined ? {} : { timeout: { block: options.timeout } }),
-      spawnOptions: { windowsHide: true } as unknown as { uid?: number, gid?: number },
-      trimmed: true,
+    options.signal?.throwIfAborted()
+    const pending = execute('git', args, {
+      cwd,
+      signal: options.signal,
+      timeout: options.timeout,
+      windowsHide: true,
+      maxBuffer: Infinity,
+      encoding: 'utf8',
     })
-    return { ok: true, out: await client.raw(args) }
+    const closed = new Promise<void>(resolve => pending.child.once('close', () => resolve()))
+    try {
+      const { stdout } = await pending
+      return { ok: true, out: stdout.trim() }
+    }
+    finally {
+      await closed
+    }
   }
   catch (error) {
     return { ok: false, error: errorMessage(error) }
@@ -93,7 +101,7 @@ export async function headSubject(worktreePath: string): Promise<string> {
 // --- internal ---
 
 function errorMessage(error: unknown): string {
-  return String(get(error, 'stderr') ?? get(error, 'message') ?? error).trim()
+  return String(get(error, 'stderr') || get(error, 'message') || error).trim()
 }
 
 async function applyPatchArchive(cwd: string, patch: string, options: GitOptions = {}): Promise<OperationResult<{ out: string }>> {

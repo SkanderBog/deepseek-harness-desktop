@@ -28,8 +28,13 @@ pub fn read_preset_catalog(app: &AppHandle) -> Result<Vec<PresetPetSpec>, String
     let manifest = manifest::read(app)
         .ok_or_else(|| "PET_PRESET_CATALOG_MISSING: manifest.jsonc was not found".to_string())?;
     let catalog = manifest.pets.built_in;
+    validate_catalog(&catalog)?;
+    Ok(catalog)
+}
+
+fn validate_catalog(catalog: &[PresetPetSpec]) -> Result<(), String> {
     let mut ids = HashSet::new();
-    for spec in &catalog {
+    for spec in catalog {
         if !safe_preset_id(&spec.id) {
             return Err(format!(
                 "PET_PRESET_CATALOG_INVALID: preset id {:?} is not a safe id",
@@ -42,23 +47,17 @@ pub fn read_preset_catalog(app: &AppHandle) -> Result<Vec<PresetPetSpec>, String
                 spec.id
             ));
         }
-        if spec.name.trim().is_empty() {
-            return Err(format!(
-                "PET_PRESET_CATALOG_INVALID: preset {:?} must have a non-empty name",
-                spec.id
-            ));
-        }
-        if spec.config.trim().is_empty() {
-            return Err(format!(
-                "PET_PRESET_CATALOG_INVALID: preset {:?} must have a non-empty config",
-                spec.id
-            ));
-        }
-        if spec.uri.default.trim().is_empty() {
-            return Err(format!(
-                "PET_PRESET_CATALOG_INVALID: preset {:?} must have a non-empty uri.default",
-                spec.id
-            ));
+        for (field, value) in [
+            ("name", spec.name.as_str()),
+            ("config", spec.config.as_str()),
+            ("uri.default", spec.uri.default.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!(
+                    "PET_PRESET_CATALOG_INVALID: preset {:?} must have a non-empty {field}",
+                    spec.id
+                ));
+            }
         }
         if let Some(kind) = spec.kind.as_deref() {
             if kind != "dsh" && kind != "codex" {
@@ -69,7 +68,7 @@ pub fn read_preset_catalog(app: &AppHandle) -> Result<Vec<PresetPetSpec>, String
             }
         }
     }
-    Ok(catalog)
+    Ok(())
 }
 
 /// 列出预设宠物清单（前端按当前激活 id 自行取用；条目即 `<Pet>` 的渲染参数）。
@@ -191,6 +190,62 @@ mod tests {
         assert!(value["uri"].get("mac").is_none());
         assert_eq!(value["kind"], "dsh");
         assert_eq!(value["size"], 220.0);
+    }
+
+    #[test]
+    fn catalog_validation_preserves_field_errors_and_order() {
+        let valid: PresetPetSpec = serde_json::from_str(
+            r#"{"id":"safe","name":"Pet","config":"https://e/c","uri":{"default":"https://e/w"}}"#,
+        )
+        .unwrap();
+        assert_eq!(validate_catalog(&[]), Ok(()));
+        assert_eq!(validate_catalog(std::slice::from_ref(&valid)), Ok(()));
+        for (field, expected) in [
+            (
+                "name",
+                "PET_PRESET_CATALOG_INVALID: preset \"safe\" must have a non-empty name",
+            ),
+            (
+                "config",
+                "PET_PRESET_CATALOG_INVALID: preset \"safe\" must have a non-empty config",
+            ),
+            (
+                "uri.default",
+                "PET_PRESET_CATALOG_INVALID: preset \"safe\" must have a non-empty uri.default",
+            ),
+        ] {
+            let mut spec = valid.clone();
+            match field {
+                "name" => spec.name = " \t".into(),
+                "config" => spec.config = "\n".into(),
+                _ => spec.uri.default = " ".into(),
+            }
+            assert_eq!(validate_catalog(&[spec]), Err(expected.into()));
+        }
+        let mut duplicate = valid.clone();
+        duplicate.name.clear();
+        assert_eq!(
+            validate_catalog(&[valid.clone(), duplicate]),
+            Err("PET_PRESET_CATALOG_INVALID: duplicate preset id \"safe\"".into())
+        );
+        let mut unsafe_id = valid.clone();
+        unsafe_id.id = "../escape".into();
+        unsafe_id.name.clear();
+        assert_eq!(
+            validate_catalog(&[unsafe_id]),
+            Err("PET_PRESET_CATALOG_INVALID: preset id \"../escape\" is not a safe id".into())
+        );
+        for kind in [None, Some("dsh"), Some("codex")] {
+            let mut spec = valid.clone();
+            spec.kind = kind.map(str::to_owned);
+            assert_eq!(validate_catalog(&[spec]), Ok(()));
+        }
+        let mut invalid_kind = valid;
+        invalid_kind.kind = Some("sprite".into());
+        assert_eq!(
+            validate_catalog(&[invalid_kind]),
+            Err("PET_PRESET_CATALOG_INVALID: preset \"safe\" kind must be dsh or codex".into())
+        );
     }
 
     #[test]

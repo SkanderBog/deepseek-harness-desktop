@@ -4,7 +4,6 @@ import { SegmentedControl } from 'dsh-tauri-ui/client'
 import { useEffect, useId, useState } from 'react'
 import { locale } from '../locales'
 import { resolveActiveTab } from './extension-panel.utils'
-import { MarketTab } from './market-tab'
 import { McpTab } from './mcp-tab'
 import { SkillsTab } from './skills-tab'
 
@@ -27,7 +26,7 @@ export function ExtensionPanel({ createSkill, market }: ExtensionPanelProps): Re
   const rows: ExtensionTab[] = [
     ...(marketFace === undefined
       ? []
-      : [{ id: 'market', label: t('marketTab'), render: () => <MarketTab market={marketFace} /> }]),
+      : [{ id: 'market', label: t('marketTab'), render: () => <>{marketFace.render({ preferredSubsectionId: 'installed' })}</> }]),
     { id: 'skills', label: t('skillsTab'), render: () => <SkillsTab t={t} createSkill={createSkill} /> },
     { id: 'mcp', label: t('mcpTab'), render: () => <McpTab t={t} /> },
   ]

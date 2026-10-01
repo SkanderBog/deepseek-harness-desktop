@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { readSource } from './setup/read-source'
 
-const BUILDER = readFileSync(new URL('../src-tauri/src/desktop/builder.rs', import.meta.url), 'utf8')
-const SETTING = readFileSync(new URL('../src-tauri/src/config/setting.rs', import.meta.url), 'utf8')
+const BUILDER = readSource('src-tauri/src/desktop/builder.rs')
+const SETTING = readSource('src-tauri/src/config/setting.rs')
 
 describe('embedded WebDriver plugin is registered for E2E runs only', () => {
   it('registers tauri-plugin-wdio-webdriver inside the is_e2e_run guard', () => {

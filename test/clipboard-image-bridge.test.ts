@@ -1,6 +1,6 @@
 // @vitest-environment node
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { readSource } from './setup/read-source'
 
 /**
  * 剪贴板图片回退桥的协议契约（issue #610）。
@@ -13,15 +13,11 @@ import { describe, expect, it } from 'vitest'
  * 识别。回包若改用自定义 `source`，注入脚本仍按 `source` 过滤就会把回包丢掉，
  * 贴图静默失败（0.15.5 的回归）。这些用例把两端的字面量与匹配方式锁在一起。
  */
-function readSource(relativePath: string): string {
-  return readFileSync(new URL(relativePath, import.meta.url), 'utf8')
-}
-
 const REPLY_TYPE = 'dsh://clipboard-image:reply'
 
 describe('clipboard image bridge protocol', () => {
-  const shim = readSource('../src-tauri/src/desktop/paste.rs')
-  const iframe = readSource('../src/layout/components/iframe.tsx')
+  const shim = readSource('src-tauri/src/desktop/paste.rs')
+  const iframe = readSource('src/layout/components/iframe.tsx')
 
   it('replies with the type the injected shim waits for', () => {
     expect(shim).toContain(`var RES_TYPE = '${REPLY_TYPE}'`)

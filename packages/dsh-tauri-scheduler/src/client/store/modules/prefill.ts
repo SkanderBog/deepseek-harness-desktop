@@ -1,5 +1,8 @@
-import type { PrefillState } from './prefill.types'
 import { defineStore } from 'dsh-tauri/client'
+
+interface PrefillState {
+  pending: string
+}
 
 export const prefill = defineStore({
   state: (): PrefillState => ({ pending: '' }),

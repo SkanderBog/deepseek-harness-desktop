@@ -1,10 +1,12 @@
-import type { Config as SshRemoteConfig } from './storage/index'
+import type { Config as SshRemoteConfig } from './config/schema'
 import type { SshHostContext } from './types/index'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { apply, inject, name, SshRemoteService } from './apply'
+import { apply, inject, name } from './apply'
+import { clearHostRuntime, knownHostsFilePath, machineProfiles } from './config/runtime'
+import { machine } from './service/machine'
 import { MachineId } from './types/index'
 
 function scriptedHttpServer() {
@@ -17,6 +19,19 @@ function scriptedHttpServer() {
     }),
   }
 }
+
+const REST_ENDPOINTS = [
+  '/api/desktop/dsh-tauri-ssh/settings',
+  '/api/desktop/dsh-tauri-ssh/session/role',
+  '/api/desktop/dsh-tauri-ssh/machines',
+  '/api/desktop/dsh-tauri-ssh/machines/test',
+  '/api/desktop/dsh-tauri-ssh/machines/connect',
+  '/api/desktop/dsh-tauri-ssh/machines/disconnect',
+  '/api/desktop/dsh-tauri-ssh/machines/install',
+  '/api/desktop/dsh-tauri-ssh/machines/events',
+  '/api/desktop/dsh-tauri-ssh/sync/preview',
+  '/api/desktop/dsh-tauri-ssh/sync/apply',
+]
 
 /** Plugin config without the optional overrides; defaults are exercised separately. */
 const baseConfig: SshRemoteConfig = {
@@ -38,12 +53,15 @@ let sshDir: string
 let statePath: string
 
 beforeEach(() => {
+  clearHostRuntime()
   sshDir = mkdtempSync(join(tmpdir(), 'ssh-index-'))
   statePath = join(sshDir, 'machines.json')
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   rmSync(sshDir, { recursive: true, force: true })
+  clearHostRuntime()
 })
 
 /** One scripted context: cordis-shaped surface without real cordis types. */
@@ -71,13 +89,14 @@ function readState(): { version: number, enabled: boolean, machines: Record<stri
   return JSON.parse(readFileSync(statePath, 'utf8')) as { version: number, enabled: boolean, machines: Record<string, Record<string, unknown>> }
 }
 
-/** Construct the service on a scripted webServer double. */
-function construct(config: SshRemoteConfig = baseConfig): { ctx: SshHostContext, service: SshRemoteService, disposers: Array<() => void> } {
-  const { ctx, disposers } = scriptedCtx(scriptedHttpServer())
-  return { ctx, service: new SshRemoteService(ctx, { ...config, sshDir, statePath }), disposers }
+/** Assemble the plugin on a scripted webServer double. */
+function construct(config: SshRemoteConfig = baseConfig, webServer = scriptedHttpServer()): { ctx: SshHostContext, webServer: ReturnType<typeof scriptedHttpServer>, service: typeof machine, disposers: Array<() => void> } {
+  const { ctx, disposers } = scriptedCtx(webServer)
+  apply(ctx, { ...config, sshDir, statePath })
+  return { ctx, webServer, service: machine, disposers }
 }
 
-function boot(overrides: {
+async function boot(overrides: {
   state?: { enabled?: boolean, machines?: Record<string, unknown> }
   webServer?: ReturnType<typeof scriptedHttpServer>
   config?: Partial<SshRemoteConfig>
@@ -93,11 +112,12 @@ function boot(overrides: {
     statePath,
     ...overrides.config,
   }
-  const service = new SshRemoteService(ctx, config)
-  return { ctx, webServer, service }
+  apply(ctx, config)
+  await machine.start()
+  return { ctx, webServer, service: machine }
 }
 
-function machine(id: string): Record<string, unknown> {
+function row(id: string): Record<string, unknown> {
   return {
     id,
     name: `machine-${id}`,
@@ -112,7 +132,7 @@ function machine(id: string): Record<string, unknown> {
 describe('ssh-remote plugin', () => {
   it('declares its plugin metadata', () => {
     expect(name).toBe('dsh-tauri-ssh')
-    expect(inject).toEqual(['webServer'])
+    expect(inject).toEqual(['webServer', 'connection'])
     expect(apply).toEqual(expect.any(Function))
   })
 
@@ -120,7 +140,7 @@ describe('ssh-remote plugin', () => {
     const descriptor = (await import('./apply')).default
     expect(descriptor).toMatchObject({
       name: 'dsh-tauri-ssh',
-      inject: ['webServer'],
+      inject: ['webServer', 'connection'],
       Config: expect.anything(),
     })
     expect(descriptor.apply).toEqual(expect.any(Function))
@@ -129,14 +149,14 @@ describe('ssh-remote plugin', () => {
     expect(descriptor.apply).toBe(apply)
   })
 
-  it('mounts the /api-ssh route without any settings service', () => {
-    const { webServer } = boot()
-    expect(webServer.routes).toMatchObject([{ kind: 'prefix', path: '/api-ssh' }])
-    expect(webServer.routes[0]?.handler).toEqual(expect.any(Function))
+  it('mounts the REST routes without any settings service', async () => {
+    const { webServer } = await boot()
+    expect(webServer.routes.map(route => `${route.kind} ${route.path}`)).toEqual(REST_ENDPOINTS.map(path => `exact ${path}`))
+    expect(webServer.routes.map(route => typeof route.handler)).toEqual(REST_ENDPOINTS.map(() => 'function'))
   })
 
   it('starts switched off and persists the enable switch', async () => {
-    const { service } = boot()
+    const { service } = await boot()
     expect(service.enabled()).toBe(false)
     await service.setEnabled(true)
     expect(service.enabled()).toBe(true)
@@ -146,41 +166,41 @@ describe('ssh-remote plugin', () => {
   })
 
   it('disconnects every machine when the feature is switched off', async () => {
-    const { service } = boot({ state: { enabled: true, machines: { a: machine('a') } } })
-    const dispose = vi.spyOn(service.manager, 'dispose').mockResolvedValue(undefined)
+    const { service } = await boot({ state: { enabled: true, machines: { a: row('a') } } })
+    const dispose = vi.spyOn(service, 'dispose').mockResolvedValue(undefined)
     await service.setEnabled(true)
     expect(dispose).not.toHaveBeenCalled()
     await service.setEnabled(false)
     expect(dispose).toHaveBeenCalledTimes(1)
   })
 
-  it('loads machine profiles from the state document', () => {
-    const { service } = boot({ state: { enabled: true, machines: { a: machine('a') } } })
+  it('loads machine profiles from the state document', async () => {
+    const { service } = await boot({ state: { enabled: true, machines: { a: row('a') } } })
     const views = service.profileViews()
     expect(views.map(view => view.id)).toEqual(['a'])
     expect(views[0]).toMatchObject({ name: 'machine-a', hasPassword: true })
     expect(views[0]).not.toHaveProperty('password')
   })
 
-  it('reads a corrupt or absent document as the default state', () => {
+  it('reads a corrupt or absent document as the default state', async () => {
     writeFileSync(statePath, '{ not json')
-    const corrupt = boot()
+    const corrupt = await boot()
     expect(corrupt.service.enabled()).toBe(false)
     expect(corrupt.service.profileViews()).toEqual([])
 
     rmSync(statePath, { force: true })
-    const absent = boot()
+    const absent = await boot()
     expect(absent.service.enabled()).toBe(false)
     expect(absent.service.profileViews()).toEqual([])
   })
 
-  it('drops a stored row whose dict key disagrees with the profile id', () => {
-    const { service } = boot({ state: { enabled: true, machines: { b: machine('a') } } })
+  it('drops a stored row whose dict key disagrees with the profile id', async () => {
+    const { service } = await boot({ state: { enabled: true, machines: { b: row('a') } } })
     expect(service.profileViews()).toEqual([])
   })
 
   it('refreshes the manager when the stored machines change', async () => {
-    const { service } = boot()
+    const { service } = await boot()
     await service.save('a' as never, { name: 'alpha', host: '10.0.0.1', port: 22, user: 'root', remotePort: 3080 })
     await service.save('b' as never, { name: 'beta', host: '10.0.0.2', port: 22, user: 'root', remotePort: 3080 })
     expect(service.profileViews()).toHaveLength(2)
@@ -189,23 +209,23 @@ describe('ssh-remote plugin', () => {
   })
 
   it('exposes the manager connection plane', async () => {
-    const { service } = boot()
+    const { service } = await boot()
     expect(service.status('ghost' as never)).toEqual({ machineId: 'ghost' as never, state: 'disconnected' })
     expect(service.profileViews()).toEqual([])
     await service.disconnect('a' as never)
   })
 
   it('forwards installs to the manager', async () => {
-    const { service } = boot()
-    const install = vi.spyOn(service.manager, 'install')
+    const { service } = await boot()
+    const install = vi.spyOn(service, 'install')
       .mockResolvedValue({ installed: ['node'], dshRef: 'dsh-0.1.2-rc.1-1', dshVersion: '0.1.2-rc.1', dshPath: '/root/.dsh-desktop/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js', credentialsCopied: true })
-    const result = await service.install(MachineId('a'))
+    const result = await service.install(MachineId('a'), undefined)
     expect(install).toHaveBeenCalledWith(MachineId('a'), undefined)
     expect(result).toEqual({ installed: ['node'], dshRef: 'dsh-0.1.2-rc.1-1', dshVersion: '0.1.2-rc.1', dshPath: '/root/.dsh-desktop/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js', credentialsCopied: true })
   })
 
   it('saves a machine into the state document and refreshes the manager', async () => {
-    const { service } = boot()
+    const { service } = await boot()
     await service.save('a' as never, {
       name: 'alpha',
       host: '10.0.0.1',
@@ -229,7 +249,7 @@ describe('ssh-remote plugin', () => {
   })
 
   it('keeps stored secrets on save unless rewritten', async () => {
-    const { service } = boot({ state: { enabled: true, machines: { a: machine('a') } } })
+    const { service } = await boot({ state: { enabled: true, machines: { a: row('a') } } })
     await service.save('a' as never, {
       name: 'alpha-2',
       host: '10.0.0.1',
@@ -242,12 +262,12 @@ describe('ssh-remote plugin', () => {
   })
 
   it('clears optional appearance fields on save and keeps sibling machines intact', async () => {
-    const { service } = boot({
+    const { service } = await boot({
       state: {
         enabled: true,
         machines: {
-          a: { ...machine('a'), color: '#ff0000', tintBorder: true, startCommand: 'custom dsh web' },
-          b: machine('b'),
+          a: { ...row('a'), color: '#ff0000', tintBorder: true, startCommand: 'custom dsh web' },
+          b: row('b'),
         },
       },
     })
@@ -269,8 +289,8 @@ describe('ssh-remote plugin', () => {
   })
 
   it('keeps stored secrets on save and stores the start command', async () => {
-    const { service } = boot({
-      state: { enabled: true, machines: { a: { ...machine('a'), passphrase: 'OLD-PHRASE' } } },
+    const { service } = await boot({
+      state: { enabled: true, machines: { a: { ...row('a'), passphrase: 'OLD-PHRASE' } } },
     })
     await service.save('a' as never, {
       name: 'alpha',
@@ -290,7 +310,7 @@ describe('ssh-remote plugin', () => {
   })
 
   it('stores the remote profile name on save and clears it when the row omits it', async () => {
-    const { service } = boot({ state: { enabled: true, machines: { a: { ...machine('a'), profileName: 'alpha' } } } })
+    const { service } = await boot({ state: { enabled: true, machines: { a: { ...row('a'), profileName: 'alpha' } } } })
     await service.save('a' as never, {
       name: 'alpha',
       host: '10.0.0.1',
@@ -313,8 +333,8 @@ describe('ssh-remote plugin', () => {
   })
 
   it('keeps whichever stored secrets exist and rewrites only typed ones', async () => {
-    const { service } = boot({
-      state: { enabled: true, machines: { a: { ...machine('a'), password: undefined, passphrase: 'OLD-PHRASE' } } },
+    const { service } = await boot({
+      state: { enabled: true, machines: { a: { ...row('a'), password: undefined, passphrase: 'OLD-PHRASE' } } },
     })
     await service.save('a' as never, {
       name: 'alpha',
@@ -341,7 +361,7 @@ describe('ssh-remote plugin', () => {
       'Host *.example.com',
       'Host !banned',
     ].join('\n'))
-    const { service } = boot()
+    const { service } = await boot()
     const views = await service.discoveredViews()
     expect(views.map(view => view.id)).toEqual(['ci', 'dev'])
     expect(views[1]).toMatchObject({
@@ -358,59 +378,57 @@ describe('ssh-remote plugin', () => {
   })
 
   it('lists no discovered machines without a config file', async () => {
-    const { service } = boot()
+    const { service } = await boot()
     expect(await service.discoveredViews()).toEqual([])
   })
 
   it('lets a manual machine shadow a config alias', async () => {
     writeFileSync(join(sshDir, 'config'), 'Host dev\n  User root\n')
-    const { service } = boot({ state: { enabled: true, machines: { dev: { ...machine('dev'), host: '10.1.1.1' } } } })
+    const { service } = await boot({ state: { enabled: true, machines: { dev: { ...row('dev'), host: '10.1.1.1' } } } })
     expect((await service.discoveredViews()).map(view => view.id)).toEqual([])
     expect(service.profileViews().map(view => view.id)).toEqual(['dev'])
   })
 
   it('syncs discovered aliases into the manager profile map', async () => {
     writeFileSync(join(sshDir, 'config'), 'Host dev\n  User root\n  Port 2222\n')
-    const { service } = boot()
-    await service.disconnect(MachineId('dev'))
-    const views = service.manager.profileViews()
-    expect(views.map(view => view.id)).toEqual(['dev'])
-    expect(views[0]).toMatchObject({ host: 'dev', port: 2222, user: 'root' })
+    await boot()
+    await machine.syncProfiles()
+    const merged = machineProfiles.get(MachineId('dev'))
+    expect([...machineProfiles.keys()]).toEqual([MachineId('dev')])
+    expect(merged).toMatchObject({ host: 'dev', port: 2222, user: 'root' })
   })
 
   it('applies the configured remote port and start command template to discovered aliases', async () => {
     writeFileSync(join(sshDir, 'config'), 'Host dev\n  User root\n')
-    const { service } = boot({ config: { remotePort: 3199, startCommand: '$HOME/.local/bin/dsh web --host 127.0.0.1 --port {port}' } })
+    const { service } = await boot({ config: { remotePort: 3199, startCommand: '$HOME/.local/bin/dsh web --host 127.0.0.1 --port {port}' } })
     const views = await service.discoveredViews()
     expect(views[0]).toMatchObject({ id: 'dev', remotePort: 3199, startCommand: '$HOME/.local/bin/dsh web --host 127.0.0.1 --port 3199' })
   })
 
   it('applies the configured default start command to manual machines without their own', async () => {
-    const { service } = boot({ state: { enabled: true, machines: { a: machine('a') } }, config: { remotePort: 3080, startCommand: 'dsh web --port {port}' } })
-    await service.disconnect('a' as never)
-    const views = service.manager.profileViews()
-    expect(views[0]).toMatchObject({ id: 'a', startCommand: 'dsh web --port 3080' })
+    await boot({ state: { enabled: true, machines: { a: row('a') } }, config: { remotePort: 3080, startCommand: 'dsh web --port {port}' } })
+    await machine.syncProfiles()
+    expect(machineProfiles.get(MachineId('a'))).toMatchObject({ id: 'a', startCommand: 'dsh web --port 3080' })
   })
 
   it('keeps a manual start command over the configured default', async () => {
-    const { service } = boot({
-      state: { enabled: true, machines: { a: { ...machine('a'), startCommand: 'custom dsh web' } } },
+    await boot({
+      state: { enabled: true, machines: { a: { ...row('a'), startCommand: 'custom dsh web' } } },
       config: { remotePort: 3080, startCommand: 'dsh web --port {port}' },
     })
-    await service.disconnect('a' as never)
-    const views = service.manager.profileViews()
-    expect(views[0]).toMatchObject({ id: 'a', startCommand: 'custom dsh web' })
+    await machine.syncProfiles()
+    expect(machineProfiles.get(MachineId('a'))).toMatchObject({ id: 'a', startCommand: 'custom dsh web' })
   })
 
   it('removes a machine from the state document', async () => {
-    const { service } = boot({ state: { enabled: true, machines: { a: machine('a'), b: machine('b') } } })
+    const { service } = await boot({ state: { enabled: true, machines: { a: row('a'), b: row('b') } } })
     await service.remove('a' as never)
     expect(service.profileViews().map(view => view.id)).toEqual(['b'])
     expect(readState().machines).not.toHaveProperty('a')
   })
 
   it('delegates test and connect to the manager', async () => {
-    const { service } = boot()
+    const { service } = await boot()
     await expect(service.test('ghost' as never)).rejects.toMatchObject({ code: 'machine-not-found' })
     await expect(service.connect('ghost' as never)).rejects.toMatchObject({ code: 'machine-not-found' })
   })
@@ -420,9 +438,10 @@ describe('ssh-remote plugin', () => {
     const home = join(sshDir, 'dsh-home')
     try {
       process.env.DSH_HOME = home
-      const service = constructWithDefaults()
-      expect(service).toBeInstanceOf(SshRemoteService)
-      await service.setEnabled(true)
+      apply(scriptedCtx(scriptedHttpServer()).ctx, { ...baseConfig, sshDir })
+      await machine.start()
+      expect(knownHostsFilePath()).toBe(join(home, 'ssh', 'known-hosts.json'))
+      await machine.setEnabled(true)
       expect(JSON.parse(readFileSync(join(home, 'ssh', 'machines.json'), 'utf8'))).toMatchObject({ version: 1, enabled: true })
     }
     finally {
@@ -435,20 +454,15 @@ describe('ssh-remote plugin', () => {
 
   it('disposes the manager when the context tears down', () => {
     const { service, disposers } = construct()
-    const dispose = vi.spyOn(service.manager, 'dispose').mockResolvedValue(undefined)
-    expect(disposers).toHaveLength(1)
-    disposers[0]?.()
+    const dispose = vi.spyOn(service, 'dispose').mockResolvedValue(undefined)
+    expect(disposers).toHaveLength(2)
+    for (const disposeAll of disposers) disposeAll()
     expect(dispose).toHaveBeenCalledTimes(1)
   })
 
-  it('apply constructs the service', () => {
-    const { ctx } = construct()
-    expect(apply(ctx, baseConfig)).toBeInstanceOf(SshRemoteService)
+  it('assembles the plugin declaratively', () => {
+    const { ctx, webServer } = construct()
+    expect(webServer.routes.map(route => `${route.kind} ${route.path}`)).toEqual(REST_ENDPOINTS.map(path => `exact ${path}`))
+    expect(apply(ctx, { ...baseConfig, sshDir, statePath })).toBeUndefined()
   })
 })
-
-/** Construct on the config's path defaults (only `sshDir` is redirected). */
-function constructWithDefaults(): SshRemoteService {
-  const { ctx } = scriptedCtx(scriptedHttpServer())
-  return new SshRemoteService(ctx, { ...baseConfig, sshDir })
-}

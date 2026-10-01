@@ -2,8 +2,10 @@ import type { ReactElement } from 'react'
 import type { WorkspacePathApplication } from '../../types/remotes.ts'
 import type { Translate } from './types'
 import { Action, Select } from 'dsh-tauri-ui/client'
+import { useStore } from 'dsh-tauri/client'
 import { useEffect, useState } from 'react'
 import { listConfigApplications, openConfigInApp } from '../../service/open-in-app'
+import { openInApp } from '../../store/modules/open-in-app'
 
 export type ModelDraft = Record<string, unknown>
 
@@ -23,19 +25,14 @@ export interface ModelConfigToolbarProps {
 }
 
 const DEFAULT_APPLICATION = ''
-const APPLICATION_CHOICE_KEY = 'dsh-tauri-model.open-in-app.choice'
 
-/**
- * 模型页工具条：左侧用哪个应用打开（复用 ui 的 `Select`），右侧「打开配置文件」。
- * 候选来自官方 open-in-app 的主机目录，低版本核心或非桌面环境为空，此时只剩右侧按钮。
- */
 export function ModelConfigToolbar({
   t,
   onOpenConfig,
   disabled,
 }: ModelConfigToolbarProps): ReactElement {
   const [applications, setApplications] = useState<readonly WorkspacePathApplication[]>([])
-  const [choice, setChoice] = useState<string>(readChoice)
+  const { choice } = useStore(openInApp)
 
   useEffect(() => {
     let active = true
@@ -78,10 +75,7 @@ export function ModelConfigToolbar({
               ]}
               value={selected === undefined ? DEFAULT_APPLICATION : choice}
               icon={selected === undefined ? undefined : <ApplicationIcon application={selected} />}
-              onChange={(id) => {
-                setChoice(id)
-                writeChoice(id)
-              }}
+              onChange={openInApp.setChoice}
             />
           )}
       <Action className="text-[13px] text-secondary rounded-[14px]" variant="link" disabled={disabled} onClick={openConfig}>
@@ -93,22 +87,4 @@ export function ModelConfigToolbar({
 
 function ApplicationIcon({ application }: { application: WorkspacePathApplication }): ReactElement {
   return <img src={application.icon ?? ''} alt="" className="w-[14px] h-[14px] rounded-[3px] flex-none" />
-}
-
-function readChoice(): string {
-  try {
-    return localStorage.getItem(APPLICATION_CHOICE_KEY) ?? DEFAULT_APPLICATION
-  }
-  catch {
-    return DEFAULT_APPLICATION
-  }
-}
-
-function writeChoice(id: string): void {
-  try {
-    localStorage.setItem(APPLICATION_CHOICE_KEY, id)
-  }
-  catch {
-
-  }
 }

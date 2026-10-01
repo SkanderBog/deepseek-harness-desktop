@@ -20,6 +20,9 @@ export default antfu({
     // genapi 产物：格式由生成器（prettier 默认）决定，不由项目 eslint 规约
     'packages/*/src/client/apis/index.ts',
     'packages/*/src/client/apis/index.type.ts',
+    // 同上：genapi 为应用壳生成的 REST 调用层（同目录的 http.ts 是手写实现，仍需 lint）
+    'src/apis/remote.ts',
+    'src/apis/remote.types.ts',
     // 插件 Tailwind 产物：由 packages/dsh-tauri-ui/scripts/taiwindcss.ts 生成，转义后的选择器与体积
     // 都不适合本仓 lint 规约
     'packages/dsh-tauri-ui/src/client/styles/index.ts',

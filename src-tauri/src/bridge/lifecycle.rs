@@ -202,8 +202,11 @@ pub async fn install_dependencies(app_handle: AppHandle) -> Result<bool, String>
                             latest.tag,
                             latest.commit
                         );
-                        config::set_dsh_pkg_commit(&app_handle, latest.commit.clone());
-                        config::set_dsh_pkg_tag(&app_handle, latest.tag.clone());
+                        config::set_dsh_pkg_identity(
+                            &app_handle,
+                            latest.commit.clone(),
+                            latest.tag.clone(),
+                        );
                     }
                     false
                 }

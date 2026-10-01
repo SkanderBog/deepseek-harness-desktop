@@ -1,12 +1,19 @@
-import type { SshExecResult, SshSession } from './transport'
+import type { Config } from '../config/schema'
+import type { SshExecResult, SshSession } from '../types/index'
+import type { SyncSkillScan } from './sync.types'
 import { Buffer } from 'node:buffer'
-import { describe, expect, it, vi } from 'vitest'
-import { DEFAULT_REMOTE_PROFILE } from '../storage/index'
+import { tmpdir } from 'node:os'
+import { join } from 'pathe'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DEFAULT_REMOTE_PROFILE } from '../config/constants'
+import { clearHostRuntime, machineTable, setHostConfig, setMachineDeps, setSyncDeps } from '../config/runtime'
 import { MachineId } from '../types/index'
-import { layoutNodeBinary } from './bootstrap'
-import { buildPreview, classifySpec, installSpecOf, pluginAddCommand, skillExtractCommand, SyncEngine } from './sync'
+import { EMPTY_ALLOWLIST } from '../utils/allowlist'
+import { layoutNodeBinary } from './bootstrap.utils'
+import { machine } from './machine'
+import { sync } from './sync'
+import { buildPreview, classifySpec, installSpecOf, pluginAddCommand, skillExtractCommand } from './sync.utils'
 
-/** A scripted SSH session: commands dispatched by order or by matcher. */
 function fakeSession(respond: (command: string, options?: { stdinData?: Buffer }) => SshExecResult): SshSession & { execSpy: ReturnType<typeof vi.fn>, closed: () => boolean } {
   let open = true
   const execSpy = vi.fn(async (command: string, options?: { stdinData?: Buffer }) => respond(command, options))
@@ -105,8 +112,57 @@ describe('command builders', () => {
   })
 })
 
+const SSH_DIR = join(tmpdir(), 'dsh-ssh-sync-test', '.ssh')
+
+const HOST_CONFIG: Config = {
+  connectTimeoutMs: 1_000,
+  healthCheckTimeoutMs: 1_000,
+  healthPollIntervalMs: 10,
+  healthPollAttempts: 1,
+  keepaliveIntervalMs: 10_000,
+  keepaliveCountMax: 3,
+  reconnectInitialDelayMs: 1,
+  reconnectMaxDelayMs: 1,
+  reconnectMaxAttempts: 1,
+  sshDir: SSH_DIR,
+  statePath: join(tmpdir(), 'dsh-ssh-sync-test', 'machines.json'),
+  knownHostsPath: join(tmpdir(), 'dsh-ssh-sync-test', 'known-hosts.json'),
+}
+
 describe('syncEngine.apply', () => {
-  const machine = MachineId('m1')
+  const machineId = MachineId('m1')
+
+  interface Wiring {
+    connect: () => Promise<SshSession>
+    profileDependencies?: () => Record<string, string>
+    scanSkills?: () => SyncSkillScan[]
+    packSkills?: (dir: string, names: readonly string[]) => Promise<Buffer>
+    profileName?: string
+  }
+
+  function seed(wiring: Wiring): void {
+    clearHostRuntime()
+    setHostConfig(HOST_CONFIG)
+    setMachineDeps({ transport: { connect: wiring.connect }, emitStatus: () => {}, localAllowlist: () => EMPTY_ALLOWLIST })
+    setSyncDeps({
+      profileDependencies: wiring.profileDependencies ?? (() => ({})),
+      scanSkills: wiring.scanSkills ?? (() => []),
+      packSkills: wiring.packSkills ?? (async () => Buffer.alloc(0)),
+    })
+    machineTable.machines.set(machineId, {
+      id: machineId,
+      name: 'm1',
+      host: 'e2e-host',
+      port: 22,
+      user: 'root',
+      remotePort: 3080,
+      ...wiring.profileName === undefined ? {} : { profileName: wiring.profileName },
+    })
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
 
   it('returns per-item successes when everything lands', async () => {
     const session = fakeSession((command) => {
@@ -116,14 +172,12 @@ describe('syncEngine.apply', () => {
       return ok()
     })
     const packSkills = vi.fn(async () => Buffer.from('TARDATA'))
-    const openSession = vi.fn(async () => session)
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
+    seed({
+      connect: async () => session,
       scanSkills: () => [{ root: 'dsh', dir: '/root/skills', names: ['alpha'] }],
       packSkills,
-      openSession,
     })
-    const result = await sync.apply(machine, [{ name: 'p1', spec: 'github:a/b' }], [{ name: 'alpha', root: 'dsh' }])
+    const result = await sync.apply(machineId, [{ name: 'p1', spec: 'github:a/b' }], [{ name: 'alpha', root: 'dsh' }])
     expect(result.items).toEqual([
       { kind: 'plugin', name: 'p1', ok: true },
       { kind: 'skill', name: 'alpha', root: 'dsh', ok: true },
@@ -142,14 +196,9 @@ describe('syncEngine.apply', () => {
         return ok('/home/u/.dsh-desktop/dependencies/dsh/lib/bin.js\n')
       return command.includes('bad-pkg') ? fail('ERR_PNPM_NO_MATCH') : ok()
     })
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
-      scanSkills: () => [],
-      packSkills: async () => Buffer.alloc(0),
-      openSession: async () => session,
-    })
+    seed({ connect: async () => session })
     const result = await sync.apply(
-      machine,
+      machineId,
       [
         { name: 'good', spec: 'github:a/good' },
         { name: 'bad', spec: 'npm:bad-pkg' },
@@ -163,13 +212,8 @@ describe('syncEngine.apply', () => {
 
   it('fails every plugin item when the remote has no dsh entry', async () => {
     const session = fakeSession(() => ok('\n'))
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
-      scanSkills: () => [],
-      packSkills: async () => Buffer.alloc(0),
-      openSession: async () => session,
-    })
-    const result = await sync.apply(machine, [{ name: 'p', spec: 'github:a/b' }], [])
+    seed({ connect: async () => session })
+    const result = await sync.apply(machineId, [{ name: 'p', spec: 'github:a/b' }], [])
     expect(result.items).toHaveLength(1)
     expect(result.items[0]).toMatchObject({ ok: false, error: expect.stringContaining('no dsh entry') })
   })
@@ -179,13 +223,12 @@ describe('syncEngine.apply', () => {
     const packSkills = vi.fn(async () => {
       throw new Error('tar failed: disk full')
     })
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
+    seed({
+      connect: async () => session,
       scanSkills: () => [{ root: 'dsh', dir: '/root/skills', names: ['alpha'] }],
       packSkills,
-      openSession: async () => session,
     })
-    const result = await sync.apply(machine, [], [
+    const result = await sync.apply(machineId, [], [
       { name: 'ghost', root: 'dsh' },
       { name: 'alpha', root: 'dsh' },
     ])
@@ -201,13 +244,12 @@ describe('syncEngine.apply', () => {
         return fail('cannot write: read-only file system')
       return ok()
     })
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
+    seed({
+      connect: async () => session,
       scanSkills: () => [{ root: 'dsh', dir: '/root/skills', names: ['alpha', 'beta'] }],
       packSkills: async () => Buffer.from('TAR'),
-      openSession: async () => session,
     })
-    const result = await sync.apply(machine, [], [
+    const result = await sync.apply(machineId, [], [
       { name: 'alpha', root: 'dsh' },
       { name: 'beta', root: 'dsh' },
     ])
@@ -220,19 +262,18 @@ describe('syncEngine.apply', () => {
 
   it('dedupes repeated selections and skips the session for an empty selection', async () => {
     const session = fakeSession(() => ok('/dsh\n'))
-    const openSession = vi.fn(async () => session)
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
+    const connect = vi.fn(async () => session)
+    seed({
+      connect,
       scanSkills: () => [{ root: 'dsh', dir: '/root/skills', names: ['alpha'] }],
       packSkills: async () => Buffer.alloc(0),
-      openSession,
     })
-    const empty = await sync.apply(machine, [], [])
+    const empty = await sync.apply(machineId, [], [])
     expect(empty.items).toEqual([])
-    expect(openSession).not.toHaveBeenCalled()
+    expect(connect).not.toHaveBeenCalled()
 
     const deduped = await sync.apply(
-      machine,
+      machineId,
       [{ name: 'p', spec: 'github:a/b' }, { name: 'p again', spec: 'github:a/b' }],
       [{ name: 'alpha', root: 'dsh' }, { name: 'alpha', root: 'dsh' }],
     )
@@ -258,13 +299,8 @@ describe('syncEngine.apply', () => {
       'dsh: git-hosted plugins build on install via their prepare script, which pnpm blocks until allowed — add the exact key pnpm printed above',
     ].join('\n')
     const session = fakeSession(command => command.includes('printf') ? ok('/dsh\n') : { code: 1, stdout, stderr })
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
-      scanSkills: () => [],
-      packSkills: async () => Buffer.alloc(0),
-      openSession: async () => session,
-    })
-    const result = await sync.apply(machine, [{ name: 'dsh-better-sidebar', spec: 'github:a/b' }], [], { profileName: 'remote' })
+    seed({ connect: async () => session, profileName: 'remote' })
+    const result = await sync.apply(machineId, [{ name: 'dsh-better-sidebar', spec: 'github:a/b' }], [])
     const item = result.items[0]!
     expect(item.ok).toBe(false)
     // 头一条是真正的原因（缺 make/g++ 的编译失败），且不掺末尾那句会误导人的通用指引
@@ -282,23 +318,14 @@ describe('syncEngine.apply', () => {
   it('caps the carried output and skips it on success', async () => {
     const huge = Array.from({ length: 200 }, (_, index) => `line ${index}`).join('\n')
     const session = fakeSession(command => command.includes('printf') ? ok('/dsh\n') : { code: 1, stdout: huge, stderr: '' })
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
-      scanSkills: () => [],
-      packSkills: async () => Buffer.alloc(0),
-      openSession: async () => session,
-    })
-    const failed = await sync.apply(machine, [{ name: 'p', spec: 'github:a/b' }], [], { profileName: 'remote' })
+    seed({ connect: async () => session, profileName: 'remote' })
+    const failed = await sync.apply(machineId, [{ name: 'p', spec: 'github:a/b' }], [])
     expect(failed.items[0]?.log?.split('\n').length).toBe(60)
     expect(failed.items[0]?.log).toContain('line 199')
 
     const healthy = fakeSession(() => ok('/dsh\n'))
-    const fine = await new SyncEngine({
-      profileDependencies: () => ({}),
-      scanSkills: () => [],
-      packSkills: async () => Buffer.alloc(0),
-      openSession: async () => healthy,
-    }).apply(machine, [{ name: 'p', spec: 'github:a/b' }], [], { profileName: 'remote' })
+    seed({ connect: async () => healthy, profileName: 'remote' })
+    const fine = await sync.apply(machineId, [{ name: 'p', spec: 'github:a/b' }], [])
     expect(fine.items[0]?.log).toBeUndefined()
   })
 
@@ -309,24 +336,39 @@ describe('syncEngine.apply', () => {
       if (command.includes('printf'))
         return ok('/dsh\n')
       if (command.includes('pnpm-workspace.yaml') && command.startsWith('cat '))
-        return ok('packages:\n  - .\n')
+        return ok('packages:\n  - .\nallowBuilds:\n  existing: true\n  keep-blocked: false\n')
       if (command.includes('plugin --profile')) {
         installs += 1
         return installs === 1 ? fail(guidance) : ok()
       }
       return ok()
     })
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
-      scanSkills: () => [],
-      packSkills: async () => Buffer.alloc(0),
-      openSession: async () => session,
-    })
-    const result = await sync.apply(machine, [{ name: 'p', spec: 'github:a/b' }], [], { profileName: 'remote' })
+    seed({ connect: async () => session, profileName: 'remote' })
+    const result = await sync.apply(machineId, [{ name: 'p', spec: 'github:a/b' }], [])
     expect(result.items).toEqual([{ kind: 'plugin', name: 'p', ok: true }])
     expect(installs).toBe(2)
     const write = session.execSpy.mock.calls.map(([command]) => command).find(command => command.includes('> "$HOME/.dsh/profiles/remote/pnpm-workspace.yaml"'))
     expect(write).toContain('p@https://example.com/p.tar.gz/abc')
+    expect(write).toContain('existing: true')
+    expect(write).toContain('keep-blocked: false')
+  })
+
+  it('does not rewrite the workspace or retry when the requested build key is already allowed', async () => {
+    const session = fakeSession((command) => {
+      if (command.includes('printf'))
+        return ok('/dsh\n')
+      if (command.includes('pnpm-workspace.yaml') && command.startsWith('cat '))
+        return ok('allowBuilds:\n  p: true\n')
+      return command.includes('plugin --profile') ? fail('allowBuilds:\n  p: true\n') : ok()
+    })
+    seed({ connect: async () => session, profileName: 'remote' })
+    const result = await sync.apply(machineId, [{ name: 'p', spec: 'github:a/b' }], [])
+    expect(result.items[0]).toMatchObject({ ok: false })
+    const commands = session.execSpy.mock.calls.map(([command]) => command)
+    expect(commands.filter(command => command.includes('plugin --profile'))).toHaveLength(1)
+    expect(commands.filter(command => command.includes('pnpm-workspace.yaml'))).toEqual([
+      'cat "$HOME/.dsh/profiles/remote/pnpm-workspace.yaml" 2>/dev/null || true',
+    ])
   })
 
   it('reports the original failure when pnpm names no build key', async () => {
@@ -335,13 +377,8 @@ describe('syncEngine.apply', () => {
         return ok('/dsh\n')
       return command.includes('plugin --profile') ? fail('ERR_PNPM_NO_MATCH') : ok()
     })
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
-      scanSkills: () => [],
-      packSkills: async () => Buffer.alloc(0),
-      openSession: async () => session,
-    })
-    const result = await sync.apply(machine, [{ name: 'p', spec: 'github:a/b' }], [], { profileName: 'remote' })
+    seed({ connect: async () => session, profileName: 'remote' })
+    const result = await sync.apply(machineId, [{ name: 'p', spec: 'github:a/b' }], [])
     expect(result.items[0]).toMatchObject({ ok: false })
     expect(result.items[0]?.error).toContain('ERR_PNPM_NO_MATCH')
     expect(session.execSpy.mock.calls.filter(([command]) => command.includes('pnpm-workspace.yaml'))).toHaveLength(0)
@@ -353,13 +390,8 @@ describe('syncEngine.apply', () => {
         return ok('/dsh\n')
       return ok()
     })
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
-      scanSkills: () => [],
-      packSkills: async () => Buffer.alloc(0),
-      openSession: async () => session,
-    })
-    await sync.apply(machine, [{ name: 'dshmarket', spec: '^1.31.1' }], [])
+    seed({ connect: async () => session })
+    await sync.apply(machineId, [{ name: 'dshmarket', spec: '^1.31.1' }], [])
     const add = session.execSpy.mock.calls.map(([command]) => command).find(command => command.includes('plugin --profile'))
     expect(add).toContain('add \'dshmarket@^1.31.1\'')
   })
@@ -370,13 +402,8 @@ describe('syncEngine.apply', () => {
         return ok('/dsh\n')
       return ok()
     })
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
-      scanSkills: () => [],
-      packSkills: async () => Buffer.alloc(0),
-      openSession: async () => session,
-    })
-    await sync.apply(machine, [{ name: 'p', spec: 'github:a/b' }], [], { profileName: 'work' })
+    seed({ connect: async () => session, profileName: 'work' })
+    await sync.apply(machineId, [{ name: 'p', spec: 'github:a/b' }], [])
     const add = session.execSpy.mock.calls.map(([command]) => command).find(command => command.includes('plugin --profile'))
     expect(add).toContain('--profile \'work\' add')
   })
@@ -387,21 +414,23 @@ describe('syncEngine.apply', () => {
         return ok('/dsh\n')
       return ok()
     })
-    const sync = new SyncEngine({
-      profileDependencies: () => ({}),
+    seed({
+      connect: async () => session,
       scanSkills: () => [
         { root: 'dsh', dir: '/root/dsh-skills', names: ['alpha', 'beta'] },
         { root: 'agents', dir: '/root/agent-skills', names: ['gamma'] },
       ],
       packSkills: async () => Buffer.alloc(0),
-      openSession: async () => session,
     })
     const seen: string[] = []
+    vi.spyOn(machine, 'setProgress').mockImplementation((_machineId, progress) => {
+      if (progress !== undefined)
+        seen.push(`${progress.attempt}/${progress.total}:${progress.item}`)
+    })
     await sync.apply(
-      machine,
+      machineId,
       [{ name: 'p1', spec: 'github:a/b' }, { name: 'p1 dup', spec: 'github:a/b' }, { name: 'p2', spec: '^1.0.0' }],
       [{ name: 'alpha', root: 'dsh' }, { name: 'beta', root: 'dsh' }, { name: 'ghost', root: 'dsh' }, { name: 'gamma', root: 'agents' }],
-      { onItem: (position, total, name) => seen.push(`${position}/${total}:${name}`) },
     )
     // 去重后 2 插件 + 4 skill；ghost 在本地校验出局（不公告但照样结算），
     // 每个 root 的 skill 共用一份 tar，故只公告批首那条。

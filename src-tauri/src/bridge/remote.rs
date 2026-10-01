@@ -1,23 +1,112 @@
-//! bridge/remote.rs — SSH 远端机器的桌面集成命令（S5 桥契约 C-BRIDGE）。
-//!
-//! 引擎（机器存储/连接/隧道）全部住在 `dsh-tauri-ssh` 插件里，桌面壳不持有
-//! 任何机器状态；这里只暴露 iframe 内插件做不了的两件事：
-//!
-//! - `remote_open_window { machineId, url }`：打开（已开则聚焦）label 为
-//!   `remote-<machineId>` 的专用 WebviewWindow。窗口加载的是壳层应用本体
-//!   （与主窗口同一套导航栏/切换器），前端按自身 label 解析出 machineId
-//!   并在启动时切到该机器——远端界面嵌在壳内呈现，而不是裸加载隧道页。
-//!   `url`（隧道 URL）仍做回环校验（纵深防御：桥白名单之外的输入不可信，
-//!   且未连接机器的调用在第一道就被挡掉）。
-//! - `remote_bridge_ping`：无参探测。iframe 内的插件（S4 面板）用它判定
-//!   自己运行在桌面壳内；纯 web 环境下该调用超时/被拒，弹窗按钮自隐藏。
-//!
-//! 两个命令都被 `src/hooks/use-iframe-invoke.ts` 的白名单登记，且弹窗窗口
-//! label（`remote-*`）已列入 `capabilities/default.json` 的窗口 glob，其
-//! remote URL 面与主窗口一致（仅 loopback）。错误遵循仓库约定：
-//! `Result<_, String>`，Err 以大写协议前缀开头（如 `REMOTE_URL_INVALID:`）。
+use std::time::Duration;
 
+use serde_json::Value;
 use tauri::{AppHandle, Manager};
+
+fn remote_method(method: &str) -> Result<(reqwest::Method, &str), String> {
+    if !matches!(
+        method,
+        "GET /api/desktop/dsh-tauri-ssh/machines"
+            | "POST /api/desktop/dsh-tauri-ssh/machines"
+            | "DELETE /api/desktop/dsh-tauri-ssh/machines"
+            | "POST /api/desktop/dsh-tauri-ssh/machines/connect"
+            | "POST /api/desktop/dsh-tauri-ssh/machines/disconnect"
+            | "GET /api/desktop/dsh-tauri-ssh/machines/events"
+            | "POST /api/desktop/dsh-tauri-ssh/machines/install"
+            | "POST /api/desktop/dsh-tauri-ssh/machines/test"
+            | "GET /api/desktop/dsh-tauri-ssh/session/role"
+            | "GET /api/desktop/dsh-tauri-ssh/settings"
+            | "POST /api/desktop/dsh-tauri-ssh/settings"
+            | "POST /api/desktop/dsh-tauri-ssh/sync/apply"
+            | "GET /api/desktop/dsh-tauri-ssh/sync/preview"
+    ) {
+        return Err(format!("REMOTE_METHOD_INVALID: {method}"));
+    }
+    let (verb, path) = method
+        .split_once(' ')
+        .ok_or_else(|| format!("REMOTE_METHOD_INVALID: {method}"))?;
+    let verb = verb
+        .parse()
+        .map_err(|_| format!("REMOTE_METHOD_INVALID: {method}"))?;
+    Ok((verb, path))
+}
+
+async fn remote_request(
+    port: u16,
+    method: reqwest::Method,
+    path: &str,
+    payload: Option<Value>,
+) -> Result<Value, String> {
+    let is_get = method == reqwest::Method::GET;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(if is_get { 10 } else { 600 }))
+        .build()
+        .map_err(|error| format!("REMOTE_REQUEST_FAILED: {error}"))?;
+    let mut request = client.request(
+        method,
+        format!("{}{path}", crate::config::get_dsh_service_url(port)),
+    );
+    if let Some(payload) = payload.filter(|value| !value.is_null()) {
+        if is_get {
+            let params = payload.as_object().ok_or_else(|| {
+                "REMOTE_PAYLOAD_INVALID: GET payload must be a query object".to_string()
+            })?;
+            let mut query = Vec::new();
+            for (key, value) in params {
+                let value = match value {
+                    Value::Null => continue,
+                    Value::String(value) => value.clone(),
+                    Value::Bool(_) | Value::Number(_) => value.to_string(),
+                    _ => {
+                        return Err(format!(
+                            "REMOTE_PAYLOAD_INVALID: query parameter {key} must be primitive"
+                        ));
+                    }
+                };
+                query.push((key, value));
+            }
+            request = request.query(&query);
+        } else {
+            request = request.json(&payload);
+        }
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("REMOTE_REQUEST_FAILED: {error}"))?;
+    let status = response.status();
+    if matches!(status.as_u16(), 404 | 405) {
+        return Err(format!("REMOTE_API_MISSING: {}", status.as_u16()));
+    }
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| format!("REMOTE_REQUEST_FAILED: {error}"))?;
+    let value: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    if !status.is_success() {
+        let message = value
+            .get("error")
+            .and_then(Value::as_str)
+            .or_else(|| value.get("message").and_then(Value::as_str))
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
+        return Err(format!("REMOTE_REQUEST_FAILED: {message}"));
+    }
+    Ok(value)
+}
+
+#[tauri::command]
+pub async fn remote(
+    app_handle: AppHandle,
+    method: String,
+    payload: Option<Value>,
+) -> Result<Value, String> {
+    let (method, path) = remote_method(&method)?;
+    let port = crate::config::get_store_dat_setting(&app_handle).port;
+    remote_request(port, method, path, payload).await
+}
 
 /// 弹窗窗口 label 前缀（与 capability 的 `remote-*` glob 对应）。
 const REMOTE_WINDOW_LABEL_PREFIX: &str = "remote-";
@@ -26,7 +115,13 @@ const REMOTE_WINDOW_LABEL_PREFIX: &str = "remote-";
 /// 其余字符一律折叠为 `-`，避免任意 machineId 注入非法 label。
 fn sanitize_label_part(raw: &str) -> String {
     raw.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '/' | ':') { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '/' | ':') {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect()
 }
 
@@ -82,7 +177,7 @@ fn open_window_args(machine_id: &str, url: &str) -> Result<(String, Option<tauri
 /// 打开（已开则聚焦）`remote-<machineId>` 弹窗窗口，加载壳层应用。
 ///
 /// 壳不自存机器状态：前端按窗口 label 自解析目标机器并切换（机器状态经
-/// `/api-ssh` 轮询获取）；`url` 只做回环校验。重复调用聚焦已有窗口（不
+/// `/api/desktop/dsh-tauri-ssh/machines` 轮询获取）；`url` 只做回环校验。重复调用聚焦已有窗口（不
 /// 重复建窗）；失败返回带前缀的可读错误，由调用方（S4 面板按钮）呈现。
 #[tauri::command]
 pub fn remote_open_window(
@@ -107,7 +202,281 @@ pub fn remote_open_window(
 
 #[cfg(test)]
 mod tests {
-    use super::{sanitize_label_part, validate_loopback_http_url};
+    use super::{remote_method, remote_request, sanitize_label_part, validate_loopback_http_url};
+    use serde_json::{json, Value};
+    use std::time::Duration;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    async fn response_server(
+        status: &str,
+        headers: &str,
+        body: &str,
+    ) -> (u16, tokio::task::JoinHandle<(String, Vec<u8>)>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n{body}",
+            body.len()
+        );
+        let server = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(3), async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut socket = BufReader::new(socket);
+                let mut headers = String::new();
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    assert_ne!(socket.read_line(&mut line).await.unwrap(), 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap();
+                    }
+                    headers.push_str(&line);
+                }
+                let mut body = vec![0; length];
+                socket.read_exact(&mut body).await.unwrap();
+                socket
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap();
+                (headers, body)
+            })
+            .await
+            .expect("isolated loopback server must finish within three seconds")
+        });
+        (port, server)
+    }
+
+    #[test]
+    fn remote_whitelist_accepts_all_thirteen_generated_endpoints() {
+        for method in [
+            "GET /api/desktop/dsh-tauri-ssh/machines",
+            "POST /api/desktop/dsh-tauri-ssh/machines",
+            "DELETE /api/desktop/dsh-tauri-ssh/machines",
+            "POST /api/desktop/dsh-tauri-ssh/machines/connect",
+            "POST /api/desktop/dsh-tauri-ssh/machines/disconnect",
+            "GET /api/desktop/dsh-tauri-ssh/machines/events",
+            "POST /api/desktop/dsh-tauri-ssh/machines/install",
+            "POST /api/desktop/dsh-tauri-ssh/machines/test",
+            "GET /api/desktop/dsh-tauri-ssh/session/role",
+            "GET /api/desktop/dsh-tauri-ssh/settings",
+            "POST /api/desktop/dsh-tauri-ssh/settings",
+            "POST /api/desktop/dsh-tauri-ssh/sync/apply",
+            "GET /api/desktop/dsh-tauri-ssh/sync/preview",
+        ] {
+            let (verb, path) = remote_method(method).expect("generated endpoint must be allowed");
+            assert_eq!(format!("{verb} {path}"), method);
+        }
+    }
+
+    #[test]
+    fn remote_whitelist_rejects_unknown_verbs_paths_and_urls() {
+        for method in [
+            "",
+            "GET",
+            "get /api/desktop/dsh-tauri-ssh/machines",
+            "PUT /api/desktop/dsh-tauri-ssh/machines",
+            "GET /api/desktop/dsh-tauri-ssh/machines/connect",
+            "POST /api/desktop/dsh-tauri-ssh/machines/events",
+            "GET /api/desktop/dsh-tauri-ssh/machines?machineId=m1",
+            "GET /api/desktop/dsh-tauri-ssh/machines/../settings",
+            "GET /api/desktop/dsh-tauri-ssh/machines/",
+            "GET  /api/desktop/dsh-tauri-ssh/machines",
+            "GET /api/desktop/dsh-tauri-ssh/machines\n",
+            "GET http://127.0.0.1:3080/api/desktop/dsh-tauri-ssh/machines",
+            "GET https://example.com/api/desktop/dsh-tauri-ssh/machines",
+            "GET //example.com/api/desktop/dsh-tauri-ssh/machines",
+            "GET /api/other",
+        ] {
+            assert_eq!(
+                remote_method(method).unwrap_err(),
+                format!("REMOTE_METHOD_INVALID: {method}")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_get_forwards_encoded_primitive_query_without_body() {
+        let (port, server) = response_server("200 OK", "", r#"{"events":[]}"#).await;
+        let (verb, path) = remote_method("GET /api/desktop/dsh-tauri-ssh/machines/events").unwrap();
+        let result = remote_request(
+            port,
+            verb,
+            path,
+            Some(json!({"machineId": "m /&?中", "sinceSeq": 42, "flag": false, "absent": null})),
+        )
+        .await;
+        let (headers, body) = server.await.unwrap();
+        assert_eq!(result.unwrap(), json!({"events": []}));
+        let target = headers
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap();
+        let url = tauri::Url::parse(&format!("http://127.0.0.1{target}")).unwrap();
+        assert_eq!(url.path(), "/api/desktop/dsh-tauri-ssh/machines/events");
+        let query: std::collections::BTreeMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(
+            query,
+            std::collections::BTreeMap::from([
+                ("machineId".to_string(), "m /&?中".to_string()),
+                ("sinceSeq".to_string(), "42".to_string()),
+                ("flag".to_string(), "false".to_string()),
+            ])
+        );
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn remote_mutations_forward_json_body_and_preserve_http_verb() {
+        for method in [
+            "POST /api/desktop/dsh-tauri-ssh/machines/connect",
+            "DELETE /api/desktop/dsh-tauri-ssh/machines",
+        ] {
+            let (port, server) = response_server("200 OK", "", r#"{"ok":true}"#).await;
+            let (verb, path) = remote_method(method).unwrap();
+            let result = remote_request(port, verb, path, Some(json!({"machineId": "m1"}))).await;
+            let (headers, body) = server.await.unwrap();
+            assert_eq!(result.unwrap(), json!({"ok": true}));
+            assert_eq!(
+                headers.lines().next().unwrap(),
+                format!("{method} HTTP/1.1")
+            );
+            assert!(headers
+                .to_ascii_lowercase()
+                .contains("content-type: application/json\r\n"));
+            assert_eq!(
+                serde_json::from_slice::<Value>(&body).unwrap(),
+                json!({"machineId": "m1"})
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_absent_or_null_payload_sends_no_query_or_body() {
+        for method in [
+            "GET /api/desktop/dsh-tauri-ssh/machines",
+            "POST /api/desktop/dsh-tauri-ssh/machines/install",
+        ] {
+            for payload in [None, Some(Value::Null)] {
+                let (port, server) = response_server("200 OK", "", "null").await;
+                let (verb, path) = remote_method(method).unwrap();
+                let result = remote_request(port, verb, path, payload).await;
+                let (headers, body) = server.await.unwrap();
+                assert_eq!(result.unwrap(), Value::Null);
+                assert_eq!(
+                    headers.lines().next().unwrap(),
+                    format!("{method} HTTP/1.1")
+                );
+                assert!(body.is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_success_tolerates_empty_or_non_json_body() {
+        for (status, body) in [
+            ("204 No Content", ""),
+            ("200 OK", ""),
+            ("201 Created", "not JSON"),
+        ] {
+            let (port, server) = response_server(status, "", body).await;
+            let (verb, path) = remote_method("POST /api/desktop/dsh-tauri-ssh/settings").unwrap();
+            let result = remote_request(port, verb, path, None).await;
+            server.await.unwrap();
+            assert_eq!(result.unwrap(), Value::Null);
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_missing_api_is_distinct_from_other_http_failures() {
+        for (status, expected) in [("404 Not Found", "404"), ("405 Method Not Allowed", "405")] {
+            let (port, server) = response_server(status, "", r#"{"error":"disabled"}"#).await;
+            let (verb, path) = remote_method("GET /api/desktop/dsh-tauri-ssh/settings").unwrap();
+            let result = remote_request(port, verb, path, None).await;
+            server.await.unwrap();
+            assert_eq!(
+                result.unwrap_err(),
+                format!("REMOTE_API_MISSING: {expected}")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_http_failures_keep_server_error_message_or_status() {
+        for (body, expected) in [
+            (
+                r#"{"error":"SSH refused","message":"ignored"}"#,
+                "SSH refused",
+            ),
+            (r#"{"message":"bootstrap failed"}"#, "bootstrap failed"),
+            ("not JSON", "HTTP 500"),
+            ("", "HTTP 500"),
+        ] {
+            let (port, server) = response_server("500 Internal Server Error", "", body).await;
+            let (verb, path) =
+                remote_method("POST /api/desktop/dsh-tauri-ssh/machines/test").unwrap();
+            let result = remote_request(port, verb, path, None).await;
+            server.await.unwrap();
+            assert_eq!(
+                result.unwrap_err(),
+                format!("REMOTE_REQUEST_FAILED: {expected}")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_unreachable_service_is_not_reported_as_missing_api() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let (verb, path) = remote_method("GET /api/desktop/dsh-tauri-ssh/machines").unwrap();
+        let error = remote_request(port, verb, path, None).await.unwrap_err();
+        assert!(
+            error.starts_with("REMOTE_REQUEST_FAILED:"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_redirects_are_rejected_without_contacting_target() {
+        let target = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        for location in [
+            format!("http://{}/outside", target.local_addr().unwrap()),
+            "https://example.invalid/outside".to_string(),
+        ] {
+            let (port, server) =
+                response_server("302 Found", &format!("Location: {location}\r\n"), "").await;
+            let (verb, path) = remote_method("GET /api/desktop/dsh-tauri-ssh/machines").unwrap();
+            let result = remote_request(port, verb, path, None).await;
+            server.await.unwrap();
+            assert_eq!(result.unwrap_err(), "REMOTE_REQUEST_FAILED: HTTP 302");
+        }
+        assert_eq!(
+            target.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_invalid_get_payload_is_rejected_before_connecting() {
+        let (verb, path) = remote_method("GET /api/desktop/dsh-tauri-ssh/machines/events").unwrap();
+        for payload in [json!([]), json!({"machineId": {"nested": true}})] {
+            let error = remote_request(0, verb.clone(), path, Some(payload))
+                .await
+                .unwrap_err();
+            assert!(
+                error.starts_with("REMOTE_PAYLOAD_INVALID:"),
+                "unexpected error: {error}"
+            );
+        }
+    }
 
     #[test]
     fn label_part_keeps_tauri_charset_and_folds_the_rest() {
@@ -120,10 +489,7 @@ mod tests {
 
     #[test]
     fn loopback_http_urls_pass_validation() {
-        for raw in [
-            "http://127.0.0.1:3080",
-            "http://127.0.0.1:49152/",
-        ] {
+        for raw in ["http://127.0.0.1:3080", "http://127.0.0.1:49152/"] {
             let url = validate_loopback_http_url(raw)
                 .unwrap_or_else(|err| panic!("{raw} should pass: {err}"));
             assert_eq!(url.scheme(), "http");
@@ -133,14 +499,14 @@ mod tests {
     #[test]
     fn non_loopback_or_non_http_urls_are_rejected() {
         for raw in [
-            "https://127.0.0.1:3080",   // https 不允许（隧道是明文回环）
-            "http://192.168.1.5:3080",  // 非回环
-            "http://example.com",       // 公网域名
-            "http://localhost:3080",    // 命不中 capability remote.urls，命令侧一并拒绝
-            "http://[::1]:3080",        // 同上：与 127.0.0.1 精确对齐
-            "file:///etc/passwd",       // 非 http scheme
-            "not a url",                // 解析失败
-            "",                         // 空
+            "https://127.0.0.1:3080",  // https 不允许（隧道是明文回环）
+            "http://192.168.1.5:3080", // 非回环
+            "http://example.com",      // 公网域名
+            "http://localhost:3080",   // 命不中 capability remote.urls，命令侧一并拒绝
+            "http://[::1]:3080",       // 同上：与 127.0.0.1 精确对齐
+            "file:///etc/passwd",      // 非 http scheme
+            "not a url",               // 解析失败
+            "",                        // 空
         ] {
             let err = validate_loopback_http_url(raw)
                 .err()

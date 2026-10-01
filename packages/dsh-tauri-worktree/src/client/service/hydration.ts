@@ -266,17 +266,7 @@ export async function calibrateSession(input: {
   return { kind: 'local' }
 }
 
-export async function loadJobStatus(input: {
-  sessionId: string
-  jobId: string
-}): Promise<WorktreeStatus | undefined> {
-  try {
-    return await getStatus(input)
-  }
-  catch {
-    return undefined
-  }
-}
+export { loadJobStatus } from './worktree'
 
 export function planHandoff(input: {
   state: HydrationState

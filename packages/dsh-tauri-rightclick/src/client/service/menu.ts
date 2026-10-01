@@ -6,7 +6,7 @@ import type {
   WorkspacesRuntimeLike,
   WorkspaceViewLike,
 } from '../types'
-import { difference, filter, get } from 'dsh-tauri/client'
+import { get } from 'dsh-tauri/client'
 import { postOpenPath, postOpenUrl } from '../apis'
 import { locale } from '../locales'
 import { externalUrl } from '../utils/url'
@@ -131,10 +131,8 @@ export async function loadUngroupedSessions(input: {
   const snapshot = input.workspaces.list.getSnapshot()
   const assigned = snapshot.items.flatMap(workspace => workspace.sessionIds)
   const sessionSnapshot = input.sessions.list.getSnapshot()
-  return filter(
-    difference(sessionSnapshot.ids, assigned, snapshot.archivedSessionIds),
-    id => sessionSnapshot.byId[id]?.blank !== true,
-  )
+  const excluded = new Set([...assigned, ...snapshot.archivedSessionIds])
+  return sessionSnapshot.ids.filter(id => !excluded.has(id) && sessionSnapshot.byId[id]?.blank !== true)
 }
 
 /** Query：工作区中尚未归档的会话 id。 */
@@ -142,7 +140,8 @@ export async function loadWorkspaceSessions(input: {
   workspaces: WorkspacesRuntimeLike
   workspace: WorkspaceViewLike
 }): Promise<SessionId[]> {
-  return difference(input.workspace.sessionIds, input.workspaces.list.getSnapshot().archivedSessionIds)
+  const archived = new Set(input.workspaces.list.getSnapshot().archivedSessionIds)
+  return input.workspace.sessionIds.filter(id => !archived.has(id))
 }
 
 /** Action：逐个归档会话。 */

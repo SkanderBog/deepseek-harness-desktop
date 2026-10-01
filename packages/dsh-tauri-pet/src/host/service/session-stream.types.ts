@@ -63,7 +63,6 @@ export interface PetSessionState {
   task?: string
   /** 当前工具活动分类（最近一次 working 工具名分类）。 */
   toolActivity?: PetToolActivity
-  firstSeqAt: number
 }
 
 /** 宿主 `sessionTitle` 服务的读取面（可选：未挂载时回退 id）。 */

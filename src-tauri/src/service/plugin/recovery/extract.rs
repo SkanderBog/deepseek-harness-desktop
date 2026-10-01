@@ -36,11 +36,6 @@ static RE_FAILED_TO_LOAD_PLUGINS: LazyLock<Regex> =
 static RE_DUP_PREFIX_ROUTE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"duplicate prefix route\s+["']([^"']+)["']"#).expect("literal"));
 
-/// 无法解析 profile bundle（classify_reason 用）。
-static RE_CANNOT_RESOLVE_BUNDLE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"cannot resolve profile bundle\s+["']?([^"'\n]+)["']?"#).expect("literal")
-});
-
 /// 从日志文本中提取插件引用（多个错误特征的正则，去重）。
 pub(super) fn extract_plugin_refs(text: &str) -> Vec<String> {
     let mut refs = HashSet::new();
@@ -96,7 +91,7 @@ pub(super) fn classify_reason(text: &str) -> (String, String) {
     if let Some(entry) = extract_duplicate_loader_entry(text) {
         return ("duplicate_loader_entry".into(), entry);
     }
-    if let Some(c) = RE_CANNOT_RESOLVE_BUNDLE.captures(text) {
+    if let Some(c) = PLUGIN_REF_PATTERNS[1].captures(text) {
         return (
             "cannot_resolve_bundle".into(),
             c.get(1).map(|m| m.as_str().to_string()).unwrap_or_default(),
@@ -123,6 +118,44 @@ pub(super) fn classify_reason(text: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cannot_resolve_bundle_reuses_pattern_without_broadening_refs() {
+        for (text, refs, reason, detail) in [
+            (
+                "cannot resolve profile bundle \"@scope/pkg\"",
+                vec!["@scope/pkg"],
+                "cannot_resolve_bundle",
+                "@scope/pkg",
+            ),
+            (
+                "cannot resolve profile bundle 'dsh-plugin'",
+                vec!["dsh-plugin"],
+                "cannot_resolve_bundle",
+                "dsh-plugin",
+            ),
+            (
+                "cannot resolve profile bundle foo/../../target",
+                vec![],
+                "cannot_resolve_bundle",
+                "foo/../../target",
+            ),
+            ("cannot resolve profile bundle \"\"", vec![], "unknown", ""),
+            (
+                "cannot resolve profile bundle \"dsh-plugin\"\nduplicate loader entry id: alias",
+                vec!["dsh-plugin"],
+                "duplicate_loader_entry",
+                "alias",
+            ),
+        ] {
+            assert_eq!(extract_plugin_refs(text), refs, "{text}");
+            assert_eq!(
+                classify_reason(text),
+                (reason.into(), detail.into()),
+                "{text}"
+            );
+        }
+    }
 
     #[test]
     fn extract_refs_from_failure_log() {

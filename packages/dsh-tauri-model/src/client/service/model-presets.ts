@@ -39,10 +39,6 @@ export function setPresetTable(next: PresetTable): void {
   table = next
 }
 
-export function presetTableSize(): number {
-  return Object.keys(table).length
-}
-
 function ruleFacts(id: string): { vision: boolean, reasoning: boolean } | undefined {
   let vision = false
   let reasoning = false

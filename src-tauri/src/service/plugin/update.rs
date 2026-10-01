@@ -391,15 +391,8 @@ fn percent_decode_once(value: &str) -> Option<String> {
     String::from_utf8(decoded).ok()
 }
 
-/// percent decode 只接受十六进制字节；非法 nibble 返回 None，使 selector
-/// 解析 fail closed 而不是生成被截断的 ref。
 fn hex_value(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
+    char::from(value).to_digit(16).map(|digit| digit as u8)
 }
 
 /// `owner/repo` 形态校验（owner/repo 各仅允许字母数字 `._-`，避免误吞 URL 首位）。
@@ -640,6 +633,37 @@ pub async fn refresh(app_handle: &AppHandle) -> Result<Vec<DshPlugin>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hex_value_accepts_only_ascii_hex_nibbles() {
+        for byte in 0..=u8::MAX {
+            let expected = b"0123456789abcdef"
+                .iter()
+                .position(|candidate| *candidate == byte.to_ascii_lowercase())
+                .map(|position| position as u8);
+            assert_eq!(hex_value(byte), expected, "byte={byte}");
+        }
+    }
+
+    #[test]
+    fn percent_decode_preserves_single_pass_and_rejects_invalid_escapes() {
+        for (encoded, expected) in [
+            ("branch%2Ffeature", Some("branch/feature")),
+            ("%41%4a%4F", Some("AJO")),
+            ("%252F", Some("%2F")),
+            ("%E4%B8%AD", Some("中")),
+            ("%", None),
+            ("%2", None),
+            ("%2G", None),
+            ("%FF", None),
+        ] {
+            assert_eq!(
+                percent_decode_once(encoded).as_deref(),
+                expected,
+                "{encoded}"
+            );
+        }
+    }
 
     fn target(repo: &str, reference: Option<&str>) -> Option<GitHubTarget> {
         Some(GitHubTarget {

@@ -23,8 +23,6 @@ export const sessionContext = defineService({
     const cwd = get(session, 'header.cwd') ?? get(session, 'cwd')
     if (!isString(cwd) || !cwd)
       return null
-    if (!cwd)
-      return null
     if (isAbsolute(cwd))
       return cwd
     try {

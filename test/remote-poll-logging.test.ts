@@ -1,74 +1,78 @@
-import type { SshApiClient } from '../src/store/modules/remote/api'
+// @vitest-environment jsdom
+import type { PropsWithChildren } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
+import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { queryKeys } from '../src/config/query-keys'
+import { useRemote } from '../src/hooks/use-remote'
 
-// 本地实例不可达时的降级轮询：`refresh` 每 2 秒跑一轮，实例停着（插件操作会停服）时会
-// 连续失败几百轮。这里锁定「一轮降级只留一条日志」——每轮都带堆栈打一遍会把日志淹掉，
-// 而这行信息的增量是零。恢复之后再次不可达要能重新打一次，否则第二次故障看不见。
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 
-const { bindSshApiForTests, remote } = await import('../src/store/modules/remote/store')
-
-const unreachable = (): Promise<never> => Promise.reject(new TypeError('Failed to fetch'))
-
-/** 只替换数据面：`bindSshApiForTests` 还要求 connect/disconnect（这些用例走不到）。 */
-function onlyListMachines(listMachines: SshApiClient['listMachines']) {
-  return {
-    listMachines,
-    connect: async () => ({ tunnelBaseUrl: '' }),
-    disconnect: async () => {},
-  }
-}
-
+let client: QueryClient
+let failure: string | undefined
 let warn: ReturnType<typeof vi.spyOn>
 
+function Wrapper({ children }: PropsWithChildren) {
+  return createElement(QueryClientProvider, { client }, children)
+}
+
 beforeEach(() => {
+  client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  failure = 'REMOTE_REQUEST_FAILED: connection refused'
+  invoke.mockReset().mockImplementation(async () => {
+    if (failure !== undefined)
+      throw failure
+    return { enabled: false, items: [] }
+  })
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-  remote.available = true
-  remote.refreshing = false
 })
 
 afterEach(() => {
+  cleanup()
+  client.clear()
   vi.restoreAllMocks()
 })
 
 describe('remote poll logging', () => {
   it('logs an unreachable instance once per outage, not once per poll', async () => {
-    bindSshApiForTests(onlyListMachines(unreachable))
-
-    await remote.refresh()
-    await remote.refresh()
-    await remote.refresh()
-
+    const { result } = renderHook(useRemote, { wrapper: Wrapper })
+    await waitFor(() => expect(result.current.available).toBe(false))
+    await act(async () => {
+      await result.current.refresh()
+      await result.current.refresh()
+    })
     expect(warn).toHaveBeenCalledTimes(1)
-    expect(remote.available).toBe(false)
+    expect(warn).toHaveBeenCalledWith('[remote] ssh api unreachable:', 'REMOTE_REQUEST_FAILED: connection refused')
   })
 
   it('logs again when a fresh outage follows a recovery', async () => {
-    bindSshApiForTests(onlyListMachines(unreachable))
-    await remote.refresh()
-    await remote.refresh()
-
-    bindSshApiForTests(onlyListMachines(async () => ({ enabled: false, machines: [] })))
-    await remote.refresh()
-    expect(remote.available).toBe(true)
+    const { result } = renderHook(useRemote, { wrapper: Wrapper })
+    await waitFor(() => expect(result.current.available).toBe(false))
+    await act(async () => {
+      await result.current.refresh()
+    })
+    failure = undefined
+    await act(async () => {
+      await result.current.refresh()
+    })
+    await waitFor(() => expect(result.current.available).toBe(true))
     expect(warn).toHaveBeenCalledTimes(1)
-
-    bindSshApiForTests(onlyListMachines(unreachable))
-    await remote.refresh()
-
+    failure = 'REMOTE_REQUEST_FAILED: connection refused'
+    await act(async () => {
+      await result.current.refresh()
+    })
+    await waitFor(() => expect(result.current.available).toBe(false))
     expect(warn).toHaveBeenCalledTimes(2)
   })
 
   it('does not log when the instance is reachable but has no SSH API', async () => {
-    const { SshApiHttpError } = await import('../src/store/modules/remote/api')
-    bindSshApiForTests(onlyListMachines(async () => {
-      throw new SshApiHttpError(404)
-    }))
-
-    await remote.refresh()
-
-    // 可达但没有 API 是「SSH 未启用」，不是不可达：不该产生降级日志
+    failure = 'REMOTE_API_MISSING: 404'
+    const { result } = renderHook(useRemote, { wrapper: Wrapper })
+    await waitFor(() => expect(client.getQueryState(queryKeys.remoteMachines)?.status).toBe('success'))
+    expect(result.current.available).toBe(true)
+    expect(result.current.enabled).toBe(false)
     expect(warn).not.toHaveBeenCalled()
-    expect(remote.available).toBe(true)
-    expect(remote.enabled).toBe(false)
   })
 })
