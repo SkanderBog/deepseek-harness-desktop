@@ -6,7 +6,6 @@ import { useDshShortcuts } from '@/hooks/use-dsh-shortcuts'
 import { useDshStyle } from '@/hooks/use-dsh-style'
 import { useIframeMessage } from '@/hooks/use-iframe-message'
 import { useIframePost } from '@/hooks/use-iframe-post'
-import { borderTintOf, useRemote } from '@/hooks/use-remote'
 import { store } from '@/store'
 import { Recovery } from '@/ui/plugin/recovery'
 import { Iframe } from './iframe'
@@ -41,10 +40,12 @@ export function Webview() {
 
   const { status, serviceHealthy } = useStore(store.harness)
   const { recovery } = useStore(store.recovery)
-  const remote = useRemote()
-  const { machines, activeId, activeTunnelUrl } = remote
+  const [{ url: activeTunnelUrl, tint: borderTint }, setRemoteView] = useState({ url: '', tint: null as string | null })
   const remoteMode = activeTunnelUrl !== ''
-  const borderTint = remoteMode ? borderTintOf(machines.find(machine => machine.id === activeId)) : null
+
+  function handleRemoteChange(url: string, tint: string | null) {
+    setRemoteView({ url, tint })
+  }
 
   // 2. Iframe 消息通信监听
   useIframeMessage<NavBridgeMessage>(iframeRef, (data) => {
@@ -97,7 +98,7 @@ export function Webview() {
   // 5. 统一布局输出
   return (
     <main className="relative flex flex-col min-h-0 flex-1" style={dshStyle.frame || {}}>
-      <Navbar remote={remote} sidebarCollapsed={sidebarCollapsed} {...bridge} />
+      <Navbar onRemoteChange={handleRemoteChange} sidebarCollapsed={sidebarCollapsed} {...bridge} />
       <div className="flex min-h-0 flex-1">
         {renderContent()}
       </div>

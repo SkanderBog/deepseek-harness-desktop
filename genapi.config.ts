@@ -19,7 +19,6 @@ const plugins = [
   'dsh-tauri-ssh',
 ]
 
-// 壳层走 @tauri-apps/plugin-http（Rust 侧发请求），复用 ssh 路由再生成一份调用层。
 const SHELL_SERVERS = [
   {
     input: 'packages/dsh-tauri-ssh/src/host/routes',

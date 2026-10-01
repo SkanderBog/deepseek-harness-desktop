@@ -41,7 +41,15 @@
 
 - [请求层](<src/apis/http.ts>) 只将生成 API 的 method/path/payload 转为 `invoke('remote', { method, payload })`；生成 API/类型保留，不再从前端读取 serviceURL 或直接 HTTP 请求 SSH 插件。
 - [Rust remote](<src-tauri/src/bridge/remote.rs>) 严格放行 13 个生成端点，使用当前配置的 loopback 端口，禁用代理与重定向；GET 查询参数/其他方法 JSON body，404/405 与不可达错误区分。注册命令并删除旧 loopback HTTP capability，桌宠 HTTP 不受影响。
-- [useRemote](<src/hooks/use-remote.ts>) 由 Webview 挂载一次，向 Navbar/切换器/弹窗传递；查询、轮询、单飞、缓存和失效由 React Query 管理，连接/断开用 mutation。只保留窗口选择、粘性 URL、取消代次和弹窗交互状态。
+- [useRemote](<src/hooks/use-remote.ts>) 由切换器挂载一次并在内部渲染连接弹窗；只向父层回报隧道 URL 和描边颜色。切换器在安装/恢复页保持挂载但隐藏 UI，保留启动寻址和轮询。查询、轮询、单飞、缓存和失效由 React Query 管理，连接/断开用 mutation；只保留窗口选择、粘性 URL、取消代次和弹窗交互状态。
 - 删除旧 remote store、SshApiClient、refreshing、booted、手写 timer 和测试注入层；既有切换/解析/界面/降级日志断言迁移，不删用例。查询失败保留缓存、缺 API 清空视图、迟到连接不抢切换。
 - Rust：`cargo check --locked --offline` 通过；remote 隔离 loopback 测试 15/15 通过，rustfmt 检查通过。前端相关 7 文件 / 58 测试连续 5 个乱序 seed（301–305）全部通过；变异缺 API 判定时 404/405 回归均失败，恢复后 seed 306 的 58 测试再通过。TypeScript/ESLint 通过。
-- 全仓 unit 实跑：227 文件通过，3 失败，2 既有跳过；2262 测试通过、13 失败、4 既有跳过。失败为上述 11 个 Windows SSH 基线，加 2 个未构建插件资源闭包用例（缺部署树中的 notification 包）；没有新的失败身份。
+- 转发/查询首次实现时全仓 unit 实跑：227 文件通过，3 失败，2 既有跳过；2262 测试通过、13 失败、4 既有跳过。失败为上述 11 个 Windows SSH 基线，加 2 个未构建插件资源闭包用例（缺部署树中的 notification 包）；没有新的失败身份。
+
+## 追加：remote 精简复核
+
+- [切换器](<src/layout/components/remote-switcher.tsx#L30-L55>) 直接调用 useRemote 并渲染连接弹窗；Webview/导航栏不再传递整包 Remote。隐藏 UI 不卸载查询，保留远端窗口启动寻址。
+- 删除重复 retry/可见性监听、cancelConnect 包装、未消费 wire 字段和单调用点 helper，保留实际字段校验、取消代次、粘性 URL 及窗口 focus 刷新；生产代码与配置净减少 68 行。
+- 原 14 个切换器用例迁移为真实 hook/QueryClient/弹窗与 native invoke 边界验证，新增 3 个集成回归；原 helper 的色点/描边断言迁入 UI，未弱化。相关 9 文件 / 68 测试在最终恢复后连续 5 个乱序 seed（511–515）通过；TypeScript、范围 ESLint 与 whitespace 检查通过。
+- 变异验证：重新搬运 remotePort 导致解析回归失败；忽略 tintBorder 导致 2 个 UI 回归失败，均已恢复并重验。新增原生 visibilitychange 回归证明 React Query 自带恢复刷新。
+- 本轮全仓 unit：229 文件通过、3 失败、2 既有跳过；2289 测试通过、13 失败、4 既有跳过。失败身份仍为同一 Windows/未构建资源基线；未构建插件、未增加跳过、未改无关 UI 样式。

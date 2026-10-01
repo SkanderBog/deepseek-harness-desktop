@@ -1,6 +1,6 @@
 import type { SshMachineRow } from './use-remote'
 import { describe, expect, it } from 'vitest'
-import { borderTintOf, dotClassOf, dotStyleOf, reconcileSwitcher } from './use-remote'
+import { dotClassOf, reconcileSwitcher } from './use-remote'
 
 function machineOf(partial: Partial<SshMachineRow>): SshMachineRow {
   return {
@@ -15,7 +15,6 @@ describe('dotClassOf（S3 词汇表色点语义）', () => {
   it('机器标识色优先：任何状态都不覆盖内联色', () => {
     for (const state of ['disconnected', 'connected', 'reconnecting', 'given-up'] as const) {
       expect(dotClassOf({ color: '#ff00ff', state })).toBe('')
-      expect(dotStyleOf({ color: '#ff00ff' })).toEqual({ backgroundColor: '#ff00ff' })
     }
   })
 
@@ -26,16 +25,6 @@ describe('dotClassOf（S3 词汇表色点语义）', () => {
     expect(dotClassOf({ state: 'testing' })).toBe('bg-warning')
     expect(dotClassOf({ state: 'given-up' })).toBe('bg-danger')
     expect(dotClassOf({ state: 'disconnected' })).toBe('bg-line-strong')
-    expect(dotStyleOf({})).toBeUndefined()
-  })
-})
-
-describe('borderTintOf（内容区着色）', () => {
-  it('活动机器勾选 tintBorder 且有标识色才描边', () => {
-    expect(borderTintOf(machineOf({ color: '#123456', tintBorder: true }))).toBe('#123456')
-    expect(borderTintOf(machineOf({ color: '#123456' }))).toBeNull()
-    expect(borderTintOf(machineOf({ tintBorder: true }))).toBeNull()
-    expect(borderTintOf(undefined)).toBeNull()
   })
 })
 

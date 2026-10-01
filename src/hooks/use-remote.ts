@@ -1,4 +1,4 @@
-import type { SshConnectionState, SshProgress, SshProgressPhase } from '@/apis/remote.types'
+import type { SshConnectionState, SshMachineListItem, SshProgress, SshProgressPhase } from '@/apis/remote.types'
 import { useEventListener, useUnmount, useWatch } from '@reause/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -6,7 +6,7 @@ import { useRef, useState } from 'react'
 import { getMachines, getMachinesEvents, postMachinesConnect, postMachinesDisconnect } from '@/apis/remote'
 import { queryKeys } from '@/config/query-keys'
 
-export type SshMachineRow = { id: string, name: string, state: SshConnectionState } & Omit<NonNullable<Awaited<ReturnType<typeof getMachines>>['items']>[number], 'id' | 'name' | 'state'>
+export type SshMachineRow = { id: string, name: string, state: SshConnectionState } & Pick<SshMachineListItem, 'color' | 'tintBorder' | 'host' | 'port' | 'user' | 'tunnelBaseUrl' | 'lastError' | 'nextRetryAt' | 'authMethod'> & { progress?: Pick<SshProgress, 'phase'> }
 
 interface SwitcherTargets {
   activeId: string | null
@@ -41,7 +41,6 @@ export function useRemote() {
         throw error
       }
     },
-    retry: false,
     refetchInterval: 2000,
   })
   const machines = machinesQuery.data?.enabled ? machinesQuery.data.machines : []
@@ -88,7 +87,6 @@ export function useRemote() {
       const items = eventEntriesOf(await getMachinesEvents({ machineId: trackedId!, sinceSeq }))
       return [...previous, ...items.filter(item => item.seq >= sinceSeq)]
     },
-    retry: false,
     refetchInterval: 2000,
     gcTime: 0,
   })
@@ -120,10 +118,6 @@ export function useRemote() {
   }, { immediate: true })
 
   useEventListener('focus', () => {
-    if (!document.hidden)
-      void refresh()
-  })
-  useEventListener(useRef(document), 'visibilitychange', () => {
     if (!document.hidden)
       void refresh()
   })
@@ -178,11 +172,6 @@ export function useRemote() {
     disconnect.mutate(machineId)
   }
 
-  function cancelConnect(machineId: string) {
-    if (targets.pendingId === machineId)
-      disconnectMachine(machineId)
-  }
-
   return {
     machines,
     enabled,
@@ -196,7 +185,6 @@ export function useRemote() {
     backToLocal,
     disconnect: disconnectMachine,
     dismissConnect,
-    cancelConnect,
     refresh,
   }
 }
@@ -218,14 +206,6 @@ export function dotClassOf(machine: Pick<SshMachineRow, 'color' | 'state'>): str
     default:
       return 'bg-line-strong'
   }
-}
-
-export function dotStyleOf(machine: Pick<SshMachineRow, 'color'>): Record<string, string> | undefined {
-  return machine.color !== undefined ? { backgroundColor: machine.color } : undefined
-}
-
-export function borderTintOf(machine: SshMachineRow | undefined): string | null {
-  return machine?.tintBorder && machine.color !== undefined ? machine.color : null
 }
 
 export function reconcileSwitcher(prev: SwitcherTargets, machines: readonly SshMachineRow[]): SwitcherTargets {
@@ -252,10 +232,8 @@ export function reconcileSwitcher(prev: SwitcherTargets, machines: readonly SshM
 
 export function machineRowsOf(value?: { enabled?: boolean, items?: readonly unknown[], discovered?: readonly unknown[] }): { enabled: boolean, machines: SshMachineRow[] } {
   const machines = [...(value?.items ?? []), ...(value?.discovered ?? [])]
-    .flatMap((raw) => {
-      const row = machineRowOf(raw)
-      return row === undefined ? [] : [row]
-    })
+    .map(machineRowOf)
+    .filter((row): row is SshMachineRow => row !== undefined)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   return { enabled: value?.enabled === true, machines }
 }
@@ -287,10 +265,6 @@ function machineRowOf(raw: unknown): SshMachineRow | undefined {
     ...typeof value.host === 'string' && value.host !== '' ? { host: value.host } : {},
     ...typeof value.port === 'number' ? { port: value.port } : {},
     ...typeof value.user === 'string' && value.user !== '' ? { user: value.user } : {},
-    ...typeof value.remotePort === 'number' ? { remotePort: value.remotePort } : {},
-    ...typeof value.startCommand === 'string' && value.startCommand !== '' ? { startCommand: value.startCommand } : {},
-    ...value.hasPassword === true ? { hasPassword: true } : {},
-    ...value.hasPassphrase === true ? { hasPassphrase: true } : {},
     state: value.state as SshConnectionState,
     ...typeof value.tunnelBaseUrl === 'string' ? { tunnelBaseUrl: value.tunnelBaseUrl } : {},
     ...typeof value.lastError === 'string' ? { lastError: value.lastError } : {},
@@ -300,18 +274,11 @@ function machineRowOf(raw: unknown): SshMachineRow | undefined {
   }
 }
 
-function progressOf(raw: unknown): { progress?: SshProgress } {
+function progressOf(raw: unknown): { progress?: Pick<SshProgress, 'phase'> } {
   if (typeof raw !== 'object' || raw === null)
     return {}
   const value = raw as Record<string, unknown>
   if (!['handshake', 'installing', 'starting', 'probing', 'syncing'].includes(String(value.phase)))
     return {}
-  return {
-    progress: {
-      phase: value.phase as SshProgressPhase,
-      ...typeof value.attempt === 'number' ? { attempt: value.attempt } : {},
-      ...typeof value.total === 'number' ? { total: value.total } : {},
-      ...typeof value.log === 'string' ? { log: value.log } : {},
-    },
-  }
+  return { progress: { phase: value.phase as SshProgressPhase } }
 }

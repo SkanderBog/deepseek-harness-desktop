@@ -147,6 +147,21 @@ describe('useRemote 查询、降级与启动寻址', () => {
     expect(invoke.mock.calls.filter(call => call[1].method.endsWith('/machines'))).toHaveLength(4)
   })
 
+  it('重新可见时由 React Query 刷新并恢复可用状态', async () => {
+    listError = 'REMOTE_REQUEST_FAILED: connection refused'
+    const { result } = mount()
+    await waitFor(() => expect(result.current.available).toBe(false))
+    await waitFor(() => expect(client.getQueryState(queryKeys.remoteMachines)?.fetchStatus).toBe('idle'))
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    act(() => document.dispatchEvent(new Event('visibilitychange', { bubbles: true })))
+    listError = undefined
+    visibility.mockReturnValue('visible')
+    act(() => document.dispatchEvent(new Event('visibilitychange', { bubbles: true })))
+    await waitFor(() => expect(result.current.available).toBe(true))
+    expect(result.current.machines.map(row => row.name)).toEqual(['alpha'])
+    expect(invoke.mock.calls.filter(call => call[1].method.endsWith('/machines'))).toHaveLength(2)
+  })
+
   it('remote-窗口已连接目标直接切换', async () => {
     windowInfo.label = 'remote-m1'
     rows = [machineOf({ state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' })]
@@ -363,7 +378,7 @@ describe('useRemote 切换和连接进度', () => {
     const { result } = await ready()
     act(() => result.current.switchTo('m1'))
     await waitFor(() => expect(connect).toHaveBeenCalled())
-    act(() => result.current.cancelConnect('m1'))
+    act(() => result.current.disconnect('m1'))
     expect(result.current.pendingId).toBeNull()
     await waitFor(() => expect(disconnect).toHaveBeenCalledWith('m1'))
     await act(async () => {

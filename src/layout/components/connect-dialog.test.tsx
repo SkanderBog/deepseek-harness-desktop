@@ -24,7 +24,6 @@ function remoteOf(overrides: Partial<Remote> = {}): Remote {
     backToLocal: vi.fn(),
     disconnect: vi.fn(),
     dismissConnect: vi.fn(),
-    cancelConnect: vi.fn(),
     refresh: vi.fn<Remote['refresh']>(),
     ...overrides,
   }
@@ -95,7 +94,7 @@ describe('connectDialog 连接进度弹窗', () => {
       pendingId: 'm1',
       connectTrail: ['handshake'],
       connectLog: ['[handshake] ssh ok'],
-      cancelConnect: cancelSpy,
+      disconnect: cancelSpy,
     })
     const { rerender } = render(<ConnectDialog remote={remote} />)
     await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
@@ -119,7 +118,7 @@ describe('connectDialog 连接进度弹窗', () => {
     await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(remote.dismissConnect).toHaveBeenCalledOnce())
-    expect(remote.cancelConnect).not.toHaveBeenCalled()
+    expect(remote.disconnect).not.toHaveBeenCalled()
     remote = { ...remote, connectDismissed: true, connectTrail: [], connectLog: [] }
     rerender(<ConnectDialog remote={remote} />)
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())

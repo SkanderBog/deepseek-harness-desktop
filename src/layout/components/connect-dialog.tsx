@@ -5,14 +5,6 @@ import { If } from 'react-if-lite'
 import { cn } from 'tailwind-variants'
 import { Logs } from '@/components/logs'
 
-/**
- * 连接进度弹窗：点击未连接机器后实时呈现管线进度。
- *
- * 内容：阶段步骤条（只显示真实走过的阶段，当前阶段高亮）+ machine.events
- * 实时日志尾。成功即自动关闭（pendingId 清空）；失败定格：直接原因 +
- * 已走阶段 + 日志全部保留，提供「重试 / 关闭」。进行中可关闭弹窗，
- * 连接在后台继续（不影响引擎侧）。
- */
 export function ConnectDialog({ remote }: { remote: Remote }) {
   const { t } = useTranslation()
   const { machines, pendingId, connectFailed, connectTrail, connectLog, connectDismissed } = remote
@@ -96,7 +88,7 @@ export function ConnectDialog({ remote }: { remote: Remote }) {
                   className="rounded-md"
                   variant="secondary"
                   data-testid="connect-cancel"
-                  onPress={() => pendingId !== null && remote.cancelConnect(pendingId)}
+                  onPress={() => pendingId !== null && remote.disconnect(pendingId)}
                 >
                   {t('remote.connect.cancel')}
                 </Button>

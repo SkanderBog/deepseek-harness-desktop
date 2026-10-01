@@ -28,17 +28,17 @@ describe('machineRowsOf', () => {
     expect(machineRowsOf({ enabled: true })).toEqual({ enabled: true, machines: [] })
   })
 
-  it('progress 白名单外的阶段整块丢弃', () => {
+  it('progress 只保留合法阶段，丢弃壳层未消费的字段', () => {
     const { machines } = machineRowsOf({
       enabled: true,
       items: [
         { id: 'm1', name: 'm1', state: 'connecting', progress: { phase: 'bogus' } },
-        { id: 'm2', name: 'm2', state: 'connecting', progress: { phase: 'installing', attempt: 2 } },
+        { id: 'm2', name: 'm2', state: 'connecting', remotePort: 3080, startCommand: 'dsh', hasPassword: true, hasPassphrase: true, progress: { phase: 'installing', attempt: 2, total: 3, log: 'download' } },
       ],
     })
 
     expect(machines[0].progress).toBeUndefined()
-    expect(machines[1].progress).toEqual({ phase: 'installing', attempt: 2 })
+    expect(machines[1]).toEqual({ id: 'm2', name: 'm2', state: 'connecting', progress: { phase: 'installing' } })
   })
 })
 
