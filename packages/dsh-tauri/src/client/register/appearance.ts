@@ -29,10 +29,11 @@ export const registerAppearance = defineRegister<ClientContext>((controller, ctx
     if (!current)
       return
     const { canvas } = appearanceColors(current, theme!.getTheme().active.colorScheme)
-    const alpha = current.opacity / 100
+    const translucent = current.transparency && current.opacity < 100
     style.textContent = [
-      current.opacity < 100 ? `html{background:transparent!important}body{background:color-mix(in srgb,${canvas} ${alpha * 100}%,transparent)!important}` : '',
-      current.terminal ? 'body{--dsw-font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}body [data-sidebar-collapsed]:has(>[data-shell-overlay]){grid-template-columns:var(--dsh-appearance-columns)!important}body [data-sidebar-collapsed] [data-slot="sidebar"]{visibility:hidden}' : '',
+      translucent ? `html{background:transparent!important}body{background:color-mix(in srgb,${canvas} ${current.opacity}%,transparent)!important}` : '',
+      translucent && current.sidebarOnly ? `body :has(>[data-slot="main"]),body [data-rightbar-col]{--dsw-alias-bg-base:${canvas};background:${canvas}!important}` : '',
+      current.terminal ? 'body [data-sidebar-collapsed]:has(>[data-shell-overlay]){grid-template-columns:var(--dsh-appearance-columns)!important}body [data-sidebar-collapsed] [data-slot="sidebar"]{visibility:hidden}' : '',
     ].filter(Boolean).join('\n')
   }
 
@@ -78,7 +79,7 @@ export const registerAppearance = defineRegister<ClientContext>((controller, ctx
     current = next
     removeTokens?.()
     const tokens = appearanceTokens(next)
-    if (next.opacity < 100) {
+    if (next.transparency && next.opacity < 100) {
       tokens['--dsw-alias-bg-base'] = { dark: 'transparent', light: 'transparent' }
       tokens['--dsw-specific-sidebar-fill'] = { dark: 'transparent', light: 'transparent' }
     }

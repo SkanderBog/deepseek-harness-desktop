@@ -710,6 +710,8 @@ mod tests {
                 palette: "nord".into(),
                 terminal: true,
                 opacity: 70,
+                transparency: true,
+                sidebar_only: true,
             },
             harness_max_heap_mb: Some(4096),
             zoom_factor: 1.6,

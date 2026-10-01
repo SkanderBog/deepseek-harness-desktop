@@ -1,6 +1,6 @@
 import type { PropsWithOverlays } from '@overlastic/react'
 import type { DshPlugin } from '@/types'
-import { Cpu, LogoWindows, PersonPencil, Puzzle } from '@gravity-ui/icons'
+import { Brush, Cpu, LogoWindows, PersonPencil, Puzzle } from '@gravity-ui/icons'
 import { cn, Modal } from '@heroui/react'
 import { useDisclosure } from '@overlastic/react'
 import { useListener } from '@reause/core'
@@ -38,7 +38,7 @@ export function ConfigDialog(props: ConfigDialogProps) {
 
   const navs: { label: string, value: ConfigTab, icon: typeof Cpu }[] = [
     { label: t('config.application'), value: 'application', icon: LogoWindows },
-    { label: t('config.appearance'), value: 'appearance', icon: PersonPencil },
+    { label: t('config.appearance'), value: 'appearance', icon: Brush },
     { label: t('config.profiles'), value: 'profiles', icon: PersonPencil },
     { label: t('config.plugins'), value: 'plugins', icon: Puzzle },
     { label: t('config.harness'), value: 'harness', icon: Cpu },

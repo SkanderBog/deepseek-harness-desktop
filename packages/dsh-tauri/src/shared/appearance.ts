@@ -1,20 +1,25 @@
-export const APPEARANCE_DEFAULTS = { palette: 'default', terminal: false, opacity: 100 } as const
+export const APPEARANCE_DEFAULTS = { palette: 'default', terminal: false, transparency: false, opacity: 100, sidebarOnly: false } as const
 export const APPEARANCE_PALETTES = ['default', 'nord', 'solarized', 'forest', 'amber'] as const
 
 export interface Appearance {
   palette: typeof APPEARANCE_PALETTES[number]
   terminal: boolean
+  transparency: boolean
   opacity: number
+  sidebarOnly: boolean
 }
 
 export function normalizeAppearance(value: unknown): Appearance {
   const input = value as Partial<Appearance> | null
+  const opacity = typeof input?.opacity === 'number' && Number.isFinite(input.opacity)
+    ? Math.round(Math.min(100, Math.max(20, input.opacity)))
+    : 100
   return {
     palette: APPEARANCE_PALETTES.includes(input?.palette as Appearance['palette']) ? input!.palette! : 'default',
     terminal: input?.terminal === true,
-    opacity: typeof input?.opacity === 'number' && Number.isFinite(input.opacity)
-      ? Math.round(Math.min(100, Math.max(20, input.opacity)))
-      : 100,
+    transparency: input?.transparency === undefined ? opacity < 100 : input.transparency === true,
+    opacity,
+    sidebarOnly: input?.sidebarOnly === true,
   }
 }
 
@@ -32,7 +37,7 @@ export function appearanceColors(appearance: Appearance, scheme: 'dark' | 'light
 }
 
 export function appearanceTokens(appearance: Appearance): Record<string, { dark: string, light: string }> {
-  if (appearance.palette === 'default' && appearance.opacity === 100)
+  if (appearance.palette === 'default' && (!appearance.transparency || appearance.opacity === 100))
     return {}
   const modes = (scheme: 'dark' | 'light') => {
     const { canvas, panel, surface, text, muted, accent } = appearanceColors(appearance, scheme)

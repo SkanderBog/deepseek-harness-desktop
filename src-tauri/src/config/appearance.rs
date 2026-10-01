@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(from = "serde_json::Value")]
+#[serde(rename_all = "camelCase", from = "serde_json::Value")]
 pub struct Appearance {
     pub palette: String,
     pub terminal: bool,
+    pub transparency: bool,
     pub opacity: u8,
+    pub sidebar_only: bool,
 }
 
 impl Default for Appearance {
@@ -13,21 +15,28 @@ impl Default for Appearance {
         Self {
             palette: "default".into(),
             terminal: false,
+            transparency: false,
             opacity: 100,
+            sidebar_only: false,
         }
     }
 }
 
 impl From<serde_json::Value> for Appearance {
     fn from(value: serde_json::Value) -> Self {
+        let opacity = value["opacity"]
+            .as_f64()
+            .filter(|value| value.is_finite())
+            .map(|value| value.round().clamp(20.0, 100.0) as u8)
+            .unwrap_or(100);
         let mut appearance = Self {
             palette: value["palette"].as_str().unwrap_or("default").to_owned(),
             terminal: value["terminal"].as_bool().unwrap_or(false),
-            opacity: value["opacity"]
-                .as_f64()
-                .filter(|value| value.is_finite())
-                .map(|value| value.round().clamp(20.0, 100.0) as u8)
-                .unwrap_or(100),
+            transparency: value
+                .get("transparency")
+                .map_or(opacity < 100, |value| value.as_bool().unwrap_or(false)),
+            opacity,
+            sidebar_only: value["sidebarOnly"].as_bool().unwrap_or(false),
         };
         appearance.normalize();
         appearance
@@ -56,6 +65,41 @@ mod tests {
         assert_eq!(appearance, Appearance::default());
         assert_eq!(appearance.opacity, 100);
         assert!(!appearance.terminal);
+    }
+
+    #[test]
+    fn transparency_migrates_once_and_is_independent_of_opacity() {
+        for (value, expected) in [
+            (serde_json::json!({"opacity": 70}), true),
+            (
+                serde_json::json!({"opacity": 70, "transparency": false}),
+                false,
+            ),
+            (
+                serde_json::json!({"opacity": 100, "transparency": true}),
+                true,
+            ),
+            (
+                serde_json::json!({"opacity": 70, "transparency": "true"}),
+                false,
+            ),
+        ] {
+            let appearance: Appearance = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(appearance.transparency, expected, "{value}");
+            let saved = serde_json::to_value(&appearance).unwrap();
+            assert_eq!(saved["transparency"], expected);
+            assert_eq!(
+                serde_json::from_value::<Appearance>(saved).unwrap(),
+                appearance
+            );
+        }
+        let appearance: Appearance =
+            serde_json::from_value(serde_json::json!({"sidebarOnly": true})).unwrap();
+        assert!(appearance.sidebar_only);
+        assert_eq!(
+            serde_json::to_value(appearance).unwrap()["sidebarOnly"],
+            true
+        );
     }
 
     #[test]
@@ -95,7 +139,8 @@ mod tests {
                 Appearance {
                     palette: "nord".into(),
                     terminal: true,
-                    opacity: 100
+                    opacity: 100,
+                    ..Default::default()
                 },
                 "{value}"
             );
@@ -108,6 +153,7 @@ mod tests {
             palette: "unknown".into(),
             terminal: true,
             opacity: 0,
+            ..Default::default()
         };
         appearance.normalize();
         assert_eq!(appearance.palette, "default");

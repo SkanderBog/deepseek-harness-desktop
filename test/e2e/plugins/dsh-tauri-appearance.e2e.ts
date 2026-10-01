@@ -33,14 +33,33 @@ describe('built-in desktop appearance', () => {
     const app = await newDshPage(browser, { ready: 'style[id="dsh-tauri:appearance"]' })
     try {
       const sidebar = app.frame.locator('[data-slot="sidebar"]')
+      const originalFont = await app.frame.locator('body').evaluate(el => getComputedStyle(el).fontFamily)
       await app.page.evaluate(() => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'dsh://appearance', appearance: { terminal: true } }, location.origin))
       await expect.poll(() => sidebar.evaluate(el => el.parentElement!.getBoundingClientRect().width), { message: '终端模式下侧栏不应占用空白列' }).toBe(0)
       expect(await sidebar.evaluate(el => getComputedStyle(el).visibility), '隐藏侧栏内容不可见').toBe('hidden')
-      expect(await app.frame.locator('body').evaluate(el => getComputedStyle(el).fontFamily)).toContain('monospace')
+      expect(await app.frame.locator('body').evaluate(el => getComputedStyle(el).fontFamily)).toBe(originalFont)
       await app.page.evaluate(() => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'dsh://sidebar:toggle' }, location.origin))
       await expect.poll(() => sidebar.evaluate(el => el.parentElement!.getBoundingClientRect().width), { message: '原有侧栏开关必须能恢复侧栏' }).toBeGreaterThanOrEqual(264)
       expect(await sidebar.evaluate(el => getComputedStyle(el).visibility), '展开后侧栏内容可见').toBe('visible')
       expect(app.errors, '终端模式不得产生浏览器错误').toEqual([])
+    }
+    finally {
+      await app.close()
+    }
+  })
+
+  it('keeps the session opaque while the sidebar is transparent and restores full-window transparency', async () => {
+    const app = await newDshPage(browser, { ready: 'style[id="dsh-tauri:appearance"]' })
+    try {
+      await app.page.evaluate(() => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'dsh://appearance', appearance: { palette: 'forest', transparency: true, opacity: 70, sidebarOnly: true } }, location.origin))
+      const main = app.frame.locator('[data-slot="main"]')
+      await expect.poll(() => main.evaluate(el => getComputedStyle(el.parentElement!).backgroundColor), { message: '会话区域必须有不透明背景' }).toMatch(/^rgb\(/)
+      expect(await main.evaluate(el => getComputedStyle(el).getPropertyValue('--dsw-alias-bg-base'))).toMatch(/^#[\da-f]{6}$/i)
+      expect(await app.frame.locator('[data-slot="sidebar"]').evaluate(el => getComputedStyle(el).getPropertyValue('--dsw-alias-bg-base'))).toBe('transparent')
+      expect(await app.frame.locator('body').evaluate(el => getComputedStyle(el).backgroundColor)).toMatch(/(?:0\.7\)|\/ 0\.7\))/)
+      await app.page.evaluate(() => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'dsh://appearance', appearance: { palette: 'forest', transparency: true, opacity: 70, sidebarOnly: false } }, location.origin))
+      await expect.poll(() => main.evaluate(el => getComputedStyle(el).getPropertyValue('--dsw-alias-bg-base'))).toBe('transparent')
+      expect(app.errors).toEqual([])
     }
     finally {
       await app.close()

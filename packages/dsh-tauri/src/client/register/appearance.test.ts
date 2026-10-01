@@ -80,9 +80,17 @@ describe('desktop appearance bridge', () => {
     expect(document.querySelector('style')!.textContent).toContain('#eceff4 70%')
   })
 
+  it('keeps the canvas opaque when transparency is explicitly disabled', () => {
+    const { send, theme } = setup()
+    send({ transparency: false, opacity: 70 })
+    expect(document.querySelector('style')!.textContent).toBe('')
+    expect(theme.overrideTokens).not.toHaveBeenCalled()
+  })
+
   it('hides the collapsed sidebar while retaining the live right-panel width and restores layout on reset', async () => {
     const { send, frame, ctx } = setup()
     send({ terminal: true })
+    expect(document.querySelector('style')!.textContent).not.toMatch(/font-family|monospace/)
     expect(frame.hasAttribute('data-sidebar-collapsed')).toBe(true)
     expect(frame.style.getPropertyValue('--dsh-appearance-columns')).toBe('0px minmax(400px, 1fr) minmax(0px, 350px)')
     frame.style.gridTemplateColumns = '56px minmax(0px, 1fr) minmax(0px, 480px)'

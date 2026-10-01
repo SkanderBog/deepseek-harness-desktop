@@ -17,7 +17,7 @@ export function useAppearance(iframeRef: RefObject<HTMLIFrameElement | null>) {
 
   function sendAppearance() {
     const value = normalizeAppearance(appearance)
-    post({ type: 'dsh://appearance', appearance: { ...value, opacity: transparent ? value.opacity : 100 } })
+    post({ type: 'dsh://appearance', appearance: { ...value, transparency: transparent && value.transparency, opacity: transparent && value.transparency ? value.opacity : 100 } })
   }
 
   useIframeMessage<{ type?: string }>(iframeRef, (message) => {
@@ -35,7 +35,7 @@ export function useAppearance(iframeRef: RefObject<HTMLIFrameElement | null>) {
   }, { immediate: true })
   const value = normalizeAppearance(appearance)
   const { canvas, panel, surface, text, muted, accent } = appearanceColors(value, dshStyle.colorScheme ?? (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'))
-  const alpha = transparent ? value.opacity : 100
+  const alpha = transparent && value.transparency ? value.opacity : 100
   return value.palette === 'default' && alpha === 100
     ? ''
     : `

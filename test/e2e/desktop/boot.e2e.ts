@@ -147,7 +147,7 @@ describe.skipIf(process.platform === 'darwin')('桌面端启动冒烟', () => {
     }
     async function appearance() {
       return browser.execute(async () => {
-        const bridge = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string) => Promise<{ appearance: { palette: string, terminal: boolean, opacity: number } }> } }).__TAURI_INTERNALS__
+        const bridge = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string) => Promise<{ appearance: { palette: string, terminal: boolean, transparency: boolean, opacity: number, sidebarOnly: boolean } }> } }).__TAURI_INTERNALS__
         return (await bridge.invoke('get_app_config')).appearance
       })
     }
@@ -161,14 +161,20 @@ describe.skipIf(process.platform === 'darwin')('桌面端启动冒烟', () => {
     // 内嵌驱动调用 HTMLElement.click；React Aria 的 label 会拦截它，须激活真实 input。
     await terminal.click()
     await browser.waitUntil(async () => (await appearance()).terminal, { timeoutMsg: '终端开关未通过原生桥保存' })
-    await click('dsh-appearance-opacity')
-    await click('dsh-appearance-opacity-70')
-    await browser.waitUntil(async () => (await appearance()).opacity === 70, { timeoutMsg: '原生设置未保存 70% 不透明度' })
-    expect(await appearance(), '原生设置与所选外观不一致').toEqual({ palette: 'nord', terminal: true, opacity: 70 })
+    const transparency = await browser.$('[data-testid="dsh-appearance-transparency"] input[role="switch"]')
+    await transparency.waitForEnabled()
+    await transparency.click()
+    await browser.waitUntil(async () => (await appearance()).transparency)
+    const opacity = await browser.$('[data-testid="dsh-appearance-opacity"] input[type="range"]')
+    await opacity.waitForEnabled()
+    await browser.execute(() => document.querySelector<HTMLInputElement>('[data-testid="dsh-appearance-opacity"] input[type="range"]')!.focus())
+    await browser.keys('Home')
+    await browser.waitUntil(async () => (await appearance()).opacity === 20, { timeoutMsg: '原生设置未保存滑块的 20% 不透明度' })
+    expect(await appearance(), '原生设置与所选外观不一致').toEqual({ palette: 'nord', terminal: true, transparency: true, opacity: 20, sidebarOnly: false })
     expect(await browser.$('[data-testid="dsh-appearance-restart"]').isDisplayed(), '切换透明窗口缺少重启提示').toBe(true)
     await click('dsh-appearance-reset')
     await browser.waitUntil(async () => (await appearance()).palette === 'default', { timeoutMsg: '原生外观设置未恢复默认值' })
-    expect(await appearance(), '重置未还原完整原生外观设置').toEqual({ palette: 'default', terminal: false, opacity: 100 })
+    expect(await appearance(), '重置未还原完整原生外观设置').toEqual({ palette: 'default', terminal: false, transparency: false, opacity: 100, sidebarOnly: false })
     expect(await browser.$('[data-testid="dsh-appearance-restart"]').isExisting(), '默认窗口不应显示重启提示').toBe(false)
     await click('dsh-config-dialog-close')
   })

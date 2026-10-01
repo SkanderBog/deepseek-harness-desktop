@@ -55,6 +55,16 @@ describe('desktop appearance projection', () => {
     expect(post).not.toHaveBeenCalled()
   })
 
+  it('immediately restores an opaque canvas when native transparency is disabled', async () => {
+    const { post, ready, hook } = setup(true)
+    ready()
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'nord', terminal: false, opacity: 70, transparency: false }
+    })
+    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { transparency: false, opacity: 100 } })
+    expect(hook.result.current).toContain('#343c4a 100%')
+  })
+
   it('rejects an appearance handshake from the wrong origin', () => {
     const { post, ready } = setup(true)
     ready('https://example.invalid')
