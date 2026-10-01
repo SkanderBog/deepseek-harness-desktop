@@ -571,7 +571,10 @@ fn with_shell_chrome<'a>(
     let transparent = crate::config::get_store_dat_setting(app).appearance.opacity < 100;
     let builder = builder
         .transparent(transparent)
-        .initialization_script(format!("window.__DSH_TRANSPARENT__ = {transparent};"))
+        .initialization_script(format!(
+            "window.__DSH_TRANSPARENT__ = {transparent}; window.__DSH_STORE_FILE__ = {};",
+            serde_json::json!(crate::config::store_dat_file_name())
+        ))
         .inner_size(1280.0, 840.0)
         .min_inner_size(860.0, 620.0)
         .resizable(true);

@@ -139,6 +139,7 @@ describe.skipIf(process.platform === 'darwin')('桌面端启动冒烟', () => {
   }, ASSEMBLY_TIMEOUT_MS)
 
   it('persists appearance through the native bridge and restores defaults', async () => {
+    expect(await browser.execute(() => (window as unknown as { __DSH_STORE_FILE__: string }).__DSH_STORE_FILE__), '前端必须使用原生测试配置文件').toBe('.store.test.dat')
     async function click(id: string) {
       const element = await browser.$(`[data-testid="${id}"]`)
       await element.waitForClickable()
