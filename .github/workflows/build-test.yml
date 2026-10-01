@@ -47,17 +47,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # tauri-plugin-notifications 的 macOS 后端需要 Swift 6（typed throws），切到 Xcode 16。
-      # 镜像里没有 Xcode 16 时不能让整个 job 挂掉：`xcode-select -s ""` 会直接失败。
-      - name: Select Xcode 16
-        run: |
-          XCODE_APP="$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)"
-          if [ -n "$XCODE_APP" ]; then
-            sudo xcode-select -s "$XCODE_APP"
-          else
-            echo "::warning::镜像里没有 Xcode 16，沿用默认 Xcode；Swift 6 构建可能失败"
-          fi
-          swift --version
+      - name: Setup Xcode
+        uses: ./.github/actions/setup-xcode
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
