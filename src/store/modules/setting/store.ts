@@ -43,10 +43,14 @@ export const setting = defineStore({
 
 setting.use(persist({ hydrate: false }))
 
+// keep:effect 订阅与 WebView 同寿命，首次水合后仍须接收其它窗口的设置。
 const unlisten = listen<typeof setting.$state>('setting_updated', async (event) => {
   setting.$patch(event.payload)
   await setting.$persist.rehydrate()
-  unlisten.then(unlisten => unlisten())
+})
+
+import.meta.hot?.dispose(() => {
+  unlisten.then(stop => stop()).catch(() => {})
 })
 
 // 非 Tauri 环境（vitest/jsdom）listen 会 reject（无 invoke/window）；这只是
