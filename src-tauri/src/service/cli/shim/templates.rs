@@ -183,8 +183,10 @@ if ($userDsh) {
 pub(super) const SH_USER_DSH_PRECEDENCE: &str = r#"
 # Prefer a user-installed dsh on PATH (skip our own shim dir), fall back to bundled.
 # This preserves your own dsh binary and its $DSH_HOME config; nothing is overwritten.
-IFS=:
-for dir in $PATH; do
+remaining_path=${PATH-}:
+while [ -n "$remaining_path" ]; do
+  dir=${remaining_path%%:*}
+  remaining_path=${remaining_path#*:}
   dir=${dir:-.}
   if [ "$dir/dsh" -ef "$0" ]; then
     continue
@@ -193,7 +195,7 @@ for dir in $PATH; do
     exec "$dir/dsh" "$@"
   fi
 done
-unset IFS
+unset remaining_path
 "#;
 
 #[cfg(all(test, unix))]
@@ -262,24 +264,36 @@ mod tests {
             assert_eq!(output.stdout, b"FALLBACK\n", "PATH prefix: {prefix}");
         }
 
-        let user_bin = root.join("user-bin");
+        let user_bin = root.join("user[bin]");
         std::fs::create_dir_all(&user_bin).unwrap();
         let user_dsh = user_bin.join("dsh");
         std::fs::write(&user_dsh, "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 7\n").unwrap();
         std::fs::set_permissions(&user_dsh, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let output = tokio::time::timeout(
-            Duration::from_secs(2),
-            tokio::process::Command::new(&shim)
-                .env_clear()
-                .env("PATH", format!("{}:{}", bin.display(), user_bin.display()))
-                .args(["two words", "*"])
-                .kill_on_drop(true)
-                .output(),
-        )
-        .await
-        .expect("user command must finish")
-        .unwrap();
-        assert_eq!(output.status.code(), Some(7));
-        assert_eq!(output.stdout, b"two words\n*\n");
+        let decoy = root.join("userb");
+        std::fs::create_dir_all(&decoy).unwrap();
+        let decoy_dsh = decoy.join("dsh");
+        std::fs::write(&decoy_dsh, "#!/bin/sh\nexit 99\n").unwrap();
+        std::fs::set_permissions(&decoy_dsh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for path in [
+            format!("{}:{}", bin.display(), user_bin.display()),
+            format!("{}:", root.join("missing").display()),
+            String::new(),
+        ] {
+            let output = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::process::Command::new(&shim)
+                    .current_dir(&user_bin)
+                    .env_clear()
+                    .env("PATH", &path)
+                    .args(["two words", "*"])
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .expect("user command must finish")
+            .unwrap();
+            assert_eq!(output.status.code(), Some(7), "PATH: {path}");
+            assert_eq!(output.stdout, b"two words\n*\n", "PATH: {path}");
+        }
     }
 }
