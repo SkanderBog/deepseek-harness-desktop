@@ -19,6 +19,7 @@ export const registerAppearance = defineRegister<ClientContext>((controller, ctx
   document.head.append(style)
   let current: Appearance | undefined
   let removeTokens: (() => void) | undefined
+  // keep:effect 切换时立即释放观察器，避免 controller.observe 累积断开的实例；卸载由 controller 托管。
   let frameObserver: MutationObserver | undefined
   let waitingObserver: MutationObserver | undefined
   let frame: HTMLElement | null = null
