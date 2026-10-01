@@ -1144,6 +1144,7 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::get_pet_asset,
         crate::bridge::list_preset_pets,
         crate::desktop::pet_mouse::start_pet_mouse_stream,
+        crate::bridge::remote::remote,
         crate::bridge::remote_bridge_ping,
         crate::bridge::remote_open_window,
     ]

@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import type { SshKey } from '../locales/index'
 import type { MachinesNotice } from '../store/modules/machines.types'
 import type { InstallResult, MachineLifecycleState, MachineRow, MachineStatus, ProgressPhase, RemoteBridge, SecretValues } from '../types/index'
-import { Button, Input, Modal, StateDot } from 'dsh-tauri-ui/client'
+import { Button, Input, Modal, StateDot, Switch } from 'dsh-tauri-ui/client'
 import { cn, useStore } from 'dsh-tauri/client'
 import { useEffect, useState } from 'react'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
@@ -25,55 +25,6 @@ const COLOR_CHOICES = [
   '#EF4444',
   '#A855F7',
 ]
-
-const SECTION = 'flex flex-col gap-[12px] max-w-[960px] text-primary'
-const SECTION_HEAD = 'flex flex-wrap items-start justify-between gap-[12px]'
-const TITLE = 'm-0 text-[18px] leading-[28px] font-semibold text-primary'
-const INTRO = 'm-0 text-[13px] leading-[20px] text-tertiary'
-const CHROME = 'flex shrink-0 flex-wrap items-center gap-[8px]'
-const DANGER_ACTION = 'text-error'
-const HINT = 'm-0 text-[12px] leading-[18px] text-tertiary'
-const ERROR = 'm-0 text-[12px] leading-[18px] text-error'
-const FIELD_LABEL = 'text-[12px] leading-[18px] font-medium text-secondary'
-const FIELD_INPUT = 'box-border w-full'
-const LOG_STREAM = 'm-0 max-h-[160px] overflow-auto font-mono text-[11px] leading-[16px] whitespace-pre-wrap text-tertiary [overflow-wrap:anywhere]'
-const ROWS = 'm-0 mt-[12px] flex list-none flex-col overflow-hidden rounded-[12px] border border-border-l2 bg-layer-3 p-0'
-const ROW_CARD = 'flex flex-col gap-[8px] border-l-2 border-l-transparent px-[14px] py-[10px] [&+&]:border-t [&+&]:border-t-border-l2'
-const ROW_HEAD = 'flex items-center gap-[10px]'
-const ROW_IDENTITY = 'inline-flex min-w-0 items-center gap-[6px]'
-const ROW_NAME = 'text-[14px] leading-[22px] font-medium text-primary'
-const ROW_TAG = 'shrink-0 rounded-full border-0 bg-module-platform px-[8px] py-[2px] text-[11px] leading-[16px] text-secondary'
-const STATUS = 'text-[12px] leading-[18px] text-tertiary'
-const ROW_ACTIONS = 'ml-auto inline-flex items-center gap-[4px]'
-const EDITOR = 'mx-0 mb-[4px] mt-[2px] flex flex-col gap-[12px] border-t border-t-border-l2 pt-[12px]'
-const EDITOR_ACTIONS = 'flex items-center justify-end gap-[8px]'
-const GRID = 'grid grid-cols-[repeat(12,minmax(0,1fr))] gap-[10px_12px] max-[760px]:grid-cols-[repeat(6,minmax(0,1fr))]'
-const FIELD = 'flex min-w-0 flex-col gap-[6px] max-[520px]:col-span-6!'
-const STATE_DOT = 'relative inline-block h-[8px] w-[8px] shrink-0 rounded-full bg-current text-[var(--dsw-alias-label-caption)] after:absolute after:inset-[25%] after:rounded-full after:bg-current after:content-[\'\']'
-const COLOR_PIP = 'inline-block h-[10px] w-[10px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(0,0,0,0.12)]'
-const APPEARANCE = 'flex flex-wrap items-center gap-[10px]'
-const SWATCHES = 'inline-flex flex-wrap items-center gap-[6px]'
-const SWATCH = 'box-border h-[20px] w-[20px] cursor-pointer rounded-full border border-border-l2 bg-[color:var(--swatch-color)] p-0 hover:border-border-l4'
-const SWATCH_ON = 'outline-2 outline-brand outline-offset-2'
-const SWATCH_NONE = 'bg-[image:linear-gradient(to_top_right,transparent_calc(50%_-_1px),var(--dsw-alias-label-tertiary),transparent_calc(50%_+_1px))]'
-const SWITCH_ROW = 'ml-[4px] inline-flex items-center gap-[8px]'
-const SWITCH = 'relative h-[20px] w-[36px] cursor-pointer rounded-[10px] border-0 bg-border-l3 p-0 disabled:cursor-default disabled:opacity-40 [transition:background_0.15s_var(--ds-ease-in-out)] after:absolute after:top-[2px] after:left-[2px] after:h-[16px] after:w-[16px] after:rounded-full after:bg-layer-1 after:shadow-[0_1px_2px_rgba(0,0,0,0.2)] after:content-[\'\'] after:[transition:transform_0.15s_var(--ds-ease-in-out)]'
-const SWITCH_ON = 'bg-business after:translate-x-[16px]'
-const STEP_RAIL = 'm-0 ml-[8px] inline-flex list-none gap-[4px] p-0 align-middle'
-const STEP_DONE = 'rounded-full border border-[color:var(--dsw-alias-line-secondary,currentColor)] px-[6px] text-[11px] leading-[16px] text-tertiary'
-const STEP_CURRENT = 'rounded-full border border-current px-[6px] text-[11px] leading-[16px] text-[var(--dsw-alias-state-warning-primary,#d48806)]'
-const STATUS_ERROR = 'm-0 text-[12px] leading-[18px] text-error'
-const LINK = 'm-0 font-mono text-[12px] leading-[18px] text-tertiary [overflow-wrap:anywhere]'
-const INSTALL_BOX = 'flex flex-col gap-[8px] rounded-[8px] border border-border-l2 bg-[var(--dsw-alias-surface-tinted)] px-[12px] py-[10px]'
-const INSTALL_NOTE = 'm-0 text-[12px] leading-[18px] text-secondary'
-const NOTICE = 'm-0 text-[12px] leading-[18px] text-secondary'
-const EMPTY = 'm-0 rounded-[8px] border border-dashed border-border-l3 p-[12px] text-center text-[12px] leading-[18px] text-tertiary'
-const EMPTY_BLOCK = 'flex flex-col items-start gap-[8px]'
-const GROUP = 'mt-[12px] flex flex-col gap-[2px]'
-const GROUP_TITLE = 'm-0 text-[12px] leading-[18px] font-medium text-secondary'
-const GROUP_HINT = 'm-0 text-[12px] leading-[18px] text-tertiary'
-const REMOTE_CARD = 'mt-[4px] flex flex-col items-center gap-[12px] rounded-[12px] border-[0.5px] border-border-l2 bg-layer-1 px-[24px] py-[40px] text-center'
-const REMOTE_ICON = 'inline-flex h-[44px] w-[44px] items-center justify-center rounded-full bg-[var(--dsw-alias-surface-tinted)] text-success'
 
 interface Draft {
   key: string
@@ -130,32 +81,33 @@ function RowShell({ id, name, tag, tintColor, tintBorder, status, trail, actions
 }): ReactNode {
   return (
     <li
-      className={ROW_CARD}
+      className="flex flex-col gap-[8px] border-l-2 border-l-transparent px-[14px] py-[10px] [&+&]:border-t [&+&]:border-t-border-l2"
       data-testid={`machine-${id}`}
       style={tintBorder && tintColor !== undefined ? { borderLeftColor: tintColor } : undefined}
     >
-      <div className={ROW_HEAD}>
-        <span className={ROW_IDENTITY}>
+      <div className="flex items-center gap-[10px]">
+        <span className="inline-flex min-w-0 items-center gap-[6px]">
           <StateDotOf status={status} />
           {tintColor !== undefined
-            ? <span className={COLOR_PIP} style={{ background: tintColor }} aria-hidden="true" />
+            ? <span className="inline-block h-[10px] w-[10px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(0,0,0,0.12)]" style={{ background: tintColor }} aria-hidden="true" />
             : null}
-          <span className={ROW_NAME}>{name}</span>
-          <span className={ROW_TAG}>{tag}</span>
-          <span className={STATUS} data-testid={`status-${id}`}>{statusTextOf(status, t)}</span>
+          <span className="text-[14px] leading-[22px] font-medium text-primary">{name}</span>
+          <span className="shrink-0 rounded-full border-0 bg-module-platform px-[8px] py-[2px] text-[11px] leading-[16px] text-secondary">{tag}</span>
+          <span className="text-[12px] leading-[18px] text-tertiary" data-testid={`status-${id}`}>{statusTextOf(status, t)}</span>
           <StepRail trail={trail} t={t} />
         </span>
-        <span className={ROW_ACTIONS}>{actions}</span>
+        <span className="ml-auto inline-flex items-center gap-[4px]">{actions}</span>
       </div>
       {children}
     </li>
   )
 }
 
-function EditPanel({ draft, t, secretSet, dirty, saving, onChange, onSecret, onSave, onCancel }: {
+function EditPanel({ draft, t, hasPassword, hasPassphrase, dirty, saving, onChange, onSecret, onSave, onCancel }: {
   draft: Draft
   t: (key: SshKey) => string
-  secretSet: Record<string, boolean>
+  hasPassword: boolean
+  hasPassphrase: boolean
   dirty: SecretValues
   saving: boolean
   onChange: (key: string, patch: Partial<MachineRow>) => void
@@ -166,40 +118,40 @@ function EditPanel({ draft, t, secretSet, dirty, saving, onChange, onSecret, onS
   const { row } = draft
   const invalid = row.id === '' || row.name === '' || row.host === ''
   return (
-    <div className={EDITOR} data-testid={`editor-${row.id}`}>
-      <div className={GRID}>
+    <div className="mx-0 mb-[4px] mt-[2px] flex flex-col gap-[12px] border-t border-t-border-l2 pt-[12px]" data-testid={`editor-${row.id}`}>
+      <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-[10px_12px] max-[760px]:grid-cols-[repeat(6,minmax(0,1fr))]">
         <Field label={t('field.id')} span={3}>
-          <Input className={FIELD_INPUT} value={row.id} disabled />
+          <Input className="box-border w-full" value={row.id} disabled />
         </Field>
         <Field label={t('field.name')} span={4}>
-          <Input className={FIELD_INPUT} value={row.name} disabled={saving} onChange={event => onChange(draft.key, { name: event.target.value })} />
+          <Input className="box-border w-full" value={row.name} disabled={saving} onChange={event => onChange(draft.key, { name: event.target.value })} />
         </Field>
         <Field label={t('field.host')} span={5}>
-          <Input className={FIELD_INPUT} value={row.host} disabled={saving} onChange={event => onChange(draft.key, { host: event.target.value })} />
+          <Input className="box-border w-full" value={row.host} disabled={saving} onChange={event => onChange(draft.key, { host: event.target.value })} />
         </Field>
         <Field label={t('field.port')} span={3}>
-          <Input className={FIELD_INPUT} type="number" value={row.port} disabled={saving} onChange={event => onChange(draft.key, { port: numberOf(event.target.value, DEFAULT_SSH_PORT) })} />
+          <Input className="box-border w-full" type="number" value={row.port} disabled={saving} onChange={event => onChange(draft.key, { port: numberOf(event.target.value, DEFAULT_SSH_PORT) })} />
         </Field>
         <Field label={t('field.user')} span={3}>
-          <Input className={FIELD_INPUT} value={row.user} disabled={saving} onChange={event => onChange(draft.key, { user: event.target.value })} />
+          <Input className="box-border w-full" value={row.user} disabled={saving} onChange={event => onChange(draft.key, { user: event.target.value })} />
         </Field>
         <Field label={t('field.remotePort')} span={3}>
-          <Input className={FIELD_INPUT} type="number" value={row.remotePort} disabled={saving} onChange={event => onChange(draft.key, { remotePort: numberOf(event.target.value, DEFAULT_REMOTE_PORT) })} />
+          <Input className="box-border w-full" type="number" value={row.remotePort} disabled={saving} onChange={event => onChange(draft.key, { remotePort: numberOf(event.target.value, DEFAULT_REMOTE_PORT) })} />
         </Field>
         <Field label={t('field.profileName')} span={3}>
-          <Input className={FIELD_INPUT} value={row.profileName ?? ''} placeholder="remote" disabled={saving || (row.startCommand ?? '') !== ''} onChange={event => onChange(draft.key, { profileName: event.target.value })} />
+          <Input className="box-border w-full" value={row.profileName ?? ''} placeholder="remote" disabled={saving || (row.startCommand ?? '') !== ''} onChange={event => onChange(draft.key, { profileName: event.target.value })} />
         </Field>
         <Field label={t('field.startCommand')} span={12}>
-          <Input className={FIELD_INPUT} value={row.startCommand ?? ''} disabled={saving} onChange={event => onChange(draft.key, { startCommand: event.target.value })} />
+          <Input className="box-border w-full" value={row.startCommand ?? ''} disabled={saving} onChange={event => onChange(draft.key, { startCommand: event.target.value })} />
         </Field>
       </div>
-      <div className={GRID}>
-        <SecretField field="password" span={6} label={t('field.password')} keyName={draft.key} secretSet={secretSet} t={t} value={dirty.password ?? ''} onValue={onSecret} />
-        <SecretField field="passphrase" span={6} label={t('field.passphrase')} keyName={draft.key} secretSet={secretSet} t={t} value={dirty.passphrase ?? ''} onValue={onSecret} />
+      <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-[10px_12px] max-[760px]:grid-cols-[repeat(6,minmax(0,1fr))]">
+        <SecretField field="password" label={t('field.password')} keyName={draft.key} hasSecret={hasPassword} t={t} value={dirty.password ?? ''} onValue={onSecret} />
+        <SecretField field="passphrase" label={t('field.passphrase')} keyName={draft.key} hasSecret={hasPassphrase} t={t} value={dirty.passphrase ?? ''} onValue={onSecret} />
       </div>
       <AppearanceEditor row={row} t={t} onChange={onChange} draftKey={draft.key} />
-      <div className={EDITOR_ACTIONS}>
-        {invalid ? <p className={cn(HINT, 'mr-auto')}>{t('saveHint')}</p> : null}
+      <div className="flex items-center justify-end gap-[8px]">
+        {invalid ? <p className={cn('m-0 text-[12px] leading-[18px] text-tertiary', 'mr-auto')}>{t('saveHint')}</p> : null}
         <Button variant="ghost" size="sm" disabled={saving} onClick={() => onCancel(draft.key)}>
           {t('add.cancel')}
         </Button>
@@ -278,19 +230,19 @@ function RowDetails({ id, status, busy, logLines, bridgeError, installResult, t,
       {status?.dshMissing === true
         ? <InstallPanel status={status} busy={busy} t={t} onInstall={() => onInstall(id)} />
         : null}
-      {status?.lastError !== undefined ? <p className={STATUS_ERROR} role="alert">{status.lastError}</p> : null}
+      {status?.lastError !== undefined ? <p className="m-0 text-[12px] leading-[18px] text-error" role="alert">{status.lastError}</p> : null}
       {bridgeError !== undefined
         ? (
-            <p className={STATUS_ERROR} role="alert" data-testid={`bridge-error-${id}`}>
+            <p className="m-0 text-[12px] leading-[18px] text-error" role="alert" data-testid={`bridge-error-${id}`}>
               {t('bridge.error')}
               {bridgeError}
             </p>
           )
         : null}
-      {status?.tunnelBaseUrl !== undefined ? <p className={LINK}>{status.tunnelBaseUrl}</p> : null}
+      {status?.tunnelBaseUrl !== undefined ? <p className="m-0 font-mono text-[12px] leading-[18px] text-tertiary [overflow-wrap:anywhere]">{status.tunnelBaseUrl}</p> : null}
       <LogStream id={id} lines={logLines} fallback={status?.progress?.log} />
       {installResult !== undefined
-        ? <p className={INSTALL_NOTE} data-testid={`install-note-${id}`}>{installNoteOf(installResult, t)}</p>
+        ? <p className="m-0 text-[12px] leading-[18px] text-secondary" data-testid={`install-note-${id}`}>{installNoteOf(installResult, t)}</p>
         : null}
     </>
   )
@@ -299,7 +251,7 @@ function RowDetails({ id, status, busy, logLines, bridgeError, installResult, t,
 function StateDotOf({ status }: { status: MachineStatus | undefined }): ReactNode {
   const state = dotStateOf(status)
   if (state === 'idle')
-    return <span className={STATE_DOT} data-state="idle" aria-hidden="true" />
+    return <span className="relative inline-block h-[8px] w-[8px] shrink-0 rounded-full bg-current text-[var(--dsw-alias-label-caption)] after:absolute after:inset-[25%] after:rounded-full after:bg-current after:content-['']" data-state="idle" aria-hidden="true" />
   return <StateDot state={state} size={8} />
 }
 
@@ -310,7 +262,7 @@ function LogStream({ id, lines, fallback }: { id: string, lines: readonly string
   if (output === '')
     return null
   return (
-    <pre className={LOG_STREAM} data-testid={`machine-log-${id}`}>
+    <pre className="m-0 max-h-[160px] overflow-auto font-mono text-[11px] leading-[16px] whitespace-pre-wrap text-tertiary [overflow-wrap:anywhere]" data-testid={`machine-log-${id}`}>
       {output}
     </pre>
   )
@@ -325,14 +277,14 @@ function InstallPanel({ status, busy, t, onInstall }: {
   const installing = busy === 'install' || status.progress?.phase === 'installing'
   if (installing) {
     return (
-      <div className={INSTALL_BOX}>
-        <p className={INSTALL_NOTE}>{t('progress.installing')}</p>
+      <div className="flex flex-col gap-[8px] rounded-[8px] border border-border-l2 bg-[var(--dsw-alias-surface-tinted)] px-[12px] py-[10px]">
+        <p className="m-0 text-[12px] leading-[18px] text-secondary">{t('progress.installing')}</p>
       </div>
     )
   }
   return (
-    <div className={INSTALL_BOX}>
-      <p className={INSTALL_NOTE}>{t('install.hint')}</p>
+    <div className="flex flex-col gap-[8px] rounded-[8px] border border-border-l2 bg-[var(--dsw-alias-surface-tinted)] px-[12px] py-[10px]">
+      <p className="m-0 text-[12px] leading-[18px] text-secondary">{t('install.hint')}</p>
       <Button variant="primary" size="sm" disabled={busy !== undefined} onClick={onInstall}>
         {t('install.action')}
       </Button>
@@ -349,19 +301,19 @@ function installNoteOf(result: InstallResult, t: (key: SshKey) => string): strin
 
 type FieldSpan = 3 | 4 | 5 | 6 | 8 | 12
 
-const SPAN_CLASS: Record<FieldSpan, string> = {
-  3: 'col-span-3',
-  4: 'col-span-4 max-[760px]:col-span-3',
-  5: 'col-span-5 max-[760px]:col-span-3',
-  6: 'col-span-6 max-[760px]:col-span-3',
-  8: 'col-span-8 max-[760px]:col-span-6',
-  12: 'col-span-12 max-[760px]:col-span-6',
-}
-
 function Field({ label, span = 6, children }: { label: string, span?: FieldSpan, children: ReactNode }): ReactNode {
   return (
-    <label className={cn(FIELD, SPAN_CLASS[span])}>
-      <span className={FIELD_LABEL}>{label}</span>
+    <label
+      className={cn('flex min-w-0 flex-col gap-[6px] max-[520px]:col-span-6!', {
+        3: 'col-span-3',
+        4: 'col-span-4 max-[760px]:col-span-3',
+        5: 'col-span-5 max-[760px]:col-span-3',
+        6: 'col-span-6 max-[760px]:col-span-3',
+        8: 'col-span-8 max-[760px]:col-span-6',
+        12: 'col-span-12 max-[760px]:col-span-6',
+      }[span])}
+    >
+      <span className="text-[12px] leading-[18px] font-medium text-secondary">{label}</span>
       {children}
     </label>
   )
@@ -375,14 +327,14 @@ function AppearanceEditor({ row, t, onChange, draftKey }: {
 }): ReactNode {
   const color = colorOf(row)
   return (
-    <div className={APPEARANCE}>
-      <span className={FIELD_LABEL}>{t('field.color')}</span>
-      <div className={SWATCHES}>
+    <div className="flex flex-wrap items-center gap-[10px]">
+      <span className="text-[12px] leading-[18px] font-medium text-secondary">{t('field.color')}</span>
+      <div className="inline-flex flex-wrap items-center gap-[6px]">
         {COLOR_CHOICES.map(choice => (
           <button
             key={choice}
             type="button"
-            className={cn(SWATCH, color === choice && SWATCH_ON)}
+            className={cn('box-border h-[20px] w-[20px] cursor-pointer rounded-full border border-border-l2 bg-[color:var(--swatch-color)] p-0 hover:border-border-l4', color === choice && 'outline-2 outline-brand outline-offset-2')}
             data-selected={color === choice}
             style={{ '--swatch-color': choice } as CSSProperties}
             aria-label={`${t('field.color')}: ${choice}`}
@@ -392,59 +344,47 @@ function AppearanceEditor({ row, t, onChange, draftKey }: {
         ))}
         <button
           type="button"
-          className={cn(SWATCH, SWATCH_NONE, color === undefined && SWATCH_ON)}
+          className={cn('box-border h-[20px] w-[20px] cursor-pointer rounded-full border border-border-l2 bg-[color:var(--swatch-color)] p-0 hover:border-border-l4', 'bg-[image:linear-gradient(to_top_right,transparent_calc(50%_-_1px),var(--dsw-alias-label-tertiary),transparent_calc(50%_+_1px))]', color === undefined && 'outline-2 outline-brand outline-offset-2')}
           data-selected={color === undefined}
           aria-label={t('color.none')}
           aria-pressed={color === undefined}
           title={t('color.none')}
           onClick={() => onChange(draftKey, { color: '', tintBorder: false })}
         />
-        <span className={SWITCH_ROW}>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={row.tintBorder === true}
-            className={cn(SWITCH, row.tintBorder === true && SWITCH_ON)}
+        <span className="ml-[4px] inline-flex items-center gap-[8px]">
+          <Switch
+            checked={row.tintBorder === true}
             disabled={color === undefined}
-            onClick={() => onChange(draftKey, { tintBorder: row.tintBorder !== true })}
+            label={t('field.tintBorder')}
+            onChange={tintBorder => onChange(draftKey, { tintBorder })}
           />
-          <span className={FIELD_LABEL}>{t('field.tintBorder')}</span>
+          <span className="text-[12px] leading-[18px] font-medium text-secondary">{t('field.tintBorder')}</span>
         </span>
       </div>
     </div>
   )
 }
 
-function SecretField({ field, label, keyName, secretSet, t, value, onValue, span = 6 }: {
+function SecretField({ field, label, keyName, hasSecret, t, value, onValue }: {
   field: SecretFieldName
   label: string
   keyName: string
-  secretSet: Record<string, boolean>
+  hasSecret: boolean
   t: (key: SshKey) => string
   value: string
   onValue: (key: string, field: SecretFieldName, value: string) => void
-  span?: FieldSpan
 }): ReactNode {
-  const placeholder = secretSet[`${keyName}.${field}`] ? t('secret.set') : t('secret.unset')
   return (
-    <label className={cn(FIELD, SPAN_CLASS[span])}>
-      <span className={FIELD_LABEL}>{label}</span>
+    <Field label={label}>
       <Input
-        className={FIELD_INPUT}
+        className="box-border w-full"
         type="password"
         value={value}
-        placeholder={placeholder}
+        placeholder={hasSecret ? t('secret.set') : t('secret.unset')}
         onChange={event => onValue(keyName, field, event.target.value)}
       />
-    </label>
+    </Field>
   )
-}
-
-function secretFlagsOf(row: MachineRow): Record<string, boolean> {
-  return {
-    [`${row.id}.password`]: row.hasPassword,
-    [`${row.id}.passphrase`]: row.hasPassphrase,
-  }
 }
 
 function colorOf(row: MachineRow): string | undefined {
@@ -464,11 +404,11 @@ function StepRail({ trail, t }: { trail: readonly ProgressPhase[], t: (key: SshK
     return null
   const current = trail[trail.length - 1]
   return (
-    <ol className={STEP_RAIL} data-testid="step-rail">
+    <ol className="m-0 ml-[8px] inline-flex list-none gap-[4px] p-0 align-middle" data-testid="step-rail">
       {trail.map(phase => (
         <li
           key={phase}
-          className={phase === current ? STEP_CURRENT : STEP_DONE}
+          className={phase === current ? 'rounded-full border border-current px-[6px] text-[11px] leading-[16px] text-[var(--dsw-alias-state-warning-primary,#d48806)]' : 'rounded-full border border-[color:var(--dsw-alias-line-secondary,currentColor)] px-[6px] text-[11px] leading-[16px] text-tertiary'}
         >
           {t(STEP_KEY_OF[phase])}
         </li>
@@ -498,19 +438,8 @@ const STATUS_KEY_OF: Record<MachineLifecycleState, SshKey> = {
 
 function statusTextOf(status: MachineStatus | undefined, t: (key: SshKey) => string): string {
   const progress = status?.progress
-  if (progress?.phase === 'handshake')
-    return t('progress.handshake')
-  if (progress?.phase === 'starting')
-    return t('progress.starting')
-  if (progress?.phase === 'installing')
-    return t('progress.installing')
-  if (progress?.phase === 'probing') {
-    return t('progress.probing')
-      .replace('{attempt}', String(progress.attempt ?? '?'))
-      .replace('{total}', String(progress.total ?? '?'))
-  }
-  if (progress?.phase === 'syncing') {
-    return t('progress.syncing')
+  if (progress !== undefined) {
+    return t(`progress.${progress.phase}`)
       .replace('{attempt}', String(progress.attempt ?? '?'))
       .replace('{total}', String(progress.total ?? '?'))
   }
@@ -596,10 +525,10 @@ function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
         </>
       )}
     >
-      <div className={GRID}>
+      <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-[10px_12px] max-[760px]:grid-cols-[repeat(6,minmax(0,1fr))]">
         <Field label={t('field.host')} span={8}>
           <Input
-            className={FIELD_INPUT}
+            className="box-border w-full"
             value={host}
             autoFocus
             disabled={saving}
@@ -607,14 +536,14 @@ function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
           />
         </Field>
         <Field label={t('field.port')} span={4}>
-          <Input className={FIELD_INPUT} value={port} disabled={saving} onChange={event => setPort(event.target.value)} />
+          <Input className="box-border w-full" value={port} disabled={saving} onChange={event => setPort(event.target.value)} />
         </Field>
         <Field label={t('field.name')} span={4}>
-          <Input className={FIELD_INPUT} value={name} disabled={saving} onChange={event => setName(event.target.value)} />
+          <Input className="box-border w-full" value={name} disabled={saving} onChange={event => setName(event.target.value)} />
         </Field>
         <Field label={t('field.id')} span={4}>
           <Input
-            className={FIELD_INPUT}
+            className="box-border w-full"
             value={idTouched ? id : effectiveId}
             placeholder={t('add.id_auto')}
             disabled={saving}
@@ -625,18 +554,18 @@ function AddMachineDialog({ t, saving, takenIds, onSubmit, onClose }: {
           />
         </Field>
         <Field label={t('field.user')} span={4}>
-          <Input className={FIELD_INPUT} value={user} disabled={saving} onChange={event => setUser(event.target.value)} />
+          <Input className="box-border w-full" value={user} disabled={saving} onChange={event => setUser(event.target.value)} />
         </Field>
         <Field label={t('field.remotePort')} span={6}>
-          <Input className={FIELD_INPUT} value={remotePort} disabled={saving} onChange={event => setRemotePort(event.target.value)} />
+          <Input className="box-border w-full" value={remotePort} disabled={saving} onChange={event => setRemotePort(event.target.value)} />
         </Field>
         <Field label={t('field.profileName')} span={6}>
-          <Input className={FIELD_INPUT} value={profileName} placeholder="remote" disabled={saving} onChange={event => setProfileName(event.target.value)} />
+          <Input className="box-border w-full" value={profileName} placeholder="remote" disabled={saving} onChange={event => setProfileName(event.target.value)} />
         </Field>
       </div>
       {errorKey === null
-        ? <p className={HINT}>{t('add.id_auto')}</p>
-        : <p className={ERROR} role="alert">{errorKey === null ? '' : t(errorKey)}</p>}
+        ? <p className="m-0 text-[12px] leading-[18px] text-tertiary">{t('add.id_auto')}</p>
+        : <p className="m-0 text-[12px] leading-[18px] text-error" role="alert">{errorKey === null ? '' : t(errorKey)}</p>}
     </Modal>
   )
 }
@@ -649,7 +578,6 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
   const [savingId, setSavingId] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [addSaving, setAddSaving] = useState(false)
-  const [initialized, setInitialized] = useState(false)
   const [availability, setAvailability] = useState<'desktop' | 'web' | 'unknown'>(() => bridge?.probe === undefined ? 'web' : 'unknown')
   const [bridgeErrors, setBridgeErrors] = useState<Record<string, string>>({})
   const [openingId, setOpeningId] = useState<string | null>(null)
@@ -679,15 +607,6 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
     }
   }, [bridge])
 
-  useEffect(() => {
-    if (initialized || state.status !== 'ready')
-      return
-    // eslint-disable-next-line react/set-state-in-effect -- load-once hydration: the draft buffer cannot exist before the first machine.list lands
-    setInitialized(true)
-    // eslint-disable-next-line react/set-state-in-effect -- same hydrate-once guard as setInitialized above
-    setDrafts(Object.fromEntries(state.machines.map(row => [row.id, { key: row.id, row: { ...row } }])))
-  }, [initialized, state.status, state.machines])
-
   const patchDraft = (key: string, patch: Partial<MachineRow>): void => {
     setDrafts(previous => ({
       ...previous,
@@ -705,9 +624,6 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
   }
 
   const closeEditor = (key: string): void => {
-    const saved = state.machines.find(row => row.id === key)
-    if (saved !== undefined)
-      setDrafts(previous => ({ ...previous, [key]: { key, row: { ...saved } } }))
     setDirty((previous) => {
       const next = { ...previous }
       delete next[key]
@@ -741,7 +657,6 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
     setAddSaving(false)
     if (!result.ok)
       return
-    setDrafts(previous => ({ ...previous, [row.id]: { key: row.id, row: { ...row } } }))
     setAddOpen(false)
   }
 
@@ -794,10 +709,10 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
 
   if (state.role?.remote === true) {
     return (
-      <div className={SECTION} data-testid="remote-session">
-        <h2 className={TITLE}>{t('title')}</h2>
-        <div className={REMOTE_CARD} data-testid="remote-session-banner">
-          <span className={REMOTE_ICON} aria-hidden="true">
+      <div className="flex flex-col gap-[12px] max-w-[960px] text-primary" data-testid="remote-session">
+        <h2 className="m-0 text-[18px] leading-[28px] font-semibold text-primary">{t('title')}</h2>
+        <div className="mt-[4px] flex flex-col items-center gap-[12px] rounded-[12px] border-[0.5px] border-border-l2 bg-layer-1 px-[24px] py-[40px] text-center" data-testid="remote-session-banner">
+          <span className="inline-flex h-[44px] w-[44px] items-center justify-center rounded-full bg-[var(--dsw-alias-surface-tinted)] text-success" aria-hidden="true">
             <svg fill="none" height="22" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.6" viewBox="0 0 24 24" width="22">
               <path d="M4 17l6-6-6-6" />
               <path d="M12 19h8" />
@@ -816,13 +731,13 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
   }
 
   return (
-    <div className={SECTION}>
-      <div className={SECTION_HEAD}>
+    <div className="flex flex-col gap-[12px] max-w-[960px] text-primary">
+      <div className="flex flex-wrap items-start justify-between gap-[12px]">
         <div>
-          <h2 className={TITLE}>{t('title')}</h2>
-          <p className={INTRO}>{t('intro')}</p>
+          <h2 className="m-0 text-[18px] leading-[28px] font-semibold text-primary">{t('title')}</h2>
+          <p className="m-0 text-[13px] leading-[20px] text-tertiary">{t('intro')}</p>
         </div>
-        <div className={CHROME}>
+        <div className="flex shrink-0 flex-wrap items-center gap-[8px]">
           <Button variant="outline" size="sm" disabled={state.status === 'loading'} onClick={() => void service.load()}>
             {t('refresh')}
           </Button>
@@ -831,29 +746,29 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
           </Button>
         </div>
       </div>
-      {state.notice !== null ? <p className={NOTICE} data-testid="notice">{noticeTextOf(state.notice, t)}</p> : null}
+      {state.notice !== null ? <p className="m-0 text-[12px] leading-[18px] text-secondary" data-testid="notice">{noticeTextOf(state.notice, t)}</p> : null}
       {state.error !== null
         ? (
-            <p className={ERROR} role="alert">
+            <p className="m-0 text-[12px] leading-[18px] text-error" role="alert">
               {t('error.banner')}
               {errorTextOf(state.error, t)}
             </p>
           )
         : null}
-      {state.status === 'loading' ? <p className={HINT}>{t('loading')}</p> : null}
+      {state.status === 'loading' ? <p className="m-0 text-[12px] leading-[18px] text-tertiary">{t('loading')}</p> : null}
       {state.status === 'error'
         ? (
-            <div className={EMPTY_BLOCK}>
-              <p className={EMPTY}>{t('loadFailed')}</p>
+            <div className="flex flex-col items-start gap-[8px]">
+              <p className="m-0 rounded-[8px] border border-dashed border-border-l3 p-[12px] text-center text-[12px] leading-[18px] text-tertiary">{t('loadFailed')}</p>
               <Button variant="outline" size="sm" onClick={() => void service.load()}>{t('refresh')}</Button>
             </div>
           )
         : null}
       {state.status === 'ready' && state.machines.length === 0 && state.discovered.length === 0
-        ? <p className={EMPTY}>{t('empty')}</p>
+        ? <p className="m-0 rounded-[8px] border border-dashed border-border-l3 p-[12px] text-center text-[12px] leading-[18px] text-tertiary">{t('empty')}</p>
         : null}
       <>
-        <ul className={ROWS}>
+        <ul className="m-0 mt-[12px] flex list-none flex-col overflow-hidden rounded-[12px] border border-border-l2 bg-layer-3 p-0">
           {state.machines.map((row) => {
             const draft = drafts[row.id] ?? { key: row.id, row }
             return (
@@ -885,7 +800,7 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
                         <Button variant="outline" size="sm" disabled={editingId !== null && editingId !== row.id} onClick={() => editingId === row.id ? closeEditor(row.id) : openEditor(row)}>
                           {t('edit')}
                         </Button>
-                        <Button variant="ghost" size="sm" className={DANGER_ACTION} disabled={state.busy[row.id] !== undefined} onClick={() => setRemoveTarget({ key: row.id, id: row.id, name: row.name === '' ? row.id : row.name })}>
+                        <Button variant="ghost" size="sm" className="text-error" disabled={state.busy[row.id] !== undefined} onClick={() => setRemoveTarget({ key: row.id, id: row.id, name: row.name === '' ? row.id : row.name })}>
                           {t('remove')}
                         </Button>
                       </>
@@ -898,7 +813,8 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
                       <EditPanel
                         draft={draft}
                         t={t}
-                        secretSet={secretFlagsOf(row)}
+                        hasPassword={row.hasPassword}
+                        hasPassphrase={row.hasPassphrase}
                         dirty={dirty[row.id] ?? {}}
                         saving={savingId === row.id}
                         onChange={patchDraft}
@@ -925,11 +841,11 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
         {state.discovered.length > 0
           ? (
               <>
-                <div className={GROUP}>
-                  <h3 className={GROUP_TITLE}>{t('configHosts')}</h3>
-                  <p className={GROUP_HINT}>{t('configHostsHint')}</p>
+                <div className="mt-[12px] flex flex-col gap-[2px]">
+                  <h3 className="m-0 text-[12px] leading-[18px] font-medium text-secondary">{t('configHosts')}</h3>
+                  <p className="m-0 text-[12px] leading-[18px] text-tertiary">{t('configHostsHint')}</p>
                 </div>
-                <ul className={ROWS}>
+                <ul className="m-0 mt-[12px] flex list-none flex-col overflow-hidden rounded-[12px] border border-border-l2 bg-layer-3 p-0">
                   {state.discovered.map(row => (
                     <RowShell
                       key={row.id}
@@ -997,7 +913,7 @@ export function MachinesSection({ t, bridge = desktopBridge }: MachinesSectionPr
         footer={(
           <>
             <Button variant="ghost" onClick={() => setRemoveTarget(null)}>{t('remove.confirm.cancel')}</Button>
-            <Button variant="primary" className={DANGER_ACTION} onClick={confirmRemove}>{t('remove.confirm.ok')}</Button>
+            <Button variant="primary" className="text-error" onClick={confirmRemove}>{t('remove.confirm.ok')}</Button>
           </>
         )}
       />

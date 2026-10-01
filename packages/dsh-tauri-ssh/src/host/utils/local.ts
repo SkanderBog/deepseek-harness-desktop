@@ -87,16 +87,14 @@ function skillNamesOf(dir: string): string[] {
   return names.sort()
 }
 
-export function tarPacker(): (dir: string, names: readonly string[]) => Promise<Buffer> {
-  return async (dir, names) => {
-    const { stdout, stderr } = await execFileAsync('tar', ['-cf', '-', '-C', dir, '--', ...names], {
-      maxBuffer: MAX_TAR_BYTES,
-      windowsHide: true,
-      encoding: 'buffer',
-    })
-    if (stdout.length === 0) {
-      throw new Error(`packing skills produced no archive${stderr.length === 0 ? '' : `: ${stderr.toString('utf8').trim()}`}`)
-    }
-    return stdout
+export async function packSkills(dir: string, names: readonly string[]): Promise<Buffer> {
+  const { stdout, stderr } = await execFileAsync('tar', ['-cf', '-', '-C', dir, '--', ...names], {
+    maxBuffer: MAX_TAR_BYTES,
+    windowsHide: true,
+    encoding: 'buffer',
+  })
+  if (stdout.length === 0) {
+    throw new Error(`packing skills produced no archive${stderr.length === 0 ? '' : `: ${stderr.toString('utf8').trim()}`}`)
   }
+  return stdout
 }

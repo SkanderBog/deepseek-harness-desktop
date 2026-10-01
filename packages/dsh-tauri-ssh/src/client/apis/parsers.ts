@@ -172,13 +172,7 @@ function statusOf(value: unknown): { id: string, status: MachineStatus } | undef
 }
 
 function rowsOf(value: unknown): MachineRow[] {
-  const rows: MachineRow[] = []
-  for (const entry of entriesOf(value)) {
-    const row = machineRowOf(entry)
-    if (row !== undefined)
-      rows.push(row)
-  }
-  return rows
+  return entriesOf(value).map(machineRowOf).filter((row): row is MachineRow => row !== undefined)
 }
 
 export function machineListOf(value: unknown): MachineListSnapshot {

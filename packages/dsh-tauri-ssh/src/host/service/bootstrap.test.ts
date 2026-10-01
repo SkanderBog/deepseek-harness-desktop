@@ -130,6 +130,17 @@ function tempDir(): string {
   return dir
 }
 
+function runCommand(command: string, sandbox: string): Promise<{ code: number, stdout: string, stderr: string }> {
+  const scriptPath = join(sandbox, 'command.sh')
+  writeFileSync(scriptPath, command)
+  const run = promisify(execFile)
+  return run('sh', [scriptPath], { env: { ...process.env, HOME: sandbox } }).then(
+    ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
+    (error: { code?: number, stdout?: string, stderr?: string }) =>
+      ({ code: error.code ?? -1, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }),
+  )
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
@@ -213,6 +224,8 @@ describe('planRemoteInstall', () => {
     const plan = await planRemoteInstall('Linux 6.8.0-45-generic x86_64', {}, healthyFetchers())
     expect(plan.os).toBe('linux')
     expect(plan.arch).toBe('x64')
+    expect(plan.node.filename).toBe('node-v22.22.0-linux-x64.tar.gz')
+    expect(plan.node.version).toBe('v22.22.0')
     expect(plan.dsh.kind).toBe('pkg-zip')
     if (plan.dsh.kind !== 'pkg-zip')
       throw new Error('expected pkg-zip')
@@ -238,6 +251,8 @@ describe('planRemoteInstall', () => {
     }
     expect(plan.dshEntry).toBe('lib/bin.js')
     expect(plan.node.urls[0]).toBe('https://nodejs.org/dist/v22.22.0/node-v22.22.0-linux-arm64.tar.gz')
+    expect(plan.node.filename).toBe('node-v22.22.0-linux-arm64.tar.gz')
+    expect(plan.node.version).toBe('v22.22.0')
   })
 
   it('derives deterministic URLs and notes skipped verification when metadata fails', async () => {
@@ -553,18 +568,6 @@ describe('install script execution (real POSIX sh)', () => {
 })
 
 describe('remote pnpm shim (real POSIX sh)', () => {
-  /** Run a generated command under the real `sh` inside a sandboxed HOME. */
-  async function runCommand(command: string, sandbox: string): Promise<{ code: number, stdout: string, stderr: string }> {
-    const scriptPath = join(sandbox, 'command.sh')
-    writeFileSync(scriptPath, command)
-    const run = promisify(execFile)
-    return run('sh', [scriptPath], { env: { ...process.env, HOME: sandbox } }).then(
-      ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
-      (error: { code?: number, stdout?: string, stderr?: string }) =>
-        ({ code: error.code ?? -1, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }),
-    )
-  }
-
   it('writes a shim that runs the layout pnpm under the layout node', async () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'pnpm-shim-'))
     try {
@@ -803,18 +806,6 @@ describe('credentials', () => {
 })
 
 describe('credentials copy execution (real POSIX sh)', () => {
-  /** Run one generated command under the real `sh` inside a sandboxed HOME. */
-  function runCommand(command: string, sandbox: string): Promise<{ code: number, stdout: string, stderr: string }> {
-    const scriptPath = join(sandbox, 'cmd.sh')
-    writeFileSync(scriptPath, command)
-    const run = promisify(execFile)
-    return run('sh', [scriptPath], { env: { ...process.env, HOME: sandbox } }).then(
-      ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
-      (error: { code?: number, stdout?: string, stderr?: string }) =>
-        ({ code: error.code ?? -1, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }),
-    )
-  }
-
   it('merges into an existing remote .env, keeping unrelated variables and replacing managed keys', async () => {
     const sandbox = tempDir()
     mkdirSync(join(sandbox, '.dsh'), { recursive: true })

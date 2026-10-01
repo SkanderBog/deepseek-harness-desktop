@@ -124,7 +124,10 @@ describe('machinesSection', () => {
     const payload = savePayloads()[0]
     expect(payload?.machineId).toBe('10-1-1-1')
     expect(payload?.row).toMatchObject({ name: 'newton', host: 'ops@10.1.1.1', user: 'ops' })
-    await waitFor(() => expect(screen.getByTestId('machine-10-1-1-1')).toBeTruthy())
+    const card = await screen.findByTestId('machine-10-1-1-1')
+    expect(screen.queryByRole('dialog', { name: 'Add machine' })).toBeNull()
+    fireEvent.click(withinButton(card, 'Edit'))
+    expect(within(screen.getByTestId('editor-10-1-1-1')).getByLabelText('Name')).toHaveProperty('value', 'newton')
   })
 
   it('derives a unique auto id and validates taken ids inline', async () => {
@@ -164,6 +167,34 @@ describe('machinesSection', () => {
     expect(payload?.row).toMatchObject({ name: 'alpha-2' })
     expect(payload?.secrets).toMatchObject({ password: 'sekrit' })
     await waitFor(() => expect(screen.queryByTestId('editor-a')).toBeNull())
+  })
+
+  it('keeps the open draft across refresh and discards it on cancel before reopening the latest saved row', async () => {
+    mount({ value: { items: [{ ...machineA, state: 'disconnected' }] } })
+    const card = await screen.findByTestId('machine-a')
+    fireEvent.click(withinButton(card, 'Edit'))
+    const editor = within(screen.getByTestId('editor-a'))
+    fireEvent.change(editor.getByLabelText('Name'), { target: { value: 'unsaved' } })
+    fireEvent.change(editor.getByLabelText('Password (optional)'), { target: { value: 'unsaved-secret' } })
+    fireEvent.change(editor.getByLabelText('Key passphrase (optional)'), { target: { value: 'unsaved-phrase' } })
+
+    route = () => replies.ok({ items: [{ ...machineA, name: 'refreshed', hasPassword: false, hasPassphrase: true, state: 'disconnected' }] })
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await waitFor(() => expect(within(card).getByText('refreshed')).toBeTruthy())
+    expect(editor.getByLabelText('Name')).toHaveProperty('value', 'unsaved')
+    expect(editor.getByLabelText('Password (optional)')).toHaveProperty('value', 'unsaved-secret')
+    expect(editor.getByLabelText('Password (optional)').getAttribute('placeholder')).toBe('not set')
+    expect(editor.getByLabelText('Key passphrase (optional)')).toHaveProperty('value', 'unsaved-phrase')
+    expect(editor.getByLabelText('Key passphrase (optional)').getAttribute('placeholder')).toBe('set')
+
+    fireEvent.click(editor.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByTestId('editor-a')).toBeNull()
+    fireEvent.click(withinButton(card, 'Edit'))
+    const reopened = within(screen.getByTestId('editor-a'))
+    expect(reopened.getByLabelText('Name')).toHaveProperty('value', 'refreshed')
+    expect(reopened.getByLabelText('Password (optional)')).toHaveProperty('value', '')
+    expect(reopened.getByLabelText('Key passphrase (optional)')).toHaveProperty('value', '')
+    expect(savePayloads()).toHaveLength(0)
   })
 
   it('removes a machine immediately through the confirmation modal', async () => {
@@ -323,8 +354,14 @@ describe('machinesSection', () => {
     const card = screen.getByTestId('machine-a')
     fireEvent.click(withinButton(card, 'Edit'))
     const editor = screen.getByTestId('editor-a')
+    const tintSwitch = within(editor).getByRole('switch', { name: 'Also tint the border', checked: false })
+    expect(tintSwitch.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(tintSwitch)
+    expect(tintSwitch.getAttribute('aria-checked')).toBe('false')
     fireEvent.click(within(editor).getByLabelText('Color: #4176E6'))
-    fireEvent.click(within(editor).getByRole('switch'))
+    expect(tintSwitch.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(tintSwitch)
+    expect(tintSwitch.getAttribute('aria-checked')).toBe('true')
     once(replies.ok({}))
     once(replies.ok({ items: [{ ...machineA, state: 'disconnected', color: '#4176E6', tintBorder: true }] }))
     fireEvent.click(within(editor).getByText('Save'))
@@ -376,9 +413,12 @@ describe('machinesSection', () => {
     await waitFor(() => expect(screen.queryByTestId('step-rail')).toBeNull())
   })
 
-  it('falls back to question marks when probing progress has no numbers', async () => {
-    mount({ value: { items: [{ ...machineA, state: 'connecting', progress: { phase: 'probing' } }] } })
-    await waitFor(() => expect(screen.getByTestId('status-a').textContent).toContain('Health check ?/?'))
+  it.each([
+    { phase: 'probing', text: 'Health check ?/?…' },
+    { phase: 'syncing', text: 'Syncing item ?/?…' },
+  ])('falls back to question marks when $phase progress has no numbers', async ({ phase, text }) => {
+    mount({ value: { items: [{ ...machineA, state: 'connecting', progress: { phase } }] } })
+    await waitFor(() => expect(screen.getByTestId('status-a').textContent).toBe(text))
   })
 
   it('shows the starting progress phase', async () => {
@@ -595,8 +635,5 @@ function installPayloads(): Array<{ machineId: string }> {
 }
 
 function withinButton(container: HTMLElement, text: string): HTMLButtonElement {
-  const button = [...container.querySelectorAll('button')].find(candidate => candidate.textContent === text)
-  if (button === undefined)
-    throw new Error(`no button "${text}"`)
-  return button as HTMLButtonElement
+  return within(container).getByRole('button', { name: text }) as HTMLButtonElement
 }

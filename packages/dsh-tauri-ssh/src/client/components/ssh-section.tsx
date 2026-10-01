@@ -21,8 +21,6 @@ const TAB_KEYS: Record<SshTab, SshKey> = {
   [SSH_TAB_SYNC]: 'tabs.sync',
 }
 
-const SECTION = 'flex flex-col gap-[12px] max-w-[960px] text-primary'
-
 export function SshSection({ t }: SshSectionProps): ReactNode {
   const state = useStore(store.machines)
   const [tab, setTab] = useState<SshTab>(SSH_TAB_MACHINES)
@@ -47,7 +45,7 @@ export function SshSection({ t }: SshSectionProps): ReactNode {
 
   if (state.enabled === null) {
     return (
-      <div className={SECTION} data-testid="ssh-section">
+      <div className="flex flex-col gap-[12px] max-w-[960px] text-primary" data-testid="ssh-section">
         <p className="m-0 text-[12px] leading-[18px] text-tertiary">{t('loading')}</p>
       </div>
     )
@@ -55,7 +53,7 @@ export function SshSection({ t }: SshSectionProps): ReactNode {
 
   if (state.enabled === false) {
     return (
-      <div className={SECTION} data-testid="ssh-section">
+      <div className="flex flex-col gap-[12px] max-w-[960px] text-primary" data-testid="ssh-section">
         <div className="mt-[4px] flex flex-col items-center gap-[12px] rounded-[12px] border-[0.5px] border-border-l2 bg-layer-1 px-[24px] py-[40px] text-center" data-testid="ssh-hero">
           <span className="inline-flex h-[44px] w-[44px] items-center justify-center rounded-full bg-[var(--dsw-alias-surface-tinted)] text-brand" aria-hidden="true">
             <Icon as={Globe} size={22} />
@@ -82,7 +80,7 @@ export function SshSection({ t }: SshSectionProps): ReactNode {
   const tabs: SshTab[] = [SSH_TAB_MACHINES, SSH_TAB_SYNC]
 
   return (
-    <div className={SECTION} data-testid="ssh-section">
+    <div className="flex flex-col gap-[12px] max-w-[960px] text-primary" data-testid="ssh-section">
       <div className="flex flex-wrap items-center gap-[8px]" data-testid="ssh-tabs">
         <SegmentedControl
           id={SSH_TABS_ID}

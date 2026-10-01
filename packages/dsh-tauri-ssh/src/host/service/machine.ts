@@ -7,6 +7,7 @@ import type { MachineState, ReconnectState } from './machine.types'
 import { defineService } from 'dsh-tauri'
 import { join } from 'pathe'
 import { DEFAULT_REMOTE_PORT, DEFAULT_SSH_PORT } from '../../shared/constants'
+import { messageOf } from '../../shared/error'
 import { REMOTE_ROOT } from '../config/constants'
 import { harnessHome, homeDirPath, hostConfig, machineProfiles, machineRuntimeDeps, machineStates, machineTable, sshDirPath } from '../config/runtime'
 import { MachineId, SshError } from '../types/index'
@@ -14,7 +15,7 @@ import { carryWorkspaceAllowlist } from '../utils/allowlist'
 import { syncBundledPlugins } from '../utils/plugins-sync'
 import { discoverableHosts, loadSshConfigBlocks, lookupSshConfig, resolveSshAuth } from '../utils/ssh-config'
 import { bootstrap } from './bootstrap'
-import { checkMissingCommand, credentialsCopyCommand, describeError, describeExecFailure, ensurePnpmCommand, firstLineOf, missingComponentsOf, planRemoteInstall, readEnvCredentials, remoteWebTokenCommand, safeProfileName, skippedVerificationSummary } from './bootstrap.utils'
+import { checkMissingCommand, credentialsCopyCommand, describeExecFailure, ensurePnpmCommand, firstLineOf, missingComponentsOf, planRemoteInstall, readEnvCredentials, remoteWebTokenCommand, safeProfileName, skippedVerificationSummary } from './bootstrap.utils'
 import { events } from './events'
 import { knownHosts } from './known-hosts'
 import { fingerprintHostKey } from './known-hosts.utils'
@@ -388,14 +389,14 @@ async function performConnect(machineId: MachineId, profile: MachineProfile, sig
     })
   }
   catch (error) {
-    events.append(machineId, 'install', `捆绑插件同步失败（降级原生 UI）: ${describeError(error)}`)
+    events.append(machineId, 'install', `捆绑插件同步失败（降级原生 UI）: ${messageOf(error)}`)
   }
   try {
     await session.exec(ensurePnpmCommand())
     events.append(machineId, 'install', '远端 pnpm 垫片就绪（dsh plugin 依赖它）')
   }
   catch (error) {
-    events.append(machineId, 'install', `远端 pnpm 垫片写入失败: ${describeError(error)}`)
+    events.append(machineId, 'install', `远端 pnpm 垫片写入失败: ${messageOf(error)}`)
   }
   try {
     const added = await carryWorkspaceAllowlist(session, safeProfileName(profile.profileName), machine.localAllowlist())
@@ -403,7 +404,7 @@ async function performConnect(machineId: MachineId, profile: MachineProfile, sig
       events.append(machineId, 'install', `远端构建放行白名单已补齐 ${added.length} 项（git 插件 prepare 门禁）`)
   }
   catch (error) {
-    events.append(machineId, 'install', `构建放行白名单同步失败: ${describeError(error)}`)
+    events.append(machineId, 'install', `构建放行白名单同步失败: ${messageOf(error)}`)
   }
   try {
     await bootstrap.provision(
@@ -478,7 +479,7 @@ async function performConnect(machineId: MachineId, profile: MachineProfile, sig
     await session.close().catch(() => undefined)
     if (error instanceof AttemptCancelled)
       throw new SshError('machine-connect-failed', machineId, 'connection cancelled by disconnect')
-    const message = redacted(machineId, describeError(error))
+    const message = redacted(machineId, messageOf(error))
     if (generation === target.generation && !bootstrapSettled)
       onEvent('failed', 'bootstrap 失败', { terminal: 'failed', reason: message })
     if (generation === target.generation) {
@@ -691,7 +692,7 @@ async function performInstall(machineId: MachineId, profile: MachineProfile, sig
     await session.close().catch(() => undefined)
     if (error instanceof AttemptCancelled)
       throw new SshError('machine-install-failed', machineId, 'install cancelled by disconnect')
-    const message = redacted(machineId, describeError(error))
+    const message = redacted(machineId, messageOf(error))
     if (generation === target.generation && !settled)
       onEvent('failed', 'install 失败', { terminal: 'failed', reason: message })
     if (generation === target.generation) {
@@ -772,5 +773,5 @@ function settlingEventSink(machineId: MachineId, onSettle: () => void): NonNulla
 }
 
 function describeSshFailure(error: unknown): string {
-  return describeError(error) || 'SSH connection failed'
+  return messageOf(error) || 'SSH connection failed'
 }

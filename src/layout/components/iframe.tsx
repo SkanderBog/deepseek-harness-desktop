@@ -68,7 +68,7 @@ export interface IframeProps {
   iframeRef: RefObject<HTMLIFrameElement | null>
   /**
    * 远端模式：非空时 iframe 指向该隧道 URL（远端机器的本地回环隧道，见
-   * `store.remote`），不再等本地实例健康；为空维持本地实例语义。
+   * `useRemote`），不再等本地实例健康；为空维持本地实例语义。
    */
   srcOverride?: string | null
   /** 远端机器勾选「边框着色」时的标识色：给内容区描 inset ring（一眼可辨远端态）。 */
@@ -202,7 +202,7 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   const harness = useStore(store.harness)
   const setting = useStore(store.setting)
   // 远端模式：非空时 iframe 指向该隧道 URL（远端机器的本地回环隧道，见
-  // `store.remote`），不再等本地实例健康；为空维持本地实例语义。
+  // `useRemote`），不再等本地实例健康；为空维持本地实例语义。
   // 远端加载进度：「已落定 URL」派生——换 URL 自动回到加载态，iframe onLoad
   // 记录落定收起（无 effect、无额外渲染轮次）。
   const remoteMode = srcOverride !== null && srcOverride !== ''

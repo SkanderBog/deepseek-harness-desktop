@@ -35,7 +35,7 @@ export default defineProject({
     include: [
       'packages/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}',
       'test/**/*.test.ts',
-      'src/**/*.test.ts',
+      'src/**/*.test.{ts,tsx}',
     ],
     exclude: [
       '**/node_modules/**',

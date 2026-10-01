@@ -336,7 +336,7 @@ describe('syncEngine.apply', () => {
       if (command.includes('printf'))
         return ok('/dsh\n')
       if (command.includes('pnpm-workspace.yaml') && command.startsWith('cat '))
-        return ok('packages:\n  - .\n')
+        return ok('packages:\n  - .\nallowBuilds:\n  existing: true\n  keep-blocked: false\n')
       if (command.includes('plugin --profile')) {
         installs += 1
         return installs === 1 ? fail(guidance) : ok()
@@ -349,6 +349,26 @@ describe('syncEngine.apply', () => {
     expect(installs).toBe(2)
     const write = session.execSpy.mock.calls.map(([command]) => command).find(command => command.includes('> "$HOME/.dsh/profiles/remote/pnpm-workspace.yaml"'))
     expect(write).toContain('p@https://example.com/p.tar.gz/abc')
+    expect(write).toContain('existing: true')
+    expect(write).toContain('keep-blocked: false')
+  })
+
+  it('does not rewrite the workspace or retry when the requested build key is already allowed', async () => {
+    const session = fakeSession((command) => {
+      if (command.includes('printf'))
+        return ok('/dsh\n')
+      if (command.includes('pnpm-workspace.yaml') && command.startsWith('cat '))
+        return ok('allowBuilds:\n  p: true\n')
+      return command.includes('plugin --profile') ? fail('allowBuilds:\n  p: true\n') : ok()
+    })
+    seed({ connect: async () => session, profileName: 'remote' })
+    const result = await sync.apply(machineId, [{ name: 'p', spec: 'github:a/b' }], [])
+    expect(result.items[0]).toMatchObject({ ok: false })
+    const commands = session.execSpy.mock.calls.map(([command]) => command)
+    expect(commands.filter(command => command.includes('plugin --profile'))).toHaveLength(1)
+    expect(commands.filter(command => command.includes('pnpm-workspace.yaml'))).toEqual([
+      'cat "$HOME/.dsh/profiles/remote/pnpm-workspace.yaml" 2>/dev/null || true',
+    ])
   })
 
   it('reports the original failure when pnpm names no build key', async () => {

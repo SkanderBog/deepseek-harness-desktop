@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { eventEntriesOf, machineRowsOf } from './machines'
+import { eventEntriesOf, machineRowsOf } from './use-remote'
 
 describe('machineRowsOf', () => {
   it('合并 items 与 discovered、按名排序并丢掉坏行', () => {

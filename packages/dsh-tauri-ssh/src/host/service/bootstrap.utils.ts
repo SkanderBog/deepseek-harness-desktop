@@ -3,8 +3,9 @@ import type { MachineProfile, SshMachineStage, SshSession } from '../types/index
 import type { BootstrapHooks, BootstrapLogLine, EnvCredentials, RemoteInstallPlan } from './bootstrap.types'
 import { Buffer } from 'node:buffer'
 import { readFileSync } from 'node:fs'
+import { messageOf } from '../../shared/error'
 import { DEFAULT_REMOTE_PROFILE, REMOTE_ROOT } from '../config/constants'
-import { assetMatrixFor, dshNpmTarballUrls, dshZipDownloadUrls, nodeDownloadUrls, nodeFilenameFor, nodeShasumUrls, parsePlatform, PNPM_SHA256, PNPM_VERSION, pnpmDownloadUrls } from '../utils/assets'
+import { assetMatrixFor, dshNpmTarballUrls, dshZipDownloadUrls, NODE_VERSION, nodeDownloadUrls, nodeShasumUrls, parsePlatform, PNPM_SHA256, PNPM_VERSION, pnpmDownloadUrls } from '../utils/assets'
 import { clientUrlsFromBootHtml, looksLikePluginBundle } from '../utils/boot-html'
 import { shQuote } from '../utils/shell'
 import { listGithubAssets, listGithubReleases, npmDistMetadata, parseGitHubRepo, pickReleaseTag, pkgRepoOf } from '../utils/version'
@@ -102,18 +103,15 @@ export async function planRemoteInstall(
     metas = await listReleases(repo)
   }
   catch (error) {
-    notes.push(`release 列表获取失败（${describeError(error)}）`)
+    notes.push(`release 列表获取失败（${messageOf(error)}）`)
   }
   const resolved = pickReleaseTag(metas, { ref: config.installRef })
   notes.push(...resolved.notes.map(note => `版本选择: ${note}`))
-  const nodeFilename = nodeFilenameFor(os, arch)
-  if (nodeFilename === undefined)
-    throw new Error(`node asset missing for ${os}/${arch}`)
   const node = {
     urls: nodeDownloadUrls(os, arch),
     shasumUrls: nodeShasumUrls(),
-    filename: nodeFilename,
-    version: nodeFilename.split('-')[1] ?? '',
+    filename: matrix.nodeFilename,
+    version: NODE_VERSION,
   }
   const pnpm = { urls: pnpmDownloadUrls(), sha256: PNPM_SHA256, version: PNPM_VERSION }
   if (matrix.dshKind === 'pkg-zip') {
@@ -129,7 +127,7 @@ export async function planRemoteInstall(
       }
     }
     catch (error) {
-      notes.push(`release 资产元数据获取失败（${describeError(error)}）`)
+      notes.push(`release 资产元数据获取失败（${messageOf(error)}）`)
     }
     if (digest === undefined)
       notes.push(`未取得 ${zipName} 的可信摘要，将跳过 SHA-256 校验`)
@@ -157,7 +155,7 @@ export async function planRemoteInstall(
     integrity = normalizeNpmIntegrity(dist.integrity)
   }
   catch (error) {
-    notes.push(`npm 元数据获取失败（${describeError(error)}），回退确定性 URL`)
+    notes.push(`npm 元数据获取失败（${messageOf(error)}），回退确定性 URL`)
   }
   if (integrity === undefined)
     notes.push(`未取得 ${packageName}@${resolved.version} 的可校验完整性摘要，将跳过校验`)
@@ -500,10 +498,6 @@ export function describeExecFailure(code: number | null, stderr: string): string
   return `exit ${code ?? '?'}${tail === '' ? '' : `: ${tail}`}`
 }
 
-export function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 export async function ensureRemoteInstance(
   session: SshSession,
   profile: MachineProfile,
@@ -527,7 +521,7 @@ export async function ensureRemoteInstance(
     plan = await planRemoteInstall(uname.stdout, config)
   }
   catch (error) {
-    return failBootstrap(onEvent, describeError(error))
+    return failBootstrap(onEvent, messageOf(error))
   }
   onEvent?.('probe', `远端平台 ${plan.os}/${plan.arch}，安装源 ${plan.repo}${plan.dsh.kind === 'pkg-zip' ? ` tag ${plan.dsh.tag}` : ` npm ${plan.dsh.version}`}`)
   for (const note of plan.notes)

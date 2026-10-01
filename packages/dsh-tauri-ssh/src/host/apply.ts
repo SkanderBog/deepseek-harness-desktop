@@ -7,7 +7,7 @@ import { ConfigSchema } from './config/schema'
 import { routes } from './routes'
 import { machine } from './service/machine'
 import { transport } from './service/transport'
-import { profileAllowlistReader, profileDependenciesReader, skillRootsScanner, tarPacker } from './utils/local'
+import { packSkills, profileAllowlistReader, profileDependenciesReader, skillRootsScanner } from './utils/local'
 
 const SSH_START_EFFECT = `${SSH_PLUGIN_NAME}: start`
 
@@ -32,7 +32,7 @@ export function apply(ctx: SshHostContext, config: SshRemoteConfig): void {
   setSyncDeps({
     profileDependencies: profileDependenciesReader(),
     scanSkills: skillRootsScanner(),
-    packSkills: tarPacker(),
+    packSkills,
     ...config.installTimeoutMs === undefined ? {} : { commandTimeoutMs: config.installTimeoutMs },
   })
 

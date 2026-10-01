@@ -52,7 +52,7 @@ export async function load(): Promise<void> {
 export async function enable(): Promise<ServiceResult> {
   store.machines.beginEnable()
   try {
-    store.machines.commitEnabled(enabledOf(await api.postSettings({ enabled: true })) !== false)
+    store.machines.setEnabled(enabledOf(await api.postSettings({ enabled: true })) !== false, null)
     if (store.machines.enabled === true)
       await load()
     return { ok: true }

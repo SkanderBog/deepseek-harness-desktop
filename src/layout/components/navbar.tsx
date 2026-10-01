@@ -1,3 +1,4 @@
+import type { Remote } from '@/hooks/use-remote'
 import type { DshPlugin } from '@/types'
 import type { ConfigTab } from '@/ui/dialog/config'
 import {
@@ -210,7 +211,9 @@ function ShortcutLabel({ label, hint }: { label: string, hint?: string }) {
   )
 }
 
-export interface NavbarProps { /** iframe 回报的 dsh 侧边栏折叠状态（导航桥逻辑在 `iframe.tsx`） */
+export interface NavbarProps {
+  remote: Remote
+  /** iframe 回报的 dsh 侧边栏折叠状态（导航桥逻辑在 `iframe.tsx`） */
   sidebarCollapsed?: boolean
   /** 切换 iframe 内 dsh 侧边栏（向 iframe 发 `dsh://sidebar:toggle`）；传入时启用左侧导航控制 */
   onToggleSidebar?: () => void
@@ -226,7 +229,7 @@ export interface NavbarProps { /** iframe 回报的 dsh 侧边栏折叠状态（
   onOpenShortcuts?: () => void
 }
 
-export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, onOpenFolder, onOpenShortcuts, onOpenMachineManager, onOpenSyncToRemote }: NavbarProps) {
+export function Navbar({ remote, sidebarCollapsed = false, onToggleSidebar, onNewChat, onOpenFolder, onOpenShortcuts, onOpenMachineManager, onOpenSyncToRemote }: NavbarProps) {
   const { t } = useTranslation()
   const isFullscreen = useMacOSFullscreen()
   const isMaximized = useMaximized()
@@ -461,7 +464,7 @@ export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, o
         </Button>
       </If>
       <If cond={onToggleSidebar != null}>
-        <ConnectDialog />
+        <ConnectDialog remote={remote} />
       </If>
       <If cond={!IS_MACOS}>
         <div className="ml-1">
@@ -694,7 +697,7 @@ export function Navbar({ sidebarCollapsed = false, onToggleSidebar, onNewChat, o
       {/* 「本地」/ 远端机器切换器：SSH 功能启用后才出现（未启用时组件自身不渲染），
           位置固定在「更新可用」右侧，与左侧的文件/运行/帮助菜单分列两端。 */}
       <If cond={onToggleSidebar != null}>
-        <RemoteSwitcher onManage={onOpenMachineManager} onSync={onOpenSyncToRemote} />
+        <RemoteSwitcher remote={remote} onManage={onOpenMachineManager} onSync={onOpenSyncToRemote} />
       </If>
 
       <If cond={!IS_MACOS}>

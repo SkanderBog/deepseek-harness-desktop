@@ -116,7 +116,7 @@ describe('the feature switch', () => {
     store.machines.setEnabled(false, null)
     store.machines.beginEnable()
     expect(store.machines.enabling).toBe(true)
-    store.machines.commitEnabled(true)
+    store.machines.setEnabled(true, null)
     store.machines.endEnable()
     expect(store.machines.enabled).toBe(true)
     expect(store.machines.enabling).toBe(false)

@@ -1,14 +1,11 @@
-import type { SshMachineRow } from '@/store/modules/remote'
+import type { Remote, SshMachineRow } from '@/hooks/use-remote'
 import { ArrowUpRightFromSquare, ArrowUpToLine, Gear, House, Power, Server } from '@gravity-ui/icons'
 import { Button, Description, Dropdown, Label } from '@heroui/react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { cn } from 'tailwind-variants'
-import { useStore } from 'valtio-define'
-import { useRemoteMachines } from '@/hooks/use-remote-machines'
-import { store } from '@/store'
-import { dotClassOf, dotStyleOf } from '@/store/modules/remote'
+import { dotClassOf, dotStyleOf } from '@/hooks/use-remote'
 import { toast } from '@/utils/toast'
 
 /** 机器行的状态描述：pending 立即「连接中」；重连带倒计时；已知凭据类型缀后。 */
@@ -49,7 +46,7 @@ function openInNewWindow(machine: SshMachineRow, onError: (err: unknown) => void
 /**
  * 导航栏远端机器切换器：本地实例 ↔ 各远端机器。
  *
- * 数据面全部来自本地实例 `/api/desktop/dsh-tauri-ssh`（`useRemoteMachines` 启动秒级轮询 +
+ * 数据面通过 Rust remote 命令来自本地 SSH 插件（`useRemote` 启动秒级轮询 +
  * 聚焦刷新）；点击机器行=当前窗口切换（未连接则发起连接，进度弹窗实时
  * 呈现），行尾图标=新窗口打开（已连接机器可用）。操作区两项同级：底部
  * 「管理机器…」与「同步到远端…」，各自直达 SSH 设置浮层的对应标签页。
@@ -61,10 +58,9 @@ function openInNewWindow(machine: SshMachineRow, onError: (err: unknown) => void
  * 放弃红 → 其余中性灰；未连接行整体降不透明度。本地实例不可达时进入降级
  * 态：远端项禁用 + 顶部提示，恢复后自动复原（轮询静默重试，不弹错误）。
  */
-export function RemoteSwitcher({ onManage, onSync }: { onManage?: () => void, onSync?: () => void }) {
+export function RemoteSwitcher({ remote, onManage, onSync }: { remote: Remote, onManage?: () => void, onSync?: () => void }) {
   const { t } = useTranslation()
-  useRemoteMachines()
-  const { machines, activeId, available, enabled, pendingId } = useStore(store.remote)
+  const { machines, activeId, available, enabled, pendingId } = remote
 
   const activeMachine = machines.find(machine => machine.id === activeId)
   const activeColor = activeMachine?.color
@@ -107,7 +103,7 @@ export function RemoteSwitcher({ onManage, onSync }: { onManage?: () => void, on
               className="rounded-md"
               id="remote-local"
               textValue={t('remote.local')}
-              onAction={() => { store.remote.backToLocal() }}
+              onAction={() => { remote.backToLocal() }}
             >
               <span className="flex w-full items-center gap-2">
                 <span
@@ -139,7 +135,7 @@ export function RemoteSwitcher({ onManage, onSync }: { onManage?: () => void, on
                   id={`remote-${machine.id}`}
                   textValue={machine.name}
                   isDisabled={!available || pendingId !== null}
-                  onAction={() => { store.remote.switchTo(machine.id) }}
+                  onAction={() => { remote.switchTo(machine.id) }}
                 >
                   <span
                     title={machine.lastError}
@@ -195,7 +191,7 @@ export function RemoteSwitcher({ onManage, onSync }: { onManage?: () => void, on
                 textValue={t('remote.disconnect_active')}
                 onAction={() => {
                   if (activeId !== null)
-                    void store.remote.disconnect(activeId)
+                    void remote.disconnect(activeId)
                 }}
               >
                 <span className="flex w-full items-center gap-2 text-warning">

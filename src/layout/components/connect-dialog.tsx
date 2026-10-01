@@ -1,10 +1,9 @@
+import type { Remote } from '@/hooks/use-remote'
 import { Button, Description, Modal, Spinner } from '@heroui/react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { cn } from 'tailwind-variants'
-import { useStore } from 'valtio-define'
 import { Logs } from '@/components/logs'
-import { store } from '@/store'
 
 /**
  * 连接进度弹窗：点击未连接机器后实时呈现管线进度。
@@ -14,9 +13,9 @@ import { store } from '@/store'
  * 已走阶段 + 日志全部保留，提供「重试 / 关闭」。进行中可关闭弹窗，
  * 连接在后台继续（不影响引擎侧）。
  */
-export function ConnectDialog() {
+export function ConnectDialog({ remote }: { remote: Remote }) {
   const { t } = useTranslation()
-  const { machines, pendingId, connectFailed, connectTrail, connectLog, connectDismissed } = useStore(store.remote)
+  const { machines, pendingId, connectFailed, connectTrail, connectLog, connectDismissed } = remote
 
   const targetId = pendingId ?? connectFailed?.id ?? null
   const machine = targetId === null ? undefined : machines.find(item => item.id === targetId)
@@ -29,8 +28,8 @@ export function ConnectDialog() {
   function handleRetry() {
     if (connectFailed === null)
       return
-    store.remote.dismissConnect()
-    store.remote.switchTo(connectFailed.id)
+    remote.dismissConnect()
+    remote.switchTo(connectFailed.id)
   }
 
   return (
@@ -38,7 +37,7 @@ export function ConnectDialog() {
       isOpen={isOpen}
       onOpenChange={(open: boolean) => {
         if (!open)
-          store.remote.dismissConnect()
+          remote.dismissConnect()
       }}
     >
       <Modal.Backdrop>
@@ -82,7 +81,7 @@ export function ConnectDialog() {
             </Modal.Body>
             <Modal.Footer>
               <If cond={failed}>
-                <Button className="rounded-md" variant="tertiary" onPress={() => store.remote.dismissConnect()}>
+                <Button className="rounded-md" variant="tertiary" onPress={() => remote.dismissConnect()}>
                   {t('buttons.close')}
                 </Button>
                 <Button className="rounded-md" variant="primary" onPress={handleRetry}>
@@ -90,14 +89,14 @@ export function ConnectDialog() {
                 </Button>
               </If>
               <If cond={!failed}>
-                <Button className="rounded-md" variant="tertiary" onPress={() => store.remote.dismissConnect()}>
+                <Button className="rounded-md" variant="tertiary" onPress={() => remote.dismissConnect()}>
                   {t('buttons.close')}
                 </Button>
                 <Button
                   className="rounded-md"
                   variant="secondary"
                   data-testid="connect-cancel"
-                  onPress={() => pendingId !== null && store.remote.cancelConnect(pendingId)}
+                  onPress={() => pendingId !== null && remote.cancelConnect(pendingId)}
                 >
                   {t('remote.connect.cancel')}
                 </Button>

@@ -3,7 +3,7 @@ import type { MachineId, SshSession, SyncApplyResult, SyncItemResult, SyncPlugin
 import type { SyncDeps } from './sync.types'
 import { defineService } from 'dsh-tauri'
 import { syncRuntimeDeps } from '../config/runtime'
-import { allowlistReadCommand, allowlistWriteCommand, carryWorkspaceAllowlist, mergeWorkspaceAllowlist, parseBuildAllowKeys } from '../utils/allowlist'
+import { carryWorkspaceAllowlist, parseBuildAllowKeys } from '../utils/allowlist'
 import { dshEntryProbeCommand, firstLineOf } from './bootstrap.utils'
 import { machine } from './machine'
 import { buildPreview, dedupeBy, describeFailure, failureLogOf, installSpecOf, pluginAddCommand, skillExtractCommand } from './sync.utils'
@@ -102,14 +102,10 @@ async function grantBuildKeys(session: SshSession, profileName: string, output: 
   const keys = parseBuildAllowKeys(output)
   if (keys.length === 0)
     return []
-  const remote = await session.exec(allowlistReadCommand(profileName))
-  const { yaml, added } = mergeWorkspaceAllowlist(
-    remote.stdout,
-    { allowBuilds: Object.fromEntries(keys.map(key => [key, true])), onlyBuiltDependencies: [] },
-  )
-  if (added.length > 0)
-    await session.exec(allowlistWriteCommand(profileName, yaml))
-  return added
+  return carryWorkspaceAllowlist(session, profileName, {
+    allowBuilds: Object.fromEntries(keys.map(key => [key, true])),
+    onlyBuiltDependencies: [],
+  })
 }
 
 async function applySkills(

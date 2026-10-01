@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSyn
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 
 import { REMOTE_ROOT } from '../config/constants'
 
@@ -95,19 +96,12 @@ export async function buildPluginsBundle(tree: BundledPluginsTree): Promise<{ ta
   const staging = mkdtempSync(join(tmpdir(), 'dsh-plugins-wire-'))
   try {
     writeFileSync(join(staging, '_wire.js'), WIRE_SCRIPT)
-    const tar = await new Promise<Buffer>((resolvePromise, rejectPromise) => {
-      const child = execFile('tar', ['-czf', '-', '-C', tree.root, '.', '-C', staging, '_wire.js'], {
-        maxBuffer: 64 * 1024 * 1024,
-        encoding: 'buffer',
-      }, (error, stdout) => {
-        if (error !== null) {
-          rejectPromise(error)
-          return
-        }
-        resolvePromise(stdout)
-      })
-      child.stdin?.end()
+    const pending = promisify(execFile)('tar', ['-czf', '-', '-C', tree.root, '.', '-C', staging, '_wire.js'], {
+      maxBuffer: 64 * 1024 * 1024,
+      encoding: 'buffer',
     })
+    pending.child.stdin?.end()
+    const { stdout: tar } = await pending
     return { tar, hash: createHash('sha256').update(tar).digest('hex') }
   }
   finally {

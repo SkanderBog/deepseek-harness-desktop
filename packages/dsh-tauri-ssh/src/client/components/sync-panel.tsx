@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react'
 import type { SshKey } from '../locales/index'
-import type { MachineRow, SyncItemResult, SyncPluginItem, SyncSkillItem } from '../types/index'
+import type { SyncItemResult, SyncPluginItem, SyncSkillItem } from '../types/index'
 import { Button, Pill, StateDot } from 'dsh-tauri-ui/client'
 import { cn, useStore } from 'dsh-tauri/client'
 import { useEffect, useState } from 'react'
@@ -24,21 +24,6 @@ interface SelectableRow {
   reason?: string
 }
 
-const SECTION = 'flex flex-col gap-[12px] max-w-[960px] text-primary'
-const SECTION_HEAD = 'flex flex-wrap items-start justify-between gap-[12px]'
-const TITLE = 'm-0 text-[18px] leading-[28px] font-semibold text-primary'
-const INTRO = 'm-0 text-[13px] leading-[20px] text-tertiary'
-const CHROME = 'flex shrink-0 flex-wrap items-center gap-[8px]'
-const HINT = 'm-0 text-[12px] leading-[18px] text-tertiary'
-const ERROR = 'm-0 text-[12px] leading-[18px] text-error'
-const EMPTY = 'm-0 rounded-[8px] border border-dashed border-border-l3 p-[12px] text-center text-[12px] leading-[18px] text-tertiary'
-const FIELD_LABEL = 'text-[12px] leading-[18px] font-medium text-secondary'
-const SYNC_COUNT = 'text-[12px] leading-[18px] text-secondary'
-const SYNC_ITEMS = 'm-0 flex list-none flex-col gap-[2px] p-0'
-const LOG_STREAM = 'm-0 max-h-[160px] overflow-auto font-mono text-[11px] leading-[16px] whitespace-pre-wrap text-tertiary [overflow-wrap:anywhere]'
-const SYNC_ROW = 'flex min-w-0 flex-1 cursor-pointer items-center gap-[8px] rounded-[6px] border-0 bg-transparent px-[8px] py-[5px] text-left text-[13px] leading-[20px] text-inherit [font-family:inherit] hover:not-disabled:bg-hover disabled:cursor-not-allowed disabled:opacity-60'
-const SYNC_BOX = 'inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[4px] border border-border-l4 text-primary-fg'
-
 export function SyncPanel({ t }: SyncPanelProps): ReactNode {
   const machinesState = useStore(store.machines)
   const syncState = useStore(store.sync)
@@ -57,7 +42,7 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
 
   const preview = syncState.preview
   const applying = syncState.applying
-  const connected = connectedMachinesOf(machinesState.machines, machinesState.discovered, machinesState.statuses)
+  const connected = [...machinesState.machines, ...machinesState.discovered].filter(machine => machinesState.statuses[machine.id]?.state === 'connected')
   const target = connected.find(machine => machine.id === (targetId ?? connected[0]?.id))
   const pluginRows: SelectableRow[] = (preview?.plugins ?? []).map(plugin => ({
     key: syncKeyOf({ kind: 'plugin', name: plugin.name }),
@@ -95,13 +80,13 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
   }
 
   return (
-    <section className={SECTION} data-testid="sync-panel">
-      <div className={SECTION_HEAD}>
+    <section className="flex flex-col gap-[12px] max-w-[960px] text-primary" data-testid="sync-panel">
+      <div className="flex flex-wrap items-start justify-between gap-[12px]">
         <div>
-          <h2 className={TITLE}>{t('sync.title')}</h2>
-          <p className={INTRO}>{t('sync.desc')}</p>
+          <h2 className="m-0 text-[18px] leading-[28px] font-semibold text-primary">{t('sync.title')}</h2>
+          <p className="m-0 text-[13px] leading-[20px] text-tertiary">{t('sync.desc')}</p>
         </div>
-        <div className={CHROME}>
+        <div className="flex shrink-0 flex-wrap items-center gap-[8px]">
           <Button
             variant="outline"
             size="sm"
@@ -116,13 +101,13 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
         </div>
       </div>
       {machinesState.role?.remote === true
-        ? <p className={EMPTY} data-testid="sync-remote-note">{t('sync.remoteSessionHint')}</p>
+        ? <p className="m-0 rounded-[8px] border border-dashed border-border-l3 p-[12px] text-center text-[12px] leading-[18px] text-tertiary" data-testid="sync-remote-note">{t('sync.remoteSessionHint')}</p>
         : connected.length === 0
-          ? <p className={EMPTY} data-testid="sync-empty">{t('sync.notConnectedHint')}</p>
+          ? <p className="m-0 rounded-[8px] border border-dashed border-border-l3 p-[12px] text-center text-[12px] leading-[18px] text-tertiary" data-testid="sync-empty">{t('sync.notConnectedHint')}</p>
           : (
               <>
                 <div className="flex flex-wrap items-center gap-[6px]">
-                  <span className={FIELD_LABEL}>{t('sync.target')}</span>
+                  <span className="text-[12px] leading-[18px] font-medium text-secondary">{t('sync.target')}</span>
                   {connected.map(machine => (
                     <Pill
                       key={machine.id}
@@ -140,12 +125,12 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
                   ))}
                 </div>
                 {preview === null || syncState.status === 'loading'
-                  ? <p className={HINT}>{t('loading')}</p>
+                  ? <p className="m-0 text-[12px] leading-[18px] text-tertiary">{t('loading')}</p>
                   : (syncState.status === 'ready'
                       ? (
                           <>
                             <div className="flex flex-wrap items-center gap-[8px] pt-[2px]">
-                              <span className={SYNC_COUNT} data-testid="sync-selected">
+                              <span className="text-[12px] leading-[18px] text-secondary" data-testid="sync-selected">
                                 {t('sync.selected')
                                   .replace('{plugins}', String(plugins.length))
                                   .replace('{skills}', String(skills.length))}
@@ -212,7 +197,7 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
             )}
       {syncState.status === 'error'
         ? (
-            <p className={ERROR} role="alert">
+            <p className="m-0 text-[12px] leading-[18px] text-error" role="alert">
               {t('sync.loadFailed')}
               {errorTextOf(syncState.error ?? '', t)}
             </p>
@@ -220,7 +205,7 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
         : null}
       {syncState.error !== null && syncState.status !== 'error'
         ? (
-            <p className={ERROR} role="alert">
+            <p className="m-0 text-[12px] leading-[18px] text-error" role="alert">
               {t('sync.applyFailed')}
               {errorTextOf(syncState.error, t)}
             </p>
@@ -246,15 +231,15 @@ function SyncGroup({ label, empty, rows, selected, t, onToggle }: {
   return (
     <div className="flex flex-col gap-[6px]">
       <div className="flex items-center gap-[6px]">
-        <span className={FIELD_LABEL}>{label}</span>
+        <span className="text-[12px] leading-[18px] font-medium text-secondary">{label}</span>
         {rows.length === 0
           ? null
-          : <span className={SYNC_COUNT}>{t('sync.groupCount').replace('{checked}', String(checked)).replace('{total}', String(syncable.length))}</span>}
+          : <span className="text-[12px] leading-[18px] text-secondary">{t('sync.groupCount').replace('{checked}', String(checked)).replace('{total}', String(syncable.length))}</span>}
       </div>
       {rows.length === 0
-        ? <p className={HINT}>{empty}</p>
+        ? <p className="m-0 text-[12px] leading-[18px] text-tertiary">{empty}</p>
         : (
-            <ul className={SYNC_ITEMS}>
+            <ul className="m-0 flex list-none flex-col gap-[2px] p-0">
               {rows.map((row) => {
                 const ticked = row.syncable && selected.has(row.key)
                 return (
@@ -263,13 +248,13 @@ function SyncGroup({ label, empty, rows, selected, t, onToggle }: {
                       type="button"
                       role="checkbox"
                       aria-checked={ticked}
-                      className={SYNC_ROW}
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-[8px] rounded-[6px] border-0 bg-transparent px-[8px] py-[5px] text-left text-[13px] leading-[20px] text-inherit [font-family:inherit] hover:not-disabled:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
                       data-testid={`sync-row-${row.name}`}
                       disabled={!row.syncable || undefined}
                       title={row.reason}
                       onClick={() => onToggle(row.key)}
                     >
-                      <span className={cn(SYNC_BOX, ticked && 'border-brand bg-brand')} aria-hidden="true">
+                      <span className={cn('inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[4px] border border-border-l4 text-primary-fg', ticked && 'border-brand bg-brand')} aria-hidden="true">
                         {ticked
                           ? (
                               <svg fill="none" height="10" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.4" viewBox="0 0 12 12" width="10">
@@ -307,7 +292,7 @@ function SyncResults({ results, applying, t, onRetry }: {
       <p className="m-0 text-[12px] leading-[18px] text-secondary">
         {t('sync.summary').replace('{ok}', String(okCount)).replace('{failed}', String(failed))}
       </p>
-      <ul className={SYNC_ITEMS}>
+      <ul className="m-0 flex list-none flex-col gap-[2px] p-0">
         {results.map(item => (
           <li
             key={syncKeyOf(item)}
@@ -324,7 +309,7 @@ function SyncResults({ results, applying, t, onRetry }: {
               ? <span className="text-[12px] leading-[18px] text-success">{t('sync.itemOk')}</span>
               : (
                   <>
-                    <span className={ERROR} role="alert">
+                    <span className="m-0 text-[12px] leading-[18px] text-error" role="alert">
                       {t('sync.itemFailed')}
                       {item.error === undefined ? '' : `：${item.error}`}
                     </span>
@@ -356,7 +341,7 @@ function SyncResults({ results, applying, t, onRetry }: {
       {openLogOf === null
         ? null
         : (
-            <pre className={LOG_STREAM} data-testid="sync-log">
+            <pre className="m-0 max-h-[160px] overflow-auto font-mono text-[11px] leading-[16px] whitespace-pre-wrap text-tertiary [overflow-wrap:anywhere]" data-testid="sync-log">
               {results.find(item => syncKeyOf(item) === openLogOf)?.log ?? ''}
             </pre>
           )}
@@ -380,12 +365,4 @@ function barPercentOf(attempt: number | undefined, total: number | undefined): n
   if (total === undefined || total <= 0)
     return 0
   return Math.min(100, Math.round((Math.max(0, (attempt ?? 0) - 1) / total) * 100))
-}
-
-function connectedMachinesOf(
-  machines: readonly MachineRow[],
-  discovered: readonly MachineRow[],
-  statuses: Record<string, { state: string }>,
-): MachineRow[] {
-  return [...machines, ...discovered].filter(machine => statuses[machine.id]?.state === 'connected')
 }

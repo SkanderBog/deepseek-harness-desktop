@@ -74,10 +74,6 @@ export const machines = defineStore({
       this.enabling = true
       this.error = null
     },
-    commitEnabled(enabled: boolean): void {
-      this.enabled = enabled
-      this.error = null
-    },
     endEnable(): void {
       this.enabling = false
     },

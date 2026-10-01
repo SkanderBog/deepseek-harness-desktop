@@ -1,6 +1,6 @@
-import type { SshMachineRow } from './types'
+import type { SshMachineRow } from './use-remote'
 import { describe, expect, it } from 'vitest'
-import { borderTintOf, dotClassOf, dotStyleOf, reconcileSwitcher } from './logic'
+import { borderTintOf, dotClassOf, dotStyleOf, reconcileSwitcher } from './use-remote'
 
 function machineOf(partial: Partial<SshMachineRow>): SshMachineRow {
   return {

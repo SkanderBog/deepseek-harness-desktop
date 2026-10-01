@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import { createElement } from 'react'
-import { cssr } from '../../../../dsh-tauri-ui/src/client/utils/cssr.ts'
 
 type Props = Record<string, unknown> & { children?: ReactNode }
 
@@ -63,8 +62,24 @@ function SegmentedControl({ options, value, onChange }: Props & {
   )
 }
 
-function mountStyle(): () => void {
-  return () => {}
+function Switch({ checked, onChange, label, disabled, title, className }: {
+  checked: boolean
+  onChange: (next: boolean) => void
+  label: string
+  disabled?: boolean
+  title?: string | undefined
+  className?: string | undefined
+}): ReactNode {
+  return createElement('button', {
+    'type': 'button',
+    'role': 'switch',
+    'aria-checked': checked,
+    'aria-label': label,
+    disabled,
+    title,
+    className,
+    'onClick': () => onChange(!checked),
+  })
 }
 
 export const uiMock = {
@@ -76,6 +91,5 @@ export const uiMock = {
   Pill,
   SegmentedControl,
   StateDot,
-  cssr,
-  mountStyle,
+  Switch,
 }
