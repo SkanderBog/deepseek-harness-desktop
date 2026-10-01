@@ -50,7 +50,8 @@ export const registerAppearance = defineRegister<ClientContext>((controller, ctx
     waitingObserver?.disconnect()
     waitingObserver = undefined
     syncColumns()
-    frameObserver = controller.observe(frame, syncColumns, { attributes: true, attributeFilter: ['style'] })
+    frameObserver = new MutationObserver(syncColumns)
+    frameObserver.observe(frame, { attributes: true, attributeFilter: ['style'] })
     restoreSidebar = !frame.hasAttribute('data-sidebar-collapsed')
     if (restoreSidebar)
       ctx.layout.toggleSidebar()
@@ -84,8 +85,10 @@ export const registerAppearance = defineRegister<ClientContext>((controller, ctx
     updateStyles()
     if (terminalChanged) {
       stopTerminal()
-      if (next.terminal && !attachFrame())
-        waitingObserver = controller.observe(document.body, attachFrame, { childList: true, subtree: true })
+      if (next.terminal && !attachFrame()) {
+        waitingObserver = new MutationObserver(attachFrame)
+        waitingObserver.observe(document.body, { childList: true, subtree: true })
+      }
     }
   }, 'dsh://appearance'))
   controller.add(ctx.on('theme/change', updateStyles))

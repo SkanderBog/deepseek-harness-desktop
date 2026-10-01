@@ -169,7 +169,7 @@ describe.skipIf(process.platform === 'darwin')('桌面端启动冒烟', () => {
         const css = getComputedStyle(document.body)
         const frame = document.querySelector('[data-shell-overlay]')?.parentElement
         return css.getPropertyValue('--dsw-alias-label-primary') === (document.body.hasAttribute('data-ds-dark-theme') ? '#eceff4' : '#2e3440')
-          && css.getPropertyValue('--dsw-font-family').includes('monospace')
+          && css.fontFamily.includes('monospace')
           && !!frame && getComputedStyle(frame).gridTemplateColumns.startsWith('0px ')
       }), { timeout: 15_000 })
     }

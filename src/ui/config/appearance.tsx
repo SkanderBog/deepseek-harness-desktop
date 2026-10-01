@@ -54,9 +54,8 @@ export function ConfigAppearance() {
           isSelected={appearance.terminal}
           isDisabled={isPending}
           onChange={terminal => save({ ...appearance, terminal })}
-          data-testid="dsh-appearance-terminal"
         >
-          <Switch.Content>
+          <Switch.Content data-testid="dsh-appearance-terminal">
             <Switch.Control><Switch.Thumb /></Switch.Control>
           </Switch.Content>
         </Switch>

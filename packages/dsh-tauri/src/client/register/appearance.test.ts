@@ -106,4 +106,20 @@ describe('desktop appearance bridge', () => {
     send({ palette: 'amber' })
     expect(theme.overrideTokens).toHaveBeenCalledOnce()
   })
+
+  it('releases terminal observers when disabled instead of retaining them until unload', () => {
+    const observe = vi.spyOn(MutationObserver.prototype, 'observe')
+    const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect')
+    const { send } = setup()
+    send({})
+    expect(observe).not.toHaveBeenCalled()
+    for (let i = 0; i < 20; i++) {
+      send({ terminal: true })
+      send({ terminal: false })
+    }
+    expect(observe).toHaveBeenCalledTimes(20)
+    expect(disconnect).toHaveBeenCalledTimes(20)
+    disposers.pop()!()
+    expect(disconnect).toHaveBeenCalledTimes(20)
+  })
 })

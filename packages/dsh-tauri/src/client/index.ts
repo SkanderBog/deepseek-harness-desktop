@@ -35,5 +35,4 @@ export type * from './types/tauri'
 
 export const name = PLUGIN_ID
 
-/** 客户端服务依赖：layout（侧边栏切换）。 */
 export const inject = ['layout', 'theme']
