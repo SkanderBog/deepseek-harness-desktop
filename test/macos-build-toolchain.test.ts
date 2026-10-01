@@ -6,10 +6,10 @@ import { describe, expect, it } from 'vitest'
 import { readSource } from './setup/read-source'
 
 const WORKFLOWS = [
-  ['.github/workflows/build-bundle-macos.yml', 'steps.check.outputs.should_run == \'true\''],
-  ['.github/workflows/build-macos.yml', 'steps.check.outputs.should_run == \'true\''],
-  ['.github/workflows/build-test.yml', undefined],
-  ['.github/workflows/ci.yml', 'runner.os == \'macOS\''],
+  ['.github/workflows/build-bundle-macos.yml', 'steps.check.outputs.should_run == \'true\'', '$/.github/actions/setup-xcode'],
+  ['.github/workflows/build-macos.yml', 'steps.check.outputs.should_run == \'true\'', '$/.github/actions/setup-xcode'],
+  ['.github/workflows/build-test.yml', undefined, './.github/actions/setup-xcode'],
+  ['.github/workflows/ci.yml', 'runner.os == \'macOS\'', './.github/actions/setup-xcode'],
 ] as const
 
 const ACTION = readSource('.github/actions/setup-xcode/action.yml')
@@ -41,7 +41,7 @@ function verifyToolchain(version: string, developerExit = 0): { status: number |
 
 describe('macOS packaging toolchain selection', () => {
   it('selects a stable Xcode without constraining its major version', () => {
-    expect(ACTION).toContain('uses: maxim-lobanov/setup-xcode@v1')
+    expect(ACTION).toContain('uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90')
     expect(ACTION).toContain('xcode-version: latest-stable')
     expect(verification).toBeTypeOf('string')
   })
@@ -61,11 +61,11 @@ describe('macOS packaging toolchain selection', () => {
     expect(verifyToolchain('Apple Swift version 6.2', 2)).toEqual({ status: 2, exported: '' })
   })
 
-  it.each(WORKFLOWS)('%s selects the shared toolchain with its original platform gate', (path, condition) => {
+  it.each(WORKFLOWS)('%s selects the shared toolchain from the correct commit with its original platform gate', (path, condition, action) => {
     const source = readSource(path)
     const step = source.match(/ {6}- name: Setup Xcode\n([\s\S]*?)(?=\n {6}- |$)/)?.[1]
     expect(step, path).toBeTypeOf('string')
-    expect(step, path).toContain('uses: ./.github/actions/setup-xcode')
+    expect(step, path).toContain(`uses: ${action}`)
     if (condition)
       expect(step, path).toContain(`if: ${condition}`)
     expect(source, path).not.toContain('/Applications/Xcode_16')
