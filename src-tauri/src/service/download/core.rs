@@ -86,6 +86,7 @@ async fn download_with_retry<'a, R: Runtime>(
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (deepseek-harness-desktop)")
         .connect_timeout(std::time::Duration::from_secs(20))
+        .read_timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| {
             log::error!("Failed to create HTTP client: {}", e);
@@ -213,7 +214,6 @@ async fn download_attempt<'a, R: Runtime>(
         res.content_length().unwrap_or(0)
     };
     log::debug!("File size: {} bytes", total_size);
-    let mut downloaded: u64 = 0;
     let mut stream = res.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| {
@@ -221,8 +221,7 @@ async fn download_attempt<'a, R: Runtime>(
             e.to_string()
         })?;
         buffer.extend_from_slice(&chunk);
-        downloaded += chunk.len() as u64;
-        let received_total = resume_from + downloaded;
+        let received_total = buffer.len() as u64;
         // 未知总长（服务器未给 Content-Length/分块传输）时进度取 -1，
         // 避免 `received / 0 = +inf` 或 NaN 进度传给前端
         let progress_pct = download_progress_percent(received_total, total_size);

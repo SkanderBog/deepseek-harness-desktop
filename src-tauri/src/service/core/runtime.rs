@@ -598,6 +598,14 @@ fn link_required_plugins(app_handle: &AppHandle, core_root: &Path) -> Result<(),
         }
         let source = profile.join("node_modules").join(&name);
         if !source.join("package.json").is_file() {
+            if read_package_name(&core_node_modules.join(&name).join("package.json"))
+                .ok()
+                .flatten()
+                .as_deref()
+                == Some(name.as_str())
+            {
+                continue;
+            }
             log::warn!(
                 "CORE_PLUGIN_PROFILE_ENTRY_MISSING: {} is referenced by {}, source {} is unavailable",
                 name,

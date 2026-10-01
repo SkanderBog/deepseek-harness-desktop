@@ -1222,7 +1222,7 @@ mod tests {
         {
             let content = build_sh_shim(&sample_shim_paths(), &sample_dsh_home());
             assert!(content.contains(r#"exec "$dir/dsh" "$@""#));
-            assert!(content.contains("SELF_DIR"));
+            assert!(content.contains(r#"[ "$dir/dsh" -ef "$0" ]"#));
             // 用户 dsh 优先 > 注入 DSH_HOME
             let user_at = content.find(r#""$dir/dsh""#).unwrap();
             let home_at = content.find("export DSH_HOME").unwrap();

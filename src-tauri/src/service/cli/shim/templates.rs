@@ -183,15 +183,117 @@ if ($userDsh) {
 pub(super) const SH_USER_DSH_PRECEDENCE: &str = r#"
 # Prefer a user-installed dsh on PATH (skip our own shim dir), fall back to bundled.
 # This preserves your own dsh binary and its $DSH_HOME config; nothing is overwritten.
-SELF_DIR=$(cd "$(dirname "$0")" && pwd)
-IFS=:
-for dir in $PATH; do
-  if [ "$dir" = "$SELF_DIR" ]; then
+remaining_path=${PATH-}:
+while [ -n "$remaining_path" ]; do
+  dir=${remaining_path%%:*}
+  remaining_path=${remaining_path#*:}
+  dir=${dir:-.}
+  if [ "$dir/dsh" -ef "$0" ]; then
     continue
   fi
   if [ -x "$dir/dsh" ]; then
     exec "$dir/dsh" "$@"
   fi
 done
-unset IFS
+unset remaining_path
 "#;
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::SH_USER_DSH_PRECEDENCE;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn dsh_shim_skips_aliases_and_preserves_user_command_arguments_and_status() {
+        let scratch = Scratch(std::env::temp_dir().join(format!(
+            "dsh-shim-alias-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        )));
+        let root = &scratch.0;
+        let bin = root.join("shim bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let shim = bin.join("dsh");
+        std::fs::write(
+            &shim,
+            format!("#!/bin/sh\n{SH_USER_DSH_PRECEDENCE}\nprintf 'FALLBACK\\n'\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let alias = root.join("alias");
+        symlink(&bin, &alias).unwrap();
+        let file_alias = root.join("file-alias");
+        std::fs::create_dir_all(&file_alias).unwrap();
+        symlink(&shim, file_alias.join("dsh")).unwrap();
+        let hard_link = root.join("hard-link");
+        std::fs::create_dir_all(&hard_link).unwrap();
+        std::fs::hard_link(&shim, hard_link.join("dsh")).unwrap();
+
+        for prefix in [
+            bin.display().to_string(),
+            format!("{}/", bin.display()),
+            format!("{}:{}", bin.display(), alias.display()),
+            file_alias.display().to_string(),
+            hard_link.display().to_string(),
+            ".".into(),
+            String::new(),
+        ] {
+            let output = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::process::Command::new(&shim)
+                    .current_dir(&bin)
+                    .env_clear()
+                    .env("PATH", format!("{prefix}:{}", root.join("missing").display()))
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .expect("shim must not re-execute itself")
+            .unwrap();
+            assert!(output.status.success(), "PATH prefix: {prefix}");
+            assert_eq!(output.stdout, b"FALLBACK\n", "PATH prefix: {prefix}");
+        }
+
+        let user_bin = root.join("user[bin]");
+        std::fs::create_dir_all(&user_bin).unwrap();
+        let user_dsh = user_bin.join("dsh");
+        std::fs::write(&user_dsh, "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 7\n").unwrap();
+        std::fs::set_permissions(&user_dsh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let decoy = root.join("userb");
+        std::fs::create_dir_all(&decoy).unwrap();
+        let decoy_dsh = decoy.join("dsh");
+        std::fs::write(&decoy_dsh, "#!/bin/sh\nexit 99\n").unwrap();
+        std::fs::set_permissions(&decoy_dsh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for path in [
+            format!("{}:{}", bin.display(), user_bin.display()),
+            format!("{}:", root.join("missing").display()),
+            String::new(),
+        ] {
+            let output = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::process::Command::new(&shim)
+                    .current_dir(&user_bin)
+                    .env_clear()
+                    .env("PATH", &path)
+                    .args(["two words", "*"])
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .expect("user command must finish")
+            .unwrap();
+            assert_eq!(output.status.code(), Some(7), "PATH: {path}");
+            assert_eq!(output.stdout, b"two words\n*\n", "PATH: {path}");
+        }
+    }
+}
