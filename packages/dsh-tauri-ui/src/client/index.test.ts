@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply } from './index'
+import { registerMobilePreferences } from './register/mobile-preferences'
 import { registerSettings } from './register/settings'
 
 vi.mock('./components', () => ({}))
@@ -10,6 +11,7 @@ vi.mock('./locales', () => ({ locale: { registerLocale: vi.fn() } }))
 vi.mock('./register/composer-resume', () => ({ composerResumeFeature: vi.fn() }))
 vi.mock('./register/hero-workspace', () => ({ heroWorkspaceFeature: vi.fn() }))
 vi.mock('./register/im-panel', () => ({ registerImPanel: vi.fn() }))
+vi.mock('./register/mobile-preferences', () => ({ registerMobilePreferences: vi.fn() }))
 vi.mock('./register/new-session', () => ({ sidebarNewSessionFeature: vi.fn(), ungroupedNewSessionFeature: vi.fn() }))
 vi.mock('./register/obstructions', () => ({ registerSettingsObstructions: vi.fn() }))
 vi.mock('./register/sections', () => ({ registerSettingsSections: vi.fn() }))
@@ -31,7 +33,8 @@ describe('ui client settings effect registration', () => {
     apply({ effect } as unknown as Parameters<typeof apply>[0])
 
     expect(effect).not.toHaveBeenCalledWith(registerSettings, 'dsh-tauri-ui: settings panel')
-    expect(effect).toHaveBeenCalledTimes(10)
+    expect(effect).toHaveBeenCalledWith(registerMobilePreferences, 'dsh-tauri-ui: mobile preferences')
+    expect(effect).toHaveBeenCalledTimes(11)
     expect(effect).toHaveBeenCalledWith(expect.any(Function), 'dsh-tauri-ui: styles')
   })
 
@@ -51,6 +54,7 @@ describe('ui client settings effect registration', () => {
     apply({ effect } as unknown as Parameters<typeof apply>[0])
 
     expect(effect).toHaveBeenCalledWith(registerSettings, 'dsh-tauri-ui: settings panel')
+    expect(effect).not.toHaveBeenCalledWith(registerMobilePreferences, 'dsh-tauri-ui: mobile preferences')
     expect(effect).toHaveBeenCalledTimes(11)
   })
 
@@ -61,5 +65,6 @@ describe('ui client settings effect registration', () => {
     apply({ effect } as unknown as Parameters<typeof apply>[0])
 
     expect(effect).toHaveBeenCalledWith(registerSettings, 'dsh-tauri-ui: settings panel')
+    expect(effect).not.toHaveBeenCalledWith(registerMobilePreferences, 'dsh-tauri-ui: mobile preferences')
   })
 })
