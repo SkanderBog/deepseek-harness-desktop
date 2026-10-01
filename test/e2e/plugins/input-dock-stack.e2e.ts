@@ -15,13 +15,13 @@ afterAll(async () => {
   await browser?.close()
 })
 
-async function render(count = 3, anchor = false): Promise<void> {
+async function render(count = 3, anchor = false, inset = 0): Promise<void> {
   await page.mouse.move(0, 0)
   await page.setContent(`<style>
     body { margin:0; --dsh-composer-card-max-width:600px; --dsh-composer-side-clearance:24px }
     .seat { position:absolute; bottom:50px; left:0; width:1000px }
     [data-slot="conversation.input.dock"] { display:flex; flex-direction:column; align-items:center }
-    [data-card] { width:100%; box-sizing:border-box; background:#eee; border:1px solid #aaa }
+    [data-card] { width:calc(100% - var(--dsh-composer-side-clearance) * 2 - ${inset * 2}px); box-sizing:border-box; background:#eee; border:1px solid #aaa }
     [data-card] button { height:62px; display:block }
     .composer { width:600px; height:100px; margin:8px auto 0 }
     ${globalStyle.render()}
@@ -33,6 +33,11 @@ async function heights(): Promise<number[]> {
 }
 
 describe('input dock hover geometry', () => {
+  it('preserves card widths after boxing the display-contents outlet', async () => {
+    await render()
+    expect(await page.locator('[data-card="2"]').evaluate(element => element.getBoundingClientRect().width)).toBe(600)
+  })
+
   it('keeps both side gutters collapsed', async () => {
     await render()
     const last = await page.locator('[data-card="2"]').boundingBox()
@@ -41,6 +46,19 @@ describe('input dock hover geometry', () => {
       await page.mouse.move(x, last!.y + 10)
       expect(await heights(), '两侧空白不得展开卡片').toEqual([11.52, 11.76, 64])
     }
+  })
+
+  it.each([8, 16])('keeps near-card inset gutters collapsed (%spx inset)', async (inset) => {
+    await render(3, false, inset)
+    const last = await page.locator('[data-card="2"]').boundingBox()
+    for (const x of [last!.x - 4, last!.x + last!.width + 4]) {
+      await page.mouse.move(x, last!.y + 10)
+      expect(await heights(), '卡片边缘内缩空白不得触发展开').toEqual([11.52, 11.76, 64])
+    }
+    await page.locator('[data-card="2"]').hover()
+    await expect.poll(() => heights()).toEqual([64, 64, 64])
+    await page.locator('[data-card="0"] button').hover()
+    expect(await heights()).toEqual([64, 64, 64])
   })
 
   it('animates real layout height and stays open on the uppermost card', async () => {
@@ -54,6 +72,36 @@ describe('input dock hover geometry', () => {
     expect(await page.locator('[data-card="0"]').evaluate(element => getComputedStyle(element).transitionDuration), '必须有过渡动画').toBe('0.22s, 0.22s')
     await page.mouse.move(0, 0)
     await expect.poll(() => dock.evaluate(element => element.getBoundingClientRect().height), { message: '离开后布局必须重新收紧' }).toBe(88)
+  })
+
+  it('interpolates height during expansion and collapse', async () => {
+    await render()
+    const last = await page.locator('[data-card="2"]').boundingBox()
+    async function sample(): Promise<number[]> {
+      return page.locator('[data-slot="conversation.input.dock"]').evaluate(async (element) => {
+        const values: number[] = []
+        const start = performance.now()
+        while (performance.now() - start < 300) {
+          values.push(element.getBoundingClientRect().height)
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        }
+        return values
+      })
+    }
+    await page.mouse.move(last!.x + 100, last!.y + 10)
+    expect((await sample()).some(value => value > 88 && value < 192), '展开必须经过中间高度').toBe(true)
+    await page.mouse.move(0, 0)
+    expect((await sample()).some(value => value > 88 && value < 192), '收起必须经过中间高度').toBe(true)
+  })
+
+  it.each([3, 4])('ignores an anchor when stacking %s cards', async (count) => {
+    await render(count, true)
+    const expected = count === 3 ? [11.52, 11.76, 64] : [11.28, 11.52, 11.76, 64]
+    expect(await heights()).toEqual(expected)
+    await page.locator(`[data-card="${count - 1}"]`).hover()
+    await expect.poll(() => heights()).toEqual(Array.from({ length: count }).fill(64))
+    await page.locator('[data-card="0"] button').hover()
+    expect(await heights()).toEqual(Array.from({ length: count }).fill(64))
   })
 
   it('keeps the dock expanded while a card has keyboard focus', async () => {

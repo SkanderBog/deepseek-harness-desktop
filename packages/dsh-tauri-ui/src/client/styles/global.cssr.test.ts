@@ -20,20 +20,20 @@ describe('conversation input dock stack', () => {
     [3, 'scale(0.96)'],
     [4, 'scale(0.94)'],
   ])('reduces the real height of non-anchor child %s when collapsed', (index, transform) => {
-    expect(rules[`${dock}:not(:hover):not(:focus-within) > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`]).toEqual({ height: '12px', transform })
+    expect(rules[`${dock}:not(:has(> :not([data-dsh-tauri-worktree-mode-anchor]):hover)):not(:focus-within) > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`]).toEqual({ height: '12px', transform })
   })
 
   it.each([2, 3, 4])('restores non-anchor child %s on hover or focus', (index) => {
-    expect(rules[`${dock}:is(:hover, :focus-within) > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`]).toEqual({ transform: 'scale(1)' })
+    expect(rules[`${dock}:is(:has(> :not([data-dsh-tauri-worktree-mode-anchor]):hover), :focus-within) > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`]).toEqual({ transform: 'scale(1)' })
     expect(rules[`${dock} > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`]).toEqual({
-      height: 'auto',
+      'height': 'auto',
       'min-height': '0',
       'margin-block': '0',
       'box-sizing': 'border-box',
-      overflow: 'clip',
+      'overflow': 'clip',
       'transform-origin': 'top center',
       'interpolate-size': 'allow-keywords',
-      transition: 'height 220ms ease, transform 220ms ease',
+      'transition': 'height 220ms ease, transform 220ms ease',
     })
   })
 

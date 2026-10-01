@@ -16,6 +16,10 @@ export default c([
     marginInline: 'auto',
     rowGap: '0',
   }),
+  // The outlet now owns the side clearance; avoid subtracting it again in card widths.
+  c(`${INPUT_DOCK_SELECTOR} > :not([data-dsh-tauri-worktree-mode-anchor])`, {
+    '--dsh-composer-side-clearance': '0px',
+  }),
   ...[2, 3, 4].flatMap((index) => {
     const child = `> :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`
     return [
@@ -29,11 +33,11 @@ export default c([
         interpolateSize: 'allow-keywords',
         transition: 'height 220ms ease, transform 220ms ease',
       }),
-      c(`${INPUT_DOCK_SELECTOR}:not(:hover):not(:focus-within) ${child}`, {
+      c(`${INPUT_DOCK_SELECTOR}:not(:has(> :not([data-dsh-tauri-worktree-mode-anchor]):hover)):not(:focus-within) ${child}`, {
         height: '12px',
         transform: `scale(${1 - (index - 1) * 0.02})`,
       }),
-      c(`${INPUT_DOCK_SELECTOR}:is(:hover, :focus-within) ${child}`, {
+      c(`${INPUT_DOCK_SELECTOR}:is(:has(> :not([data-dsh-tauri-worktree-mode-anchor]):hover), :focus-within) ${child}`, {
         transform: 'scale(1)',
       }),
     ]
