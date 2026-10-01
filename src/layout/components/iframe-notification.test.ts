@@ -29,6 +29,7 @@ vi.mock('@/hooks/use-notification-action', () => ({ useNotificationAction: vi.fn
 vi.mock('@/hooks/use-notification-clicked', () => ({ useNotificationClicked: vi.fn() }))
 vi.mock('@/hooks/use-sync-visibility', () => ({ useSyncVisibility: vi.fn() }))
 vi.mock('@/hooks/use-zoom-factor', () => ({ useZoomFactor: vi.fn() }))
+vi.mock('@/hooks/use-appearance', () => ({ useAppearance: () => '' }))
 vi.mock('./loadable', () => ({ Loadable: () => null }))
 
 function notify(tag = 'dsh-notification-session-1') {

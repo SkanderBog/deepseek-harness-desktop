@@ -11,6 +11,7 @@ import { apply } from './apply'
 
 // effect 标签是 `ctx.effect` 的卸载日志标识：与 `client/apply.ts` 逐字一致。
 const EXPECTED_LABELS = [
+  'dsh-tauri: appearance',
   'dsh-tauri: style (sidebar background)',
   'dsh-tauri: sidebar (toggle command + collapsed report)',
   'dsh-tauri: navigation (new session, add workspace)',

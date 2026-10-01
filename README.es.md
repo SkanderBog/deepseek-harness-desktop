@@ -45,6 +45,8 @@
 - ⌨️ **Integración con la terminal** — Shims administrados de `dsh` / `pnpm`, no una instalación global del núcleo por npm.
 - 🐾 **Mascotas de escritorio** — Recursos Pets / Codex, importación de paquetes y actividad de conversaciones; los recursos predefinidos son remotos.
 
+**Settings → Appearance** ofrece las paletas Default, Nord, Solarized, Forest y Amber, que siguen la preferencia de tema claro, oscuro o del sistema. El modo terminal usa texto monoespaciado y oculta la barra lateral; el botón superior izquierdo permite mostrarla. La opacidad del fondo va del 20 al 100%, manteniendo opacos el texto y los menús. Para activar o desactivar la transparencia nativa, cerrá la aplicación por completo y volvé a abrirla; el efecto depende del sistema de ventanas. Restore defaults restablece todos los ajustes de apariencia.
+
 ## Plugins integrados
 
 Los 11 plugins propios distribuidos con los recursos del escritorio:

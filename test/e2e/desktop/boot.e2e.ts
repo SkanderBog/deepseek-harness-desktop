@@ -137,4 +137,52 @@ describe.skipIf(process.platform === 'darwin')('桌面端启动冒烟', () => {
     const shellErrors = await browser.execute(readPageErrors)
     expect(shellErrors, '壳层出现报错').toEqual([])
   }, ASSEMBLY_TIMEOUT_MS)
+
+  it('saves appearance through native settings, projects it into the core and restores defaults', async () => {
+    async function click(id: string) {
+      const element = await browser.$(`[data-testid="${id}"]`)
+      await element.waitForClickable()
+      await element.click()
+    }
+    async function appearance() {
+      return browser.execute(async () => {
+        const bridge = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string) => Promise<{ appearance: { palette: string, terminal: boolean, opacity: number } }> } }).__TAURI_INTERNALS__
+        return (await bridge.invoke('get_app_config')).appearance
+      })
+    }
+    await click('dsh-navbar-menu-config')
+    await click('dsh-navbar-item-appearance')
+    await click('dsh-appearance-palette')
+    await click('dsh-appearance-palette-nord')
+    await browser.waitUntil(async () => (await appearance()).palette === 'nord')
+    await click('dsh-appearance-terminal')
+    await browser.waitUntil(async () => (await appearance()).terminal)
+    await click('dsh-appearance-opacity')
+    await click('dsh-appearance-opacity-70')
+    await browser.waitUntil(async () => (await appearance()).opacity === 70)
+    expect(await appearance()).toEqual({ palette: 'nord', terminal: true, opacity: 70 })
+    expect(await browser.$('[data-testid="dsh-appearance-restart"]').isDisplayed()).toBe(true)
+    await click('dsh-config-dialog-close')
+    await browser.switchFrame(await browser.$(SHELL_IFRAME))
+    try {
+      await browser.waitUntil(() => browser.execute(() => {
+        const css = getComputedStyle(document.body)
+        const frame = document.querySelector('[data-shell-overlay]')?.parentElement
+        return css.getPropertyValue('--dsw-alias-label-primary') === (document.body.hasAttribute('data-ds-dark-theme') ? '#eceff4' : '#2e3440')
+          && css.getPropertyValue('--dsw-font-family').includes('monospace')
+          && !!frame && getComputedStyle(frame).gridTemplateColumns.startsWith('0px ')
+      }), { timeout: 15_000 })
+    }
+    finally {
+      await browser.switchFrame(null)
+    }
+    await click('dsh-navbar-sidebar-toggle')
+    await click('dsh-navbar-menu-config')
+    await click('dsh-navbar-item-appearance')
+    await click('dsh-appearance-reset')
+    await browser.waitUntil(async () => (await appearance()).palette === 'default')
+    expect(await appearance()).toEqual({ palette: 'default', terminal: false, opacity: 100 })
+    expect(await browser.$('[data-testid="dsh-appearance-restart"]').isExisting()).toBe(false)
+    await click('dsh-config-dialog-close')
+  })
 })

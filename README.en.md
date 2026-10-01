@@ -45,6 +45,8 @@
 - ⌨️ **CLI integration** — Managed `dsh` / `pnpm` shims, not a global npm core installation.
 - 🐾 **Desktop pets** — Pets / Codex resources, pack imports, and conversation activity; preset media comes from remote hosts.
 
+**Settings → Appearance** offers Default, Nord, Solarized, Forest, and Amber palettes that follow the existing Light/Dark/System preference. Terminal mode uses monospace text and hides the sidebar; the top-left button reveals it. Background opacity ranges from 20–100% while text and menus stay opaque. Enabling or disabling native transparency requires fully quitting and reopening the app, and the effect depends on the window system. Restore defaults resets all appearance settings.
+
 ## Built-in plugins
 
 The 11 first-party plugins distributed with desktop resources:

@@ -37,7 +37,7 @@ export function ConfigAppearance() {
         <Select.Popover>
           <ListBox>
             {APPEARANCE_PALETTES.map(palette => (
-              <ListBox.Item key={palette} id={palette} textValue={t(`appearance.palette.${palette}`)}>
+              <ListBox.Item key={palette} id={palette} textValue={t(`appearance.palette.${palette}`)} data-testid={`dsh-appearance-palette-${palette}`}>
                 {t(`appearance.palette.${palette}`)}
               </ListBox.Item>
             ))}
@@ -56,7 +56,9 @@ export function ConfigAppearance() {
           onChange={terminal => save({ ...appearance, terminal })}
           data-testid="dsh-appearance-terminal"
         >
-          <Switch.Control><Switch.Thumb /></Switch.Control>
+          <Switch.Content>
+            <Switch.Control><Switch.Thumb /></Switch.Control>
+          </Switch.Content>
         </Switch>
       </div>
       <Select
@@ -73,14 +75,14 @@ export function ConfigAppearance() {
         <Select.Popover>
           <ListBox>
             {OPACITY_OPTIONS.map(opacity => (
-              <ListBox.Item key={opacity} id={String(opacity)} textValue={`${opacity}%`}>{`${opacity}%`}</ListBox.Item>
+              <ListBox.Item key={opacity} id={String(opacity)} textValue={`${opacity}%`} data-testid={`dsh-appearance-opacity-${opacity}`}>{`${opacity}%`}</ListBox.Item>
             ))}
           </ListBox>
         </Select.Popover>
       </Select>
       <p className="text-xs text-muted">{t('appearance.opacity_description')}</p>
       <If cond={(appearance.opacity < 100) !== transparent}>
-        <p role="status" className="text-sm text-info">{t('appearance.restart')}</p>
+        <p role="status" data-testid="dsh-appearance-restart" className="text-sm text-info">{t('appearance.restart')}</p>
       </If>
       <Button variant="secondary" isDisabled={isPending} onPress={() => save(normalizeAppearance(APPEARANCE_DEFAULTS))} data-testid="dsh-appearance-reset">
         {t('appearance.reset')}

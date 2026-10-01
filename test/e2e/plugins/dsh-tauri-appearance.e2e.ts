@@ -34,9 +34,12 @@ describe('built-in desktop appearance', () => {
     try {
       const sidebar = app.frame.locator('[data-slot="sidebar"]')
       await app.page.evaluate(() => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'dsh://appearance', appearance: { terminal: true } }, location.origin))
-      await expect.poll(() => sidebar.evaluate(el => el.getBoundingClientRect().width), { message: '终端模式下侧栏不应占用空白列' }).toBe(0)
+      await expect.poll(() => sidebar.evaluate(el => el.parentElement!.getBoundingClientRect().width), { message: '终端模式下侧栏不应占用空白列' }).toBe(0)
+      expect(await sidebar.evaluate(el => getComputedStyle(el).visibility), '隐藏侧栏内容不可见').toBe('hidden')
+      expect(await app.frame.locator('body').evaluate(el => getComputedStyle(el).getPropertyValue('--dsw-font-family'))).toContain('monospace')
       await app.page.evaluate(() => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'dsh://sidebar:toggle' }, location.origin))
-      await expect.poll(() => sidebar.evaluate(el => el.getBoundingClientRect().width), { message: '原有侧栏开关必须能恢复侧栏' }).toBeGreaterThanOrEqual(264)
+      await expect.poll(() => sidebar.evaluate(el => el.parentElement!.getBoundingClientRect().width), { message: '原有侧栏开关必须能恢复侧栏' }).toBeGreaterThanOrEqual(264)
+      expect(await sidebar.evaluate(el => getComputedStyle(el).visibility), '展开后侧栏内容可见').toBe('visible')
       expect(app.errors, '终端模式不得产生浏览器错误').toEqual([])
     }
     finally {
