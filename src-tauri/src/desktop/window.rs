@@ -5,12 +5,12 @@ use std::sync::Arc;
 
 #[cfg(windows)]
 use tauri::webview::{PageLoadEvent, PageLoadPayload};
+#[cfg(windows)]
+use tauri::WebviewWindow;
 use tauri::{
     webview::{DownloadEvent, NewWindowFeatures, NewWindowResponse},
     AppHandle, Emitter, Runtime, Url, Webview, Wry,
 };
-#[cfg(windows)]
-use tauri::WebviewWindow;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::config;
@@ -71,33 +71,15 @@ pub fn on_download<R: Runtime>(webview: Webview<R>, event: DownloadEvent<'_>) ->
 /// 于是开关留在默认开启状态。而开启时，在页面内拖放文本会让 WebView2 卡在失效的
 /// 鼠标捕获上：选中无法取消、点击与输入失效、滚轮仍可用（WebView2Feedback #5141 /
 /// #5613）。这里补回这道防护——它只影响外部拖放，页面内 HTML5 拖拽不受影响。
-///
-/// 待确认：调用点位于 `on_page_load` 的通知注册守卫内，而主窗口的守卫会被 setup
-/// 阶段那次注册提前消费，本函数在主窗口可能压根没执行（#591 follow-up）。下面的
-/// 日志就是用来判定的：主窗口若只有 `on_page_load started` 而没有 `AllowExternalDrop`，
-/// 即说明该分支被跳过。
 #[cfg(windows)]
 pub fn disable_external_drop(webview: &tauri::webview::PlatformWebview) {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller4;
-    use windows_core::{BOOL, Interface};
-
-    fn read(controller: &ICoreWebView2Controller4) -> Option<bool> {
-        let mut value = unsafe { std::mem::zeroed::<BOOL>() };
-        unsafe { controller.AllowExternalDrop(&mut value) }.ok()?;
-        Some(value.as_bool())
-    }
+    use windows_core::Interface;
 
     unsafe {
         match webview.controller().cast::<ICoreWebView2Controller4>() {
             Ok(controller) => {
-                let before = read(&controller);
-                let set = controller.SetAllowExternalDrop(false);
-                let after = read(&controller);
-                log::info!(
-                    "[webview] AllowExternalDrop {before:?} -> {after:?} (set ok={})",
-                    set.is_ok()
-                );
-                if let Err(e) = set {
+                if let Err(e) = controller.SetAllowExternalDrop(false) {
                     log::warn!("[webview] failed to disable external drop: {e}");
                 }
             }
@@ -119,9 +101,7 @@ pub fn on_page_load(
         return;
     }
     log::info!("[webview] on_page_load started");
-    if !notification_handlers_registered_for_page
-        .swap(true, std::sync::atomic::Ordering::SeqCst)
-    {
+    if !notification_handlers_registered_for_page.swap(true, std::sync::atomic::Ordering::SeqCst) {
         log::info!("[notification] top-level page load started; scheduling handler registration");
         let parent = webview_window.clone();
         if let Err(e) = webview_window.with_webview(move |platform| {

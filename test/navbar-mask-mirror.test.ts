@@ -7,13 +7,10 @@
  * 该层必须始终带 iframe 上报的样式、且不得被写成穿透点击（dsh 有模态期间壳层不该可点）。
  * 与 `menu-restart.test.ts` 同一姿势——node 环境无渲染器，用源码关系断言。
  */
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { readSource } from './setup/read-source'
 
-const navbarSource = readFileSync(
-  new URL('../src/layout/components/navbar.tsx', import.meta.url),
-  'utf8',
-)
+const navbarSource = readSource('src/layout/components/navbar.tsx')
 
 const markedLayer = navbarSource.match(/<div className="absolute"[^>]*\/>/)?.[0] ?? ''
 
@@ -23,6 +20,7 @@ describe('navbar mask mirror layer', () => {
   })
 
   it('镜像层不在 dsh 弹模态期间放行点击', () => {
+    expect(markedLayer).toContain('style={dshStyle.marked || {}}')
     expect(markedLayer).not.toContain('pointer-events-none')
   })
 })

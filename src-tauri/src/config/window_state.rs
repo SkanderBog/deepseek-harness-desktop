@@ -98,13 +98,9 @@ pub fn get_window_state<R: Runtime>(app_handle: &AppHandle<R>) -> WindowState {
         .store(store_dat_file_name())
         .expect("Failed to load store for window state");
     let raw = store.get(STORE_WINDOW_STATE_KEY);
-    raw.and_then(|v| {
-        v.as_str()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .or_else(|| Some(v.clone()))
-    })
-    .and_then(|v| serde_json::from_value(v).ok())
-    .unwrap_or_default()
+    raw.as_ref()
+        .and_then(|value| serde_json::from_value(super::unwrap_json_value(value).into_owned()).ok())
+        .unwrap_or_default()
 }
 
 /// 把窗口状态写回 store 并落盘（store 基于 AppData，不随窗口生命周期丢失）。

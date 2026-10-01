@@ -119,12 +119,7 @@ pub(crate) fn scan_unresolved_entries_in(
     let declared = declared_dependencies(profile_dir);
     let mut unresolved = Vec::new();
     for layer in patch_layer_paths(profile_dir, dsh_home) {
-        unresolved.extend(scan_layer(
-            &layer,
-            profile_dir,
-            install_anchor,
-            &declared,
-        ));
+        unresolved.extend(scan_layer(&layer, profile_dir, install_anchor, &declared));
     }
     unresolved
 }
@@ -156,12 +151,8 @@ pub(crate) fn strip_unresolved_entries_in(
         }
         let stamp = now_stamp();
         let backup = backup_path(&layer, "bak", &stamp);
-        std::fs::copy(&layer, &backup).map_err(|e| {
-            format!(
-                "PATCH_LAYER_STRIP_BACKUP_FAILED: {}: {e}",
-                backup.display()
-            )
-        })?;
+        std::fs::copy(&layer, &backup)
+            .map_err(|e| format!("PATCH_LAYER_STRIP_BACKUP_FAILED: {}: {e}", backup.display()))?;
         let rendered = serde_yaml::to_string(&Value::Sequence(kept))
             .map_err(|e| format!("PATCH_LAYER_STRIP_RENDER_FAILED: {e}"))?;
         write_patch_layer_atomically(&layer, &rendered, &stamp)?;
@@ -214,16 +205,9 @@ fn scan_layer(
             &mut blocking
         };
         for item in items {
-            let Some(name) = item
-                .as_mapping()
-                .and_then(|item| map_get(item, "name"))
-                .and_then(Value::as_str)
-            else {
+            let Some(name) = dangling_package(profile_dir, install_anchor, item) else {
                 continue;
             };
-            if !is_bare_package_name(name) || package_resolvable(profile_dir, install_anchor, name) {
-                continue;
-            }
             target.push(UnresolvedPatchEntry {
                 layer: layer.display().to_string(),
                 line: item_line(&raw, &starts, index, name),
@@ -251,7 +235,19 @@ fn scan_layer(
     blocking
 }
 
-/// 剥离条目里悬空的 insert 项，返回（保留下来的顶层条目，移除数量）。
+fn dangling_package<'a>(
+    profile_dir: &Path,
+    install_anchor: Option<&Path>,
+    item: &'a Value,
+) -> Option<&'a str> {
+    item.as_mapping()
+        .and_then(|item| map_get(item, "name"))
+        .and_then(Value::as_str)
+        .filter(|name| {
+            is_bare_package_name(name) && !package_resolvable(profile_dir, install_anchor, name)
+        })
+}
+
 fn strip_entries(
     entries: &[Value],
     profile_dir: &Path,
@@ -274,15 +270,7 @@ fn strip_entries(
         };
         let mut kept_items = Vec::with_capacity(items.len());
         for item in items {
-            let dangling = item
-                .as_mapping()
-                .and_then(|item| map_get(item, "name"))
-                .and_then(Value::as_str)
-                .is_some_and(|name| {
-                    is_bare_package_name(name)
-                        && !package_resolvable(profile_dir, install_anchor, name)
-                });
-            if dangling {
+            if dangling_package(profile_dir, install_anchor, item).is_some() {
                 removed += 1;
             } else {
                 kept_items.push(item.clone());
@@ -294,7 +282,11 @@ fn strip_entries(
                 kept.push(Value::Mapping(stripped));
             }
         } else {
-            kept.push(Value::Mapping(with_key(map, "insert", Value::Sequence(kept_items))));
+            kept.push(Value::Mapping(with_key(
+                map,
+                "insert",
+                Value::Sequence(kept_items),
+            )));
         }
     }
     (kept, removed)
@@ -350,9 +342,12 @@ fn package_resolvable(profile_dir: &Path, install_anchor: Option<&Path>, name: &
 /// 与 dsh-app-boot 的 `packageDirFromAnchor` 同一判定（探测目录里的 `package.json`，
 /// 不要求包导出 `./package.json`），因此结果与 loader 的 import 一致。
 fn resolvable_from(anchor: &Path, name: &str) -> bool {
-    anchor
-        .ancestors()
-        .any(|dir| dir.join("node_modules").join(name).join("package.json").is_file())
+    anchor.ancestors().any(|dir| {
+        dir.join("node_modules")
+            .join(name)
+            .join("package.json")
+            .is_file()
+    })
 }
 
 /// 顶层序列项的起始行号（1-based）；补丁层是顶层数组，`- ` 必须顶格。
@@ -475,6 +470,36 @@ mod tests {
         let dir = profile.join("node_modules").join(name);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("package.json"), "{}\n").unwrap();
+    }
+
+    #[test]
+    fn dangling_package_preserves_item_shape_and_resolution_boundaries() {
+        let profile = tmp_dir("dangling-boundaries");
+        let anchor = tmp_dir("dangling-anchor");
+        install_package(&profile, "local-plugin");
+        install_package(&anchor, "anchor-plugin");
+        for (yaml, expected) in [
+            ("name: missing-plugin", Some("missing-plugin")),
+            ("name: '@scope/missing'", Some("@scope/missing")),
+            ("name: local-plugin", None),
+            ("name: anchor-plugin", None),
+            ("name: ./relative", None),
+            ("name: file:///plugin.js", None),
+            ("name: 7", None),
+            ("id: missing-plugin", None),
+            ("missing-plugin", None),
+            ("[missing-plugin]", None),
+            ("null", None),
+        ] {
+            let item = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(
+                dangling_package(&profile, Some(&anchor), &item),
+                expected,
+                "{yaml}"
+            );
+        }
+        std::fs::remove_dir_all(profile).unwrap();
+        std::fs::remove_dir_all(anchor).unwrap();
     }
 
     /// 事故形态：包已卸载、手写的 insert 还在补丁层里。
@@ -620,10 +645,7 @@ mod tests {
 
         assert!(scan_unresolved_entries_in(&profile, &home, Some(&bin)).is_empty());
         // 没有安装锚点时同一份补丁层会被判定为悬空，证明锚点确实参与了判定。
-        assert_eq!(
-            scan_unresolved_entries_in(&profile, &home, None).len(),
-            1
-        );
+        assert_eq!(scan_unresolved_entries_in(&profile, &home, None).len(), 1);
         let _ = std::fs::remove_dir_all(&install);
         let _ = std::fs::remove_dir_all(&profile);
         let _ = std::fs::remove_dir_all(&home);
@@ -647,7 +669,9 @@ mod tests {
         assert_eq!(report.layers[0].removed, 1);
         let backup = PathBuf::from(&report.layers[0].backup);
         assert!(backup.is_file());
-        assert!(std::fs::read_to_string(&backup).unwrap().contains("dsh-gone"));
+        assert!(std::fs::read_to_string(&backup)
+            .unwrap()
+            .contains("dsh-gone"));
         let stripped = std::fs::read_to_string(profile.join("cordis.patch.yml")).unwrap();
         assert!(stripped.contains("dsh-keep"), "{stripped}");
         assert!(stripped.contains("untouched"), "{stripped}");
@@ -724,9 +748,10 @@ mod tests {
         let message = unresolved_entries_message(&entries);
 
         assert!(message.starts_with(&format!("{PATCH_ENTRY_UNRESOLVED}: ")));
-        let payload: serde_json::Value =
-            serde_json::from_str(message.trim_start_matches(&format!("{PATCH_ENTRY_UNRESOLVED}: ")))
-                .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(
+            message.trim_start_matches(&format!("{PATCH_ENTRY_UNRESOLVED}: ")),
+        )
+        .unwrap();
         assert_eq!(payload["entries"][0]["name"], "dsh-file-edit");
         assert_eq!(payload["entries"][0]["line"], 3);
         assert_eq!(payload["entries"][0]["declared"], true);

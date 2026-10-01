@@ -2,6 +2,7 @@ import process from 'node:process'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { SHARED_ALIAS } from './tooling.config'
 
 const host = process.env.TAURI_DEV_HOST
 
@@ -27,9 +28,7 @@ export default defineConfig(async () => ({
   },
 
   resolve: {
-    alias: {
-      '@': '/src',
-    },
+    alias: SHARED_ALIAS,
   },
 
   // Vite options tailored for Tauri development.

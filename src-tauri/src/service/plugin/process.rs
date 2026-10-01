@@ -344,7 +344,7 @@ pub(crate) async fn run_plugin_process(
 }
 
 /// 取出（并清空）共享缓冲区中的全部捕获输出。
-fn drain_captured(captured: Arc<Mutex<String>>) -> String {
+pub(super) fn drain_captured(captured: Arc<Mutex<String>>) -> String {
     captured
         .lock()
         .map(|mut buf| std::mem::take(&mut *buf))
@@ -402,6 +402,43 @@ fn spawn_line_emitter<R: Read + Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drain_captured_preserves_exact_output_and_clears_shared_buffer() {
+        let captured = Arc::new(Mutex::new(
+            "stdout  \r\n\tstderr\0中文\npartial\r".to_string(),
+        ));
+
+        assert_eq!(
+            drain_captured(captured.clone()),
+            "stdout  \r\n\tstderr\0中文\npartial\r"
+        );
+        assert_eq!(*captured.lock().unwrap(), "");
+        assert_eq!(drain_captured(captured.clone()), "");
+
+        captured.lock().unwrap().push_str("late stderr");
+        assert_eq!(drain_captured(captured.clone()), "late stderr");
+        assert_eq!(*captured.lock().unwrap(), "");
+    }
+
+    #[test]
+    fn drain_captured_returns_empty_without_recovering_poisoned_buffer() {
+        let captured = Arc::new(Mutex::new("retained output".to_string()));
+        let writer = captured.clone();
+        assert!(std::thread::spawn(move || {
+            let _guard = writer.lock().unwrap();
+            panic!("poison isolated capture buffer");
+        })
+        .join()
+        .is_err());
+
+        assert_eq!(drain_captured(captured.clone()), "");
+        assert!(captured.is_poisoned());
+        assert_eq!(
+            *captured.lock().unwrap_err().into_inner(),
+            "retained output"
+        );
+    }
 
     #[test]
     fn stale_guard_cannot_clear_a_new_process_for_the_same_owner() {

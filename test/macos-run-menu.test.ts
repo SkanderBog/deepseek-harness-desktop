@@ -57,7 +57,9 @@ describe('macOS native run menu', () => {
 
   it('keeps fullscreen as a native action with state-dependent labels', () => {
     expect(builderSource).toContain('PredefinedMenuItem::fullscreen(app, Some(&fullscreen_label))?')
-    expect(builderSource).toMatch(/let fullscreen_label = crate::config::i18n::t\(if is_fullscreen \{\s*"menu.exit_fullscreen"\s*\} else \{\s*"menu.enter_fullscreen"/)
+    expect(builderSource).toMatch(/fn fullscreen_menu_label_key\(is_fullscreen: bool\) -> &'static str \{\s*if is_fullscreen \{\s*"menu.exit_fullscreen"\s*\} else \{\s*"menu.enter_fullscreen"\s*\}/)
+    expect(builderSource).toContain('let fullscreen_label = crate::config::i18n::t(fullscreen_menu_label_key(is_fullscreen));')
+    expect(builderSource).toContain('let label = crate::config::i18n::t(fullscreen_menu_label_key(is_fullscreen));')
     expect(builderSource).toContain('Some(fullscreen)')
     expect(builderSource).toContain('sync_macos_fullscreen_menu(window)')
   })

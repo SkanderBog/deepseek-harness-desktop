@@ -388,13 +388,8 @@ impl EntrySpec {
 /// 随包核心因此永远起不来。CLI shim 也会把这个前缀写进 `.cmd`，同样要归一化。
 pub fn resource_root<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     let dir = app.path().resource_dir().ok()?;
-    Some(simplify_resource_root(pick_resource_root(&dir).unwrap_or(dir)))
-}
-
-/// 归一化资源根：`dunce::simplified` 剥掉 Windows 的 `\\?\` 前缀（非 Windows 为 no-op），
-/// 不改动文件系统、也不要求路径存在。
-fn simplify_resource_root(path: PathBuf) -> PathBuf {
-    dunce::simplified(&path).to_path_buf()
+    let root = pick_resource_root(&dir).unwrap_or(dir);
+    Some(dunce::simplified(&root).to_path_buf())
 }
 
 /// 资源根探测顺序：扁平布局（exe 同级）优先，再 `resources/` 子目录布局。
@@ -983,7 +978,7 @@ mod tests {
     #[test]
     fn resource_root_simplifies_windows_verbatim_prefix() {
         let verbatim = PathBuf::from(r"\\?\C:\app\resources\dsh");
-        let simplified = simplify_resource_root(verbatim);
+        let simplified = dunce::simplified(&verbatim).to_path_buf();
         if cfg!(windows) {
             assert_eq!(simplified, PathBuf::from(r"C:\app\resources\dsh"));
             assert!(!simplified.to_string_lossy().starts_with(r"\\?\"));

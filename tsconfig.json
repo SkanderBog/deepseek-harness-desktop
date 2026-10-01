@@ -22,7 +22,6 @@
     "isolatedModules": true,
     "skipLibCheck": true
   },
-  "references": [{ "path": "./tsconfig.node.json" }],
   "include": [
     "src",
     "test",
@@ -30,6 +29,8 @@
     "packages/*/scripts",
     "types",
     "packages/.test/test-utils.ts",
-    "scripts/build-plugins.ts"
+    "scripts",
+    "*.config.ts",
+    "genapi*.ts"
   ]
 }

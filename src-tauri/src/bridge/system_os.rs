@@ -76,23 +76,7 @@ pub async fn reveal_data_dir(app_handle: AppHandle) -> Result<(), String> {
     // 目录可能尚未创建（全新安装），先建好再打开，避免资源管理器报路径不存在
     std::fs::create_dir_all(&dsh_home).map_err(|e| e.to_string())?;
 
-    if cfg!(windows) {
-        std::process::Command::new("explorer")
-            .arg(&dsh_home)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    } else if cfg!(target_os = "macos") {
-        std::process::Command::new("open")
-            .arg(&dsh_home)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    } else {
-        std::process::Command::new("xdg-open")
-            .arg(&dsh_home)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    tauri_plugin_opener::open_path(&dsh_home, None::<&str>).map_err(|e| e.to_string())
 }
 
 /// 前端日志透传：前端 `console.*` 劫持经此命令落盘到 `desktop.frontdesk.log`
@@ -203,30 +187,6 @@ pub async fn read_run_logs(app_handle: AppHandle) -> Result<String, String> {
     let desktop = base.join("logs").join("desktop.log");
     let frontend = base.join("logs").join("desktop.frontdesk.log");
 
-    let read_tail = |path: &std::path::Path, max_lines: usize| -> String {
-        if !path.exists() {
-            return String::new();
-        }
-        let content = std::fs::read_to_string(path).unwrap_or_default();
-        let lines: Vec<&str> = content.lines().collect();
-        let start = lines.len().saturating_sub(max_lines);
-        lines[start..].join("\n")
-    };
-
-    // 后端尾行：先剔除 `target: "frontend"` 的行，再取末尾，避免前端日志把后端日志挤没
-    let read_backend_tail = |path: &std::path::Path, max_lines: usize| -> String {
-        if !path.exists() {
-            return String::new();
-        }
-        let content = std::fs::read_to_string(path).unwrap_or_default();
-        let lines: Vec<&str> = content
-            .lines()
-            .filter(|line| !is_frontend_log_line(line))
-            .collect();
-        let start = lines.len().saturating_sub(max_lines);
-        lines[start..].join("\n")
-    };
-
     // 环境信息：桌面端应用版本、dsh 发行版本、Node 版本、系统平台/架构，以及当前
     // 档案名与已安装插件列表，便于报障时快速定位环境差异。
     // 插件名取 npm 包名（profile `dependencies` 的依赖键），与 `dsh plugin <cmd> <id>`
@@ -258,9 +218,9 @@ pub async fn read_run_logs(app_handle: AppHandle) -> Result<String, String> {
         &plugin_lines,
     );
 
-    let service_text = read_tail(&service, MAX_LINES);
-    let frontend_text = read_tail(&frontend, FRONTEND_MAX_LINES);
-    let backend_text = read_backend_tail(&desktop, MAX_LINES);
+    let service_text = read_tail(&service, MAX_LINES, false);
+    let frontend_text = read_tail(&frontend, FRONTEND_MAX_LINES, false);
+    let backend_text = read_tail(&desktop, MAX_LINES, true);
 
     Ok(format!(
         "### 环境信息\n\n{}\n\n### 服务日志\n\n```\n{}\n```\n\n### 前台日志\n\n```\n{}\n```\n\n### 后台日志\n\n```\n{}\n```",
@@ -271,10 +231,19 @@ pub async fn read_run_logs(app_handle: AppHandle) -> Result<String, String> {
     ))
 }
 
-/// 判断某行是否为前端日志（`target: "frontend"`）。
-/// 日志行格式见 logger/mod.rs：`[ts] LEVEL target: message`（时间戳可能含空格）。
-/// 前端行的 target 恒为 `frontend`，紧跟 LEVEL 之后；用「LEVEL + frontend:」定位，
-/// 避免把消息正文里出现的 "frontend" 误判为前端日志。
+fn read_tail(path: &std::path::Path, max_lines: usize, filter_frontend: bool) -> String {
+    if !path.exists() {
+        return String::new();
+    }
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let lines: Vec<&str> = content
+        .lines()
+        .filter(|line| !filter_frontend || !is_frontend_log_line(line))
+        .collect();
+    let start = lines.len().saturating_sub(max_lines);
+    lines[start..].join("\n")
+}
+
 fn is_frontend_log_line(line: &str) -> bool {
     const LEVELS: [&str; 5] = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"];
     let trimmed = line.trim_start();
@@ -300,6 +269,37 @@ mod tests {
     use super::format_env_info;
     use super::is_frontend_log_line;
     use super::tail_bytes;
+
+    #[test]
+    fn log_tail_filters_frontend_before_selecting_last_lines() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("dsh-shell-log-tail-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("desktop.log");
+        std::fs::write(
+            &path,
+            "INFO dsh: first\r\nINFO frontend: noisy\r\nWARN dsh: 中文\nINFO frontend: last\n",
+        )
+        .unwrap();
+        assert_eq!(
+            super::read_tail(&path, 2, true),
+            "INFO dsh: first\nWARN dsh: 中文"
+        );
+        assert_eq!(
+            super::read_tail(&path, 2, false),
+            "WARN dsh: 中文\nINFO frontend: last"
+        );
+        assert_eq!(super::read_tail(&path, 0, true), "");
+        assert_eq!(super::read_tail(&root.join("missing"), 100, false), "");
+        assert_eq!(super::read_tail(&root, 100, true), "");
+        std::fs::write(&path, [0xff]).unwrap();
+        assert_eq!(super::read_tail(&path, 100, false), "");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn env_info_carries_profile_and_plugins() {

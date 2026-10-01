@@ -1,18 +1,9 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { readSource } from './setup/read-source'
 
-const builderSource = readFileSync(
-  new URL('../src-tauri/src/desktop/builder.rs', import.meta.url),
-  'utf8',
-)
-const i18nSource = readFileSync(
-  new URL('../src-tauri/src/config/i18n.rs', import.meta.url),
-  'utf8',
-)
-const navbarSource = readFileSync(
-  new URL('../src/layout/components/navbar.tsx', import.meta.url),
-  'utf8',
-)
+const builderSource = readSource('src-tauri/src/desktop/builder.rs')
+const i18nSource = readSource('src-tauri/src/config/i18n.rs')
+const navbarSource = readSource('src/layout/components/navbar.tsx')
 
 describe('menu restart backend contract', () => {
   it('places desktop-restart menu item after run_logs in help submenu', () => {

@@ -95,6 +95,8 @@ pub const ZOOM_FACTOR_MAX: f64 = 2.0;
 pub const ZOOM_FACTOR_STEP: f64 = 0.1;
 pub const HARNESS_HEAP_MIN_MB: u32 = 1024;
 pub const HARNESS_HEAP_MAX_MB: u32 = 32768;
+pub const CLOSE_ACTION_TRAY: &str = "tray";
+pub const CLOSE_ACTION_QUIT: &str = "quit";
 
 pub fn normalize_harness_max_heap_mb(value: Option<u32>) -> Option<u32> {
     value.filter(|mb| (HARNESS_HEAP_MIN_MB..=HARNESS_HEAP_MAX_MB).contains(mb))
@@ -117,7 +119,7 @@ pub fn default_zoom_factor() -> f64 {
 
 /// 默认关闭行为：隐藏到托盘继续驻留（D-09）。
 pub fn default_close_action() -> String {
-    "tray".to_string()
+    CLOSE_ACTION_TRAY.to_string()
 }
 
 /// 默认保留备份份数：10 份。
@@ -131,7 +133,7 @@ pub fn default_backup_retention_count() -> u32 {
 /// 平台写入，宽松匹配会让 `"quit "` / `"TRAY"` 这类值以非预期形态进入下游判断。
 pub fn normalize_close_action(value: &str) -> String {
     match value {
-        "tray" | "quit" => value.to_string(),
+        CLOSE_ACTION_TRAY | CLOSE_ACTION_QUIT => value.to_string(),
         _ => default_close_action(),
     }
 }
@@ -155,8 +157,10 @@ pub fn normalize_backup_retention(retention_count: u32) -> u32 {
     }
 }
 
-/// 把 Setting 的保留份数字段归一化到有效范围。
-fn normalize_backup_fields(setting: &mut Setting) {
+fn normalize_setting(setting: &mut Setting) {
+    setting.zoom_factor = normalize_zoom_factor(setting.zoom_factor);
+    setting.harness_max_heap_mb = normalize_harness_max_heap_mb(setting.harness_max_heap_mb);
+    setting.close_action = normalize_close_action(&setting.close_action);
     setting.backup_retention_count = normalize_backup_retention(setting.backup_retention_count);
 }
 
@@ -253,18 +257,7 @@ fn force_xwayland_in_store_json(raw: &str) -> bool {
     let Some(value) = root.get(STORE_SETTING_KEY) else {
         return false;
     };
-    // 与 read_store_dat_setting 同理：值可能是对象，也可能是内含对象的 JSON 字符串。
-    let unwrapped;
-    let object = match value.as_str() {
-        Some(text) => match serde_json::from_str::<serde_json::Value>(text) {
-            Ok(parsed) => {
-                unwrapped = parsed;
-                &unwrapped
-            }
-            Err(_) => return false,
-        },
-        None => value,
-    };
+    let object = unwrap_json_value(value);
     object
         .get("force_xwayland")
         .and_then(serde_json::Value::as_bool)
@@ -302,24 +295,30 @@ pub fn is_first_install() -> bool {
     FIRST_INSTALL.get().copied().unwrap_or(false)
 }
 
+pub(crate) fn unwrap_json_value(
+    value: &serde_json::Value,
+) -> std::borrow::Cow<'_, serde_json::Value> {
+    value
+        .as_str()
+        .and_then(|text| serde_json::from_str(text).ok())
+        .map(std::borrow::Cow::Owned)
+        .unwrap_or(std::borrow::Cow::Borrowed(value))
+}
+
+fn setting_from_value(value: Option<&serde_json::Value>) -> Setting {
+    let mut setting = value
+        .and_then(|value| serde_json::from_value(unwrap_json_value(value).into_owned()).ok())
+        .unwrap_or_default();
+    normalize_setting(&mut setting);
+    setting
+}
+
 fn read_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>) -> Setting {
     let store = app_handle
         .store(store_dat_file_name())
         .expect("Failed to load store");
     let raw = store.get(STORE_SETTING_KEY);
-    let value = raw.as_ref().and_then(|v| {
-        v.as_str()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .or_else(|| Some(v.clone()))
-    });
-    let mut setting = value
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_else(Setting::default);
-    setting.zoom_factor = normalize_zoom_factor(setting.zoom_factor);
-    setting.harness_max_heap_mb = normalize_harness_max_heap_mb(setting.harness_max_heap_mb);
-    setting.close_action = normalize_close_action(&setting.close_action);
-    normalize_backup_fields(&mut setting);
-    setting
+    setting_from_value(raw.as_ref())
 }
 
 fn write_store_dat_setting(app_handle: &AppHandle, setting: &Setting) -> serde_json::Value {
@@ -358,7 +357,7 @@ pub fn set_store_dat_setting(app_handle: &AppHandle, mut setting: Setting) {
             .unwrap_or_else(|error| error.into_inner());
         let current = read_store_dat_setting(app_handle);
         setting = preserve_persisted_fields(setting, &current);
-        normalize_backup_fields(&mut setting);
+        normalize_setting(&mut setting);
         write_store_dat_setting(app_handle, &setting)
     };
     emit_setting(app_handle, &value);
@@ -375,11 +374,7 @@ where
             .unwrap_or_else(|error| error.into_inner());
         let mut setting = read_store_dat_setting(app_handle);
         update(&mut setting);
-        setting.zoom_factor = normalize_zoom_factor(setting.zoom_factor);
-        setting.harness_max_heap_mb = normalize_harness_max_heap_mb(setting.harness_max_heap_mb);
-        // 落盘前的第二道闸：调用方（含前端 invoke）写入的不可信取值不以原始形态进 store
-        setting.close_action = normalize_close_action(&setting.close_action);
-        normalize_backup_fields(&mut setting);
+        normalize_setting(&mut setting);
         let value = write_store_dat_setting(app_handle, &setting);
         (setting, value)
     };
@@ -401,32 +396,26 @@ pub fn get_dsh_pkg_commit(app_handle: &AppHandle) -> Option<String> {
     get_store_dat_setting(app_handle).dsh_pkg_commit
 }
 
-/// 记录已安装 Harness 发行版的 GitHub release commit hash
-pub fn set_dsh_pkg_commit(app_handle: &AppHandle, commit: String) {
-    let mut setting = get_store_dat_setting(app_handle);
-    setting.dsh_pkg_commit = Some(commit);
-    set_store_dat_setting(app_handle, setting);
-}
-
 /// 已安装 Harness 发行版对应的 GitHub release tag
 pub fn get_dsh_pkg_tag(app_handle: &AppHandle) -> Option<String> {
     get_store_dat_setting(app_handle).dsh_pkg_tag
 }
 
-/// 记录已安装 Harness 发行版的 GitHub release tag
-pub fn set_dsh_pkg_tag(app_handle: &AppHandle, tag: String) {
-    let mut setting = get_store_dat_setting(app_handle);
-    setting.dsh_pkg_tag = Some(tag);
-    set_store_dat_setting(app_handle, setting);
+pub fn set_dsh_pkg_identity(app_handle: &AppHandle, commit: String, tag: String) {
+    update_store_dat_setting(app_handle, |setting| {
+        setting.dsh_pkg_commit = Some(commit);
+        setting.dsh_pkg_tag = Some(tag);
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         default_close_action, default_zoom_factor, force_xwayland_in_store_json,
-        normalize_close_action, normalize_zoom_factor, preserve_persisted_fields,
-        resolve_store_dat_file, Setting, STORE_DAT_DEV_FILE, STORE_DAT_FILE, STORE_DAT_TEST_FILE,
-        STORE_SETTING_KEY, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
+        normalize_close_action, normalize_setting, normalize_zoom_factor,
+        preserve_persisted_fields, resolve_store_dat_file, setting_from_value, unwrap_json_value,
+        Setting, STORE_DAT_DEV_FILE, STORE_DAT_FILE, STORE_DAT_TEST_FILE, STORE_SETTING_KEY,
+        ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
     };
 
     /// 启动前读取跑在 `logger::init()` 之前，任何损坏输入都只能静默回落到关闭。
@@ -445,7 +434,9 @@ mod tests {
             r#"{"setting":"{\"force_xwayland\":true}"}"#
         ));
         // 字段缺失（老版本写下的 store）。
-        assert!(!force_xwayland_in_store_json(r#"{"setting":{"port":3080}}"#));
+        assert!(!force_xwayland_in_store_json(
+            r#"{"setting":{"port":3080}}"#
+        ));
         // 键缺失、JSON 非法、空文件。
         assert!(!force_xwayland_in_store_json(r#"{"window_state":{}}"#));
         assert!(!force_xwayland_in_store_json("{ not json"));
@@ -522,8 +513,119 @@ mod tests {
     }
 
     #[test]
+    fn settings_decode_object_and_wrapped_object_with_same_normalization() {
+        let object = serde_json::json!({
+            "installed": true,
+            "port": 4099,
+            "auto_start": false,
+            "language": "en-US",
+            "zoom_factor": 1.16,
+            "harness_max_heap_mb": 32769,
+            "close_action": "QUIT",
+            "backup_retention_count": 51
+        });
+        let wrapped = serde_json::Value::String(object.to_string());
+        for value in [&object, &wrapped] {
+            let setting = setting_from_value(Some(value));
+            assert!(setting.installed);
+            assert_eq!(setting.port, 4099);
+            assert!(!setting.auto_start);
+            assert_eq!(setting.language, "en-US");
+            assert_eq!(setting.zoom_factor, 1.2);
+            assert_eq!(setting.harness_max_heap_mb, None);
+            assert_eq!(setting.close_action, "tray");
+            assert_eq!(setting.backup_retention_count, 10);
+            assert_eq!(setting.active_profile, "web");
+        }
+    }
+
+    #[test]
+    fn settings_decode_invalid_shapes_keep_chinese_default_language() {
+        let invalid = [
+            serde_json::Value::Null,
+            serde_json::json!([]),
+            serde_json::json!({}),
+            serde_json::json!("not json"),
+            serde_json::json!("null"),
+            serde_json::json!({
+                "installed": true,
+                "port": 4099,
+                "auto_start": true
+            }),
+        ];
+        for value in &invalid {
+            let setting = setting_from_value(Some(value));
+            assert!(!setting.installed);
+            assert_eq!(setting.language, "zh-CN");
+            assert_eq!(setting.active_profile, "web");
+            assert_eq!(setting.close_action, "tray");
+        }
+        assert_eq!(setting_from_value(None).language, "zh-CN");
+    }
+
+    #[test]
+    fn unwrap_json_value_borrows_objects_and_parses_strings_once() {
+        let object = serde_json::json!({ "force_xwayland": true });
+        assert!(matches!(
+            unwrap_json_value(&object),
+            std::borrow::Cow::Borrowed(value) if std::ptr::eq(value, &object)
+        ));
+        let wrapped = serde_json::json!(object.to_string());
+        assert_eq!(unwrap_json_value(&wrapped).as_ref(), &object);
+        let invalid = serde_json::json!("not json");
+        assert_eq!(unwrap_json_value(&invalid).as_ref(), &invalid);
+        let nested = serde_json::json!(wrapped.to_string());
+        assert_eq!(unwrap_json_value(&nested).as_ref(), &wrapped);
+    }
+
+    #[test]
+    fn settings_normalization_preserves_boundary_values_and_unrelated_fields() {
+        for heap_mb in [1024, 32768] {
+            for retention in [1, 50] {
+                let mut setting = Setting {
+                    language: "custom-language".to_string(),
+                    port: 4099,
+                    zoom_factor: f64::NEG_INFINITY,
+                    harness_max_heap_mb: Some(heap_mb),
+                    close_action: "quit".to_string(),
+                    backup_retention_count: retention,
+                    backup_include_credentials: true,
+                    active_pet: Some(String::new()),
+                    ..Default::default()
+                };
+                normalize_setting(&mut setting);
+                assert_eq!(setting.harness_max_heap_mb, Some(heap_mb));
+                assert_eq!(setting.backup_retention_count, retention);
+                assert_eq!(setting.zoom_factor, 1.0);
+                assert_eq!(setting.close_action, "quit");
+                assert_eq!(setting.language, "custom-language");
+                assert_eq!(setting.port, 4099);
+                assert!(setting.backup_include_credentials);
+                assert_eq!(setting.active_pet.as_deref(), Some(""));
+            }
+        }
+        for heap_mb in [0, 1023, 32769, u32::MAX] {
+            let mut setting = Setting {
+                harness_max_heap_mb: Some(heap_mb),
+                backup_retention_count: 0,
+                ..Default::default()
+            };
+            normalize_setting(&mut setting);
+            assert_eq!(setting.harness_max_heap_mb, None);
+            assert_eq!(setting.backup_retention_count, 10);
+        }
+    }
+
+    #[test]
     fn legacy_full_setting_write_preserves_latest_fields() {
         let stale = Setting {
+            installed: true,
+            language: "en-US".to_string(),
+            port: 4099,
+            harness_max_heap_mb: Some(1024),
+            backup_retention_count: 50,
+            dsh_pkg_commit: Some("new-commit".to_string()),
+            dsh_pkg_tag: Some("new-tag".to_string()),
             zoom_factor: 0.8,
             close_action: "quit".to_string(),
             pet_enabled: false,
@@ -534,6 +636,7 @@ mod tests {
         };
 
         let current = Setting {
+            harness_max_heap_mb: Some(4096),
             zoom_factor: 1.6,
             close_action: "tray".to_string(),
             pet_enabled: true,
@@ -545,6 +648,13 @@ mod tests {
 
         let merged = preserve_persisted_fields(stale, &current);
 
+        assert!(merged.installed);
+        assert_eq!(merged.language, "en-US");
+        assert_eq!(merged.port, 4099);
+        assert_eq!(merged.backup_retention_count, 50);
+        assert_eq!(merged.dsh_pkg_commit.as_deref(), Some("new-commit"));
+        assert_eq!(merged.dsh_pkg_tag.as_deref(), Some("new-tag"));
+        assert_eq!(merged.harness_max_heap_mb, Some(4096));
         assert_eq!(merged.zoom_factor, 1.6);
         assert_eq!(merged.close_action, "tray");
         assert!(merged.pet_enabled);

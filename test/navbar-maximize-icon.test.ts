@@ -5,19 +5,10 @@
  * 单方块。与 `menu-restart.test.ts` 同一姿势——壳层组件的契约以源码关系断言锁定，
  * 因为 `unit` project 是 node 环境（无 DOM/渲染器），拿不到真实渲染结果。
  */
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { readLocale, readSource } from './setup/read-source'
 
-const navbarSource = readFileSync(
-  new URL('../src/layout/components/navbar.tsx', import.meta.url),
-  'utf8',
-)
-
-function readLocale(name: string): Record<string, string> {
-  return JSON.parse(
-    readFileSync(new URL(`../src/i18n/locales/${name}.json`, import.meta.url), 'utf8'),
-  ) as Record<string, string>
-}
+const navbarSource = readSource('src/layout/components/navbar.tsx')
 
 const zhCN = readLocale('zh-CN')
 const enUS = readLocale('en-US')

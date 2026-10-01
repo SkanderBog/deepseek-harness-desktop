@@ -31,6 +31,7 @@ use super::errors;
 use super::install::{build_plugin_envs, harness_prefer_bundled_pnpm};
 use super::installed::{installed_name, profile_dir, ProfilePackageJson};
 use super::preset::{load_presets, PreinstallPluginInfo};
+use super::process::drain_captured;
 
 /// 判定清单引用的预装插件是否缺失产物（纯函数，便于单测）。
 ///
@@ -310,14 +311,6 @@ fn drain_pipe<R: Read + Send + 'static>(mut reader: R, captured: Arc<Mutex<Strin
             acc.push_str(&String::from_utf8_lossy(&buffer));
         }
     });
-}
-
-/// 取出（并清空）共享缓冲区中的全部捕获输出。
-fn drain_captured(captured: Arc<Mutex<String>>) -> String {
-    captured
-        .lock()
-        .map(|mut buf| std::mem::take(&mut *buf))
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

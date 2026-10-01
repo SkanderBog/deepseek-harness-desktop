@@ -20,19 +20,21 @@ pub(super) fn remove_plugin_from_manifest(manifest: &mut serde_json::Value, id: 
             modified = true;
         }
     }
-    if let Some(bundles) = manifest
+    remove_bundle(manifest, id) || modified
+}
+
+pub(crate) fn remove_bundle(manifest: &mut serde_json::Value, id: &str) -> bool {
+    let Some(bundles) = manifest
         .get_mut("dsh")
         .and_then(|d| d.get_mut("profile"))
         .and_then(|p| p.get_mut("bundles"))
         .and_then(|b| b.as_array_mut())
-    {
-        let before = bundles.len();
-        bundles.retain(|b| b.as_str() != Some(id));
-        if bundles.len() != before {
-            modified = true;
-        }
-    }
-    modified
+    else {
+        return false;
+    };
+    let before = bundles.len();
+    bundles.retain(|b| b.as_str() != Some(id));
+    bundles.len() != before
 }
 
 /// 删除插件入口：符号链接或 junction 只删除入口本身；普通目录递归删除，
@@ -150,7 +152,7 @@ pub(super) fn strip_cordis_patch_for(profile: &Path, id: &str) {
 }
 
 /// 一个 patch 条目是否「针对」目标插件：顶层 id 字段或任意字段值等于该包名。
-fn patch_entry_targets(entry: &serde_yaml::Value, id: &str) -> bool {
+pub(crate) fn patch_entry_targets(entry: &serde_yaml::Value, id: &str) -> bool {
     match entry {
         serde_yaml::Value::Mapping(map) => map
             .iter()
@@ -163,6 +165,78 @@ fn patch_entry_targets(entry: &serde_yaml::Value, id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remove_bundle_preserves_non_targets_and_reports_only_removal() {
+        let mut manifest = serde_json::json!({
+            "dependencies": {"target": "1"},
+            "dsh": {"profile": {"bundles": ["target", 7, null, {"id": "target"}, "target-extra", "target"]}}
+        });
+        assert!(remove_bundle(&mut manifest, "target"));
+        assert_eq!(manifest["dependencies"], serde_json::json!({"target": "1"}));
+        assert_eq!(
+            manifest["dsh"]["profile"]["bundles"],
+            serde_json::json!([7, null, {"id": "target"}, "target-extra"])
+        );
+        assert!(!remove_bundle(&mut manifest, "target"));
+        for mut malformed in [
+            serde_json::json!({}),
+            serde_json::json!({"dsh": null}),
+            serde_json::json!({"dsh": {"profile": {"bundles": "target"}}}),
+            serde_json::json!({"dsh": {"profile": {"bundles": []}}}),
+        ] {
+            let original = malformed.clone();
+            assert!(!remove_bundle(&mut malformed, "target"));
+            assert_eq!(malformed, original);
+        }
+    }
+
+    #[test]
+    fn manifest_removal_reports_dependency_only_and_bundle_only_changes() {
+        for (mut manifest, expected) in [
+            (serde_json::json!({"dependencies": {"target": "1"}}), true),
+            (
+                serde_json::json!({"dependencies": {"target": "1"}, "dsh": {"profile": {"bundles": ["target"]}}}),
+                true,
+            ),
+            (
+                serde_json::json!({"dependencies": null, "dsh": {"profile": {"bundles": ["target"]}}}),
+                true,
+            ),
+            (
+                serde_json::json!({"dsh": {"profile": {"bundles": ["target"]}}}),
+                true,
+            ),
+            (
+                serde_json::json!({"dependencies": {}, "dsh": {"profile": {"bundles": []}}}),
+                false,
+            ),
+        ] {
+            assert_eq!(
+                remove_plugin_from_manifest(&mut manifest, "target"),
+                expected
+            );
+            assert!(!remove_plugin_from_manifest(&mut manifest, "target"));
+        }
+    }
+
+    #[test]
+    fn patch_targets_match_only_exact_top_level_strings() {
+        for (yaml, expected) in [
+            ("target", true),
+            ("id: target", true),
+            ("target: null", true),
+            ("alias: target", true),
+            ("id: target-extra", false),
+            ("config: {id: target}", false),
+            ("- target", false),
+            ("null", false),
+            ("42", false),
+        ] {
+            let entry = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(patch_entry_targets(&entry, "target"), expected, "{yaml}");
+        }
+    }
 
     #[test]
     fn remove_plugin_dir_rejects_path_escape() {

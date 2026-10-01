@@ -58,3 +58,16 @@
 - `src-tauri/build.rs`（3 行）与 `src-tauri/src/main.rs`（19 行，`--patch-core` 是用户 CLI 旗标）——无发现。
 
 ## net: -397 lines, -0 deps possible. (-1 dep if `strip_jsonc` is replaced by a JSONC crate, +80 lines more裁掉)
+
+## 执行复核（2026-10-01）
+
+- **已实施**：删除未使用的 SharedRotatingWriter；复用 logger 的两个 Write 实现和 flush、时间格式。append_bytes 仍用 write_all，Write 仍返回实际部分写入量；ensure_file 的调用时机、失败静默丢弃、flush 错误处理、严格超过容量才轮转及三份备份均保留。
+- **已实施**：主窗口与附加壳窗口复用 chrome 和六条非 Windows 初始化脚本，保持尺寸、profile、图标、交通灯、主题与脚本次序。合并 Moved/Resized 几何采样，但 macOS 全屏文案和 Accessory 补做仍仅在主窗口 Resized 时触发；共享全屏菜单键、close_action 常量，内联 drag 常量并简化 pending accessory 存储。删除外部拖放诊断回读，保留设置动作与错误警告。
+- **已实施**：用 Cow<Value> 共享单层 JSON 字符串解包，覆盖 Setting、启动前 XWayland、窗口几何与桌宠位置；报告提出的 Option<&Value> 无法持有解析出的值。共享 Setting 归一化，旧整对象写入仍保留锁内读取的最新 zoom/heap/close/pet/XWayland 字段；commit/tag 改为一次锁内更新、一次保存与事件，而非两次独立写入。
+- **已实施**：复用 pet session 事件映射，push 仍拒绝 clear，SSE clear 仍有效；仅化简 stream 的派生条件，visible 字段不删除。preset 只合并三个非空字段校验，id 安全、唯一性、kind 校验及错误优先级保持；共享 preinstall 完成标记与日志尾行读取，后端先排除 frontend 行再截尾；reveal_data_dir 复用已有 opener 且保留 mkdir。
+- **已实施**：删除无调用方的 16 个后端翻译分支，保留前端翻译及全部菜单/安装键；把 service URL 并入 constants，保留 get_node_version_of_path 的现有名字与可见性、内联两处常量/路径包装；单消费者进程巡检直接并入 scheduler，保留五秒间隔、await 前后两次进程所有权检查与原状态采样顺序。
+- **不实施**：通知 page-load 路径可能在 build 返回前执行，附加窗口还只有该注册路径；删除任一路径或原子守卫均不成立。权限注册可以部分成功，重试也可能重复 handler，本次不改变该机制或既有外部拖放注册时机。桌宠并非第三个相同 chrome 消费者（泛型 Runtime、透明窗口、脚本差异），不强行合并。当前源码没有报告描述的 about 菜单重复。
+- **不实施**：image 依赖只开启 PNG，而现有读取支持 WebP 且接受仅含头部的测试素材，替换会改变格式接受面及错误次序；资源 engines.node/pnpm/git 是分发元数据，不因 Rust 未读取而删除；get_preinstall_plugins 虽无 await，但列表读取磁盘，改同步 Tauri command 会改变执行线程，保留 async。
+- **协议与依赖**：所有 IPC command、事件、权限、窗口标签、用户配置键、CLI 旗标、DTO 字段及已公开 desktop 常量路径保留；没有新增或移除依赖，没有本地插件构建。
+- **CI 回归修正**：macOS 菜单源码契约测试原先要求旧内联文案表达式，已迁移为精确校验共享 helper 的两种状态与安装/刷新两处调用；没有放宽行为契约。八项菜单测试五个独立乱序种子各通过，全屏状态条件反转被该测试捕获，恢复后复跑通过。
+- **验证**：cargo test --all-features --locked 全量 769 项通过；cargo check --all-targets --all-features --locked 通过；完整 lib 套件按 5101/5202/5303/5404/5505 五个种子独立乱序，各 769 项通过。后端日志过滤条件反转的变异被新回归准确捕获（预期 Cargo 101），恢复后全量与五轮通过；变更文件 rustfmt 与 git diff --check 通过。配置/logger、bridge/scheduler 与跨平台 desktop 三个只读复核均无严重问题。

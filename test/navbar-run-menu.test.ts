@@ -9,19 +9,10 @@
  * 被菜单项的 `usePress` 当成「松手落在我身上」而补发一次 click，连带触发菜单项动作
  * （弹出配置面板）。浏览器实测：去掉外层 pointerup 拦截后，点重启会同时打开「应用」面板。
  */
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { readLocale, readSource } from './setup/read-source'
 
-const navbarSource = readFileSync(
-  new URL('../src/layout/components/navbar.tsx', import.meta.url),
-  'utf8',
-)
-
-function readLocale(name: string): Record<string, string> {
-  return JSON.parse(
-    readFileSync(new URL(`../src/i18n/locales/${name}.json`, import.meta.url), 'utf8'),
-  ) as Record<string, string>
-}
+const navbarSource = readSource('src/layout/components/navbar.tsx')
 
 const zhCN = readLocale('zh-CN')
 const enUS = readLocale('en-US')

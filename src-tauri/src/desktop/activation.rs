@@ -10,11 +10,7 @@
 //! 恢复路径只有：托盘左键 / 托盘菜单「打开面板」/ `RunEvent::Reopen`
 //! （启动台·Spotlight）/ release single-instance。
 
-/// 关闭窗口 = 隐藏到托盘（D-09 默认值，也是本阶段 CloseRequested 唯一传入的动作）。
-pub const CLOSE_ACTION_TRAY: &str = "tray";
-
-/// 关闭窗口 = 退出应用。
-pub const CLOSE_ACTION_QUIT: &str = "quit";
+pub use crate::config::{CLOSE_ACTION_QUIT, CLOSE_ACTION_TRAY};
 
 #[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
@@ -59,17 +55,12 @@ static CURRENT_POLICY: OnceLock<Mutex<Option<PolicyState>>> = OnceLock::new();
 
 /// 全屏期间被推迟的 Accessory 切换（D-04），退出全屏后由 `Resized` 补做。
 #[cfg(target_os = "macos")]
-static PENDING_ACCESSORY: OnceLock<Mutex<bool>> = OnceLock::new();
-
-#[cfg(target_os = "macos")]
-fn pending_accessory_slot() -> &'static Mutex<bool> {
-    PENDING_ACCESSORY.get_or_init(|| Mutex::new(false))
-}
+static PENDING_ACCESSORY: Mutex<bool> = Mutex::new(false);
 
 /// 记录/清除「全屏期间推迟的切换」。
 #[cfg(target_os = "macos")]
 fn set_pending_accessory(pending: bool) {
-    *pending_accessory_slot()
+    *PENDING_ACCESSORY
         .lock()
         .unwrap_or_else(|error| error.into_inner()) = pending;
 }
@@ -77,12 +68,10 @@ fn set_pending_accessory(pending: bool) {
 /// 取出并清除推迟标志，保证补做只发生一次（连续 Resized 幂等吸收）。
 #[cfg(target_os = "macos")]
 fn take_pending_accessory() -> bool {
-    let mut pending = pending_accessory_slot()
+    let mut pending = PENDING_ACCESSORY
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let was_pending = *pending;
-    *pending = false;
-    was_pending
+    std::mem::replace(&mut *pending, false)
 }
 
 /// 真正下发策略切换，命中缓存则直接返回。
@@ -184,8 +173,7 @@ pub fn rearm_pending_accessory_if_fullscreen<R: Runtime>(window: &WebviewWindow<
         if !is_fullscreen {
             return;
         }
-        let close_action =
-            crate::config::get_store_dat_setting(&window.app_handle()).close_action;
+        let close_action = crate::config::get_store_dat_setting(&window.app_handle()).close_action;
         if should_switch_to_accessory(false, &close_action) {
             set_pending_accessory(true);
         }

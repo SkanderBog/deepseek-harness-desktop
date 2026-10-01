@@ -14,6 +14,7 @@ use tauri::AppHandle;
 
 use crate::service::fs_guard;
 use crate::service::plugin::installed::profile_dir;
+use crate::service::plugin::recovery::{is_core_package, patch_entry_targets, remove_bundle};
 use crate::service::plugin::{process, watch};
 
 /// 单条禁用记录（序列化为 camelCase 给前端/磁盘）。
@@ -162,11 +163,7 @@ pub(crate) fn strip_patch_disable(profile: &Path, id: &str) -> Result<bool, Stri
             kept.push(entry);
             continue;
         };
-        let targeted = map.iter().any(|(k, v)| {
-            names
-                .iter()
-                .any(|n| k.as_str() == Some(n.as_str()) || v.as_str() == Some(n.as_str()))
-        });
+        let targeted = names.iter().any(|name| patch_entry_targets(&entry, name));
         if !targeted || !patch_entry_disabled(&map) {
             kept.push(entry);
             continue;
@@ -190,22 +187,6 @@ pub(crate) fn strip_patch_disable(profile: &Path, id: &str) -> Result<bool, Stri
     Ok(true)
 }
 
-/// 仅从 `dsh.profile.bundles` 移除指定插件（不动 `dependencies`）。
-/// 返回是否实际移除了条目。
-fn remove_from_bundles(manifest: &mut serde_json::Value, id: &str) -> bool {
-    let Some(bundles) = manifest
-        .get_mut("dsh")
-        .and_then(|d| d.get_mut("profile"))
-        .and_then(|p| p.get_mut("bundles"))
-        .and_then(|b| b.as_array_mut())
-    else {
-        return false;
-    };
-    let before = bundles.len();
-    bundles.retain(|b| b.as_str() != Some(id));
-    bundles.len() != before
-}
-
 /// 把插件加回 `dsh.profile.bundles`（若已存在则不重复添加）。
 /// 返回是否实际新增了条目。
 fn add_to_bundles(manifest: &mut serde_json::Value, id: &str) -> bool {
@@ -222,11 +203,6 @@ fn add_to_bundles(manifest: &mut serde_json::Value, id: &str) -> bool {
     }
     bundles.push(serde_json::Value::String(id.to_string()));
     true
-}
-
-/// 是否为官方/核心包（`@deepseek-ai/` 前缀）。与 recovery 模块的保护名单一致。
-fn is_core_package(id: &str) -> bool {
-    id.starts_with("@deepseek-ai/")
 }
 
 /// 检查插件是否已安装（dependencies 中存在）。
@@ -299,7 +275,7 @@ pub(crate) fn disable_plugin_at(profile: &Path, id: &str) -> Result<(), String> 
         },
     );
     save_disabled(profile, &map)?;
-    remove_from_bundles(&mut manifest, id);
+    remove_bundle(&mut manifest, id);
     let rendered = serde_json::to_string_pretty(&manifest)
         .map_err(|e| format!("DISABLE_RENDER_MANIFEST: {e}"))?;
     if let Err(e) = fs::write(&manifest_path, format!("{rendered}\n")) {
@@ -663,6 +639,27 @@ mod tests {
             .any(|b| b.as_str() == Some("dsh-better-sidebar")));
 
         fs::remove_dir_all(&profile).ok();
+    }
+
+    #[test]
+    fn strip_patch_disable_preserves_non_mapping_and_false_or_nested_targets() {
+        let profile = build_profile("patch-boundaries", "p");
+        write_patch(
+            &profile,
+            "- dsh-better-sidebar\n- [dsh-better-sidebar]\n- id: other\n  config: {id: dsh-better-sidebar}\n  disabled: true\n- id: dsh-better-sidebar\n  disabled: false\n- dsh-better-sidebar: alias\n  disabled: true\n",
+        );
+        assert!(strip_patch_disable(&profile, "dsh-better-sidebar").unwrap());
+        let patch = profile.join("cordis.patch.yml");
+        let content = fs::read_to_string(&patch).unwrap();
+        let doc: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+        let expected: serde_yaml::Value = serde_yaml::from_str(
+            "- dsh-better-sidebar\n- [dsh-better-sidebar]\n- id: other\n  config: {id: dsh-better-sidebar}\n  disabled: true\n- id: dsh-better-sidebar\n  disabled: false\n- dsh-better-sidebar: alias\n",
+        )
+        .unwrap();
+        assert_eq!(doc, expected);
+        assert!(!strip_patch_disable(&profile, "dsh-better-sidebar").unwrap());
+        assert_eq!(fs::read_to_string(&patch).unwrap(), content);
+        fs::remove_dir_all(&profile).unwrap();
     }
 
     /// 带其它配置的禁用条目：只摘 `disabled` 键，其余配置保留（不删除无关配置）。
