@@ -13,22 +13,32 @@ describe('conversation input dock stack', () => {
     }
   })
 
+  const dock = '[data-slot="conversation.input.dock"]:has(> :nth-child(3 of :not([data-dsh-tauri-worktree-mode-anchor])))'
+
   it.each([
-    [2, '30px', 'scale(0.98)'],
-    [3, '65px', 'scale(0.96)'],
-    [4, '100px', 'scale(0.94)'],
-  ])('stacks the %sth last non-anchor child only with at least three non-anchor children', (index, top, transform) => {
-    const selector = `[data-slot="conversation.input.dock"]:has(> :nth-child(3 of :not([data-dsh-tauri-worktree-mode-anchor]))):not(:hover) > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`
-    expect(rules[selector]).toEqual({ position: 'relative', top, transform })
+    [2, 'scale(0.98)'],
+    [3, 'scale(0.96)'],
+    [4, 'scale(0.94)'],
+  ])('reduces the real height of non-anchor child %s when collapsed', (index, transform) => {
+    expect(rules[`${dock}:not(:hover):not(:focus-within) > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`]).toEqual({ height: '12px', transform })
   })
 
-  it.each([2, 3, 4])('restores the %sth last non-anchor child on hover', (index) => {
-    const selector = `[data-slot="conversation.input.dock"]:has(> :nth-child(3 of :not([data-dsh-tauri-worktree-mode-anchor]))):hover > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`
-    expect(rules[selector]).toEqual({ position: 'relative', top: '0', transform: 'scale(1)' })
+  it.each([2, 3, 4])('restores non-anchor child %s on hover or focus', (index) => {
+    expect(rules[`${dock}:is(:hover, :focus-within) > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`]).toEqual({ transform: 'scale(1)' })
+    expect(rules[`${dock} > :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`]).toEqual({
+      height: 'auto',
+      'min-height': '0',
+      'margin-block': '0',
+      'box-sizing': 'border-box',
+      overflow: 'clip',
+      'transform-origin': 'top center',
+      'interpolate-size': 'allow-keywords',
+      transition: 'height 220ms ease, transform 220ms ease',
+    })
   })
 
   it('adds no stack declarations to the last child or children earlier than the fourth last', () => {
-    expect(Object.keys(rules)).toHaveLength(6)
+    expect(Object.keys(rules).filter(selector => selector.includes(':nth-last-child('))).toHaveLength(9)
     expect(Object.keys(rules).some(selector => selector.includes(':nth-last-child(1 '))).toBe(false)
     expect(Object.keys(rules).some(selector => selector.includes(':nth-last-child(5 '))).toBe(false)
   })
@@ -37,31 +47,30 @@ describe('conversation input dock stack', () => {
 describe('mobile conversation layout', () => {
   const root = postcss.parse(globalStyle.render())
 
-  it('hides the requested slots and sidebar footer only on a mobile device', () => {
-    const media = root.nodes.find(node => node.type === 'atrule' && node.name === 'media')
+  it('keeps current mobile layout overrides scoped to mobile devices', () => {
+    const media = root.nodes.find(node => node.type === 'atrule' && node.name === 'media' && node.params === '(hover: none) and (any-pointer: coarse) and (any-hover: none)')
     expect(media?.type).toBe('atrule')
     if (media?.type !== 'atrule')
       throw new Error('Missing mobile media query')
     expect(media.params).toBe('(hover: none) and (any-pointer: coarse) and (any-hover: none)')
     const selectors: string[] = []
     media.walkRules((rule) => {
-      if (!rule.selector.includes('data-conversation-scroll')) {
+      if (!rule.selector.includes('data-conversation-scroll') && !rule.selector.includes('header[class*="_pageHead"]')) {
         selectors.push(...rule.selectors)
         expect(rule.nodes.map(node => node.type === 'decl' ? [node.prop, node.value, node.important] : [])).toEqual([['display', 'none', true]])
       }
     })
     expect(selectors).toEqual([
-      '[data-slot="conversation.session.header"]',
-      '[data-slot="conversation.composer.bar"]',
-      '[data-slot="conversation.composer.dock"]',
-      '[data-slot="sidebar"] [class$="_footArea"]',
-      '[data-slot="sidebar"] [class*="_footArea "]',
+      '[data-slot="conversation.composer.bar"] [class$="_dock"]',
+      '[class$="_composerStack"] > [data-slot="conversation.input.dock"]',
+      '[class$="_turnErrorCode"]',
+      '[data-slot="conversation.header"] [class$="_header"]',
     ])
   })
 
   it('overrides conversation scroll bottom padding to zero inside the mobile media query', () => {
     const declarations: unknown[] = []
-    root.walkRules('[data-conversation-scroll]', (rule) => {
+    root.walkRules('[data-slot="main"] [data-conversation-scroll]', (rule) => {
       const parent = rule.parent
       expect(parent?.type).toBe('atrule')
       if (parent?.type === 'atrule')

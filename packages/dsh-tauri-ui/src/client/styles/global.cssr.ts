@@ -8,25 +8,41 @@ const { c } = cssr
 const INPUT_DOCK_SELECTOR = '[data-slot="conversation.input.dock"]:has(> :nth-child(3 of :not([data-dsh-tauri-worktree-mode-anchor])))'
 
 export default c([
-  ...[
-    { index: 2, top: '30px', scale: '0.98' },
-    { index: 3, top: '65px', scale: '0.96' },
-    { index: 4, top: '100px', scale: '0.94' },
-  ].flatMap(({ index, top, scale }) => {
+  c(INPUT_DOCK_SELECTOR, {
+    display: 'flex !important',
+    flexDirection: 'column',
+    width: 'calc(100% - var(--dsh-composer-side-clearance, 0px) * 2)',
+    maxWidth: 'var(--dsh-composer-card-max-width, 100%)',
+    marginInline: 'auto',
+    rowGap: '0',
+  }),
+  ...[2, 3, 4].flatMap((index) => {
     const child = `> :nth-last-child(${index} of :not([data-dsh-tauri-worktree-mode-anchor]))`
     return [
-      c(`${INPUT_DOCK_SELECTOR}:not(:hover) ${child}`, {
-        position: 'relative',
-        top,
-        transform: `scale(${scale})`,
+      c(`${INPUT_DOCK_SELECTOR} ${child}`, {
+        height: 'auto',
+        minHeight: '0',
+        marginBlock: '0',
+        boxSizing: 'border-box',
+        overflow: 'clip',
+        transformOrigin: 'top center',
+        interpolateSize: 'allow-keywords',
+        transition: 'height 220ms ease, transform 220ms ease',
       }),
-      c(`${INPUT_DOCK_SELECTOR}:hover ${child}`, {
-        position: 'relative',
-        top: '0',
+      c(`${INPUT_DOCK_SELECTOR}:not(:hover):not(:focus-within) ${child}`, {
+        height: '12px',
+        transform: `scale(${1 - (index - 1) * 0.02})`,
+      }),
+      c(`${INPUT_DOCK_SELECTOR}:is(:hover, :focus-within) ${child}`, {
         transform: 'scale(1)',
       }),
     ]
   }),
+  c('@media (prefers-reduced-motion: reduce)', [
+    c(`${INPUT_DOCK_SELECTOR} > :not([data-dsh-tauri-worktree-mode-anchor])`, {
+      transition: 'none !important',
+    }),
+  ]),
   c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
     c('[data-slot="conversation.composer.bar"] [class$="_dock"]', {
       display: 'none !important'
