@@ -4,11 +4,13 @@ import { listen } from '@tauri-apps/api/event'
 import { defineStore } from 'valtio-define'
 import { persist } from 'valtio-define/plugins/persist'
 import { storage } from '@/config/storage'
+import { APPEARANCE_DEFAULTS, normalizeAppearance } from '../../../../packages/dsh-tauri/src/shared/appearance'
 import { ZOOM_FACTOR_STEP } from './constants'
 import { normalizeZoomFactor } from './utils'
 
 export const setting = defineStore({
   state: () => ({
+    appearance: normalizeAppearance(APPEARANCE_DEFAULTS),
     installed: false,
     port: 3080,
     harness_max_heap_mb: null as number | null,
@@ -21,8 +23,8 @@ export const setting = defineStore({
     language: null as string | null,
   }),
   actions: {
-    update(update: AppSettingUpdate) {
-      return invoke('update_app_config', { ...update })
+    update(update: AppSettingUpdate): Promise<void> {
+      return invoke<typeof setting.$state>('update_app_config', { ...update }).then(value => setting.$patch(value))
     },
     zoom(action: ZoomAction) {
       if (action === 'reset') {

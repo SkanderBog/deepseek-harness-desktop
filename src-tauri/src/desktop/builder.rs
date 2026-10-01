@@ -568,7 +568,10 @@ fn with_shell_chrome<'a>(
     app: &'a tauri::AppHandle<Wry>,
     builder: WebviewWindowBuilder<'a, Wry, tauri::AppHandle<Wry>>,
 ) -> tauri::Result<WebviewWindowBuilder<'a, Wry, tauri::AppHandle<Wry>>> {
+    let transparent = crate::config::get_store_dat_setting(app).appearance.opacity < 100;
     let builder = builder
+        .transparent(transparent)
+        .initialization_script(format!("window.__DSH_TRANSPARENT__ = {transparent};"))
         .inner_size(1280.0, 840.0)
         .min_inner_size(860.0, 620.0)
         .resizable(true);
@@ -728,9 +731,12 @@ pub fn build_main_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::We
 /// macOS 未实现窗口底色接口，`set_background_color` 会返回错误并被忽略——那里由
 /// `config::apply_window_theme` 同步原生外观。
 fn apply_window_background(app: &tauri::AppHandle<Wry>, window: &tauri::WebviewWindow<Wry>) {
-    let Some(color) =
+    let background = if crate::config::get_store_dat_setting(app).appearance.opacity < 100 {
+        Some(tauri::webview::Color(0, 0, 0, 0))
+    } else {
         crate::config::window_background(crate::config::get_dsh_theme(app), window.theme().ok())
-    else {
+    };
+    let Some(color) = background else {
         return;
     };
     if let Err(error) = window.as_ref().set_background_color(Some(color)) {

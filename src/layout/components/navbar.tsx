@@ -89,6 +89,7 @@ type HelpAction = 'keyboard-shortcuts' | 'copy-run-logs' | 'check-update' | 'abo
 /** 「运行」菜单项：直接打开配置对话框并定位到对应面板。 */
 const CONFIG_TABS: { id: ConfigTab, labelKey: string }[] = [
   { id: 'application', labelKey: 'config.application' },
+  { id: 'appearance', labelKey: 'config.appearance' },
   { id: 'profiles', labelKey: 'config.profiles' },
   { id: 'plugins', labelKey: 'config.plugins' },
   { id: 'harness', labelKey: 'config.harness' },

@@ -1,3 +1,5 @@
+mod appearance;
+pub use appearance::Appearance;
 mod constants;
 pub mod dependencies;
 pub mod i18n;

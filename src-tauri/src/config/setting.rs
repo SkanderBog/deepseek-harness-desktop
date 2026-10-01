@@ -7,6 +7,8 @@ use tauri_plugin_store::StoreExt;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Setting {
+    #[serde(default)]
+    pub appearance: super::Appearance,
     pub installed: bool,
     pub port: u16,
     #[serde(default)]
@@ -158,6 +160,7 @@ pub fn normalize_backup_retention(retention_count: u32) -> u32 {
 }
 
 fn normalize_setting(setting: &mut Setting) {
+    setting.appearance.normalize();
     setting.zoom_factor = normalize_zoom_factor(setting.zoom_factor);
     setting.harness_max_heap_mb = normalize_harness_max_heap_mb(setting.harness_max_heap_mb);
     setting.close_action = normalize_close_action(&setting.close_action);
@@ -176,6 +179,7 @@ pub fn default_port() -> u16 {
 impl Default for Setting {
     fn default() -> Self {
         Self {
+            appearance: super::Appearance::default(),
             installed: false,
             port: default_port(),
             harness_max_heap_mb: None,
@@ -338,6 +342,7 @@ fn emit_setting(app_handle: &AppHandle, value: &serde_json::Value) {
 }
 
 fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Setting {
+    replacement.appearance.clone_from(&current.appearance);
     replacement.zoom_factor = normalize_zoom_factor(current.zoom_factor);
     replacement.harness_max_heap_mb = normalize_harness_max_heap_mb(current.harness_max_heap_mb);
     replacement.close_action = normalize_close_action(&current.close_action);
@@ -636,6 +641,11 @@ mod tests {
         };
 
         let current = Setting {
+            appearance: super::super::Appearance {
+                palette: "nord".into(),
+                terminal: true,
+                opacity: 70,
+            },
             harness_max_heap_mb: Some(4096),
             zoom_factor: 1.6,
             close_action: "tray".to_string(),
@@ -656,6 +666,7 @@ mod tests {
         assert_eq!(merged.dsh_pkg_tag.as_deref(), Some("new-tag"));
         assert_eq!(merged.harness_max_heap_mb, Some(4096));
         assert_eq!(merged.zoom_factor, 1.6);
+        assert_eq!(merged.appearance, current.appearance);
         assert_eq!(merged.close_action, "tray");
         assert!(merged.pet_enabled);
         assert_eq!(merged.active_pet.as_deref(), Some("codex:latest"));

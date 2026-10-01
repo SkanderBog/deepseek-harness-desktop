@@ -455,5 +455,20 @@
   "remote.connect.retry": "重试",
   "remote.connect.cancel": "取消连接",
   "buttons.close": "关闭",
-  "remote.loading": "正在加载远端界面…"
+  "remote.loading": "正在加载远端界面…",
+  "config.appearance": "外观",
+  "appearance.description": "桌面配色与布局。配色跟随浅色、深色或系统主题。",
+  "appearance.palette": "配色方案",
+  "appearance.palette.default": "默认",
+  "appearance.palette.nord": "北欧",
+  "appearance.palette.solarized": "日光",
+  "appearance.palette.forest": "森林",
+  "appearance.palette.amber": "琥珀",
+  "appearance.terminal": "终端模式",
+  "appearance.terminal_description": "使用等宽字体并隐藏侧栏。点击左上角侧栏按钮可重新展开。",
+  "appearance.opacity": "背景不透明度",
+  "appearance.opacity_description": "文字和菜单保持不透明。桌面透明效果取决于窗口系统。",
+  "appearance.restart": "请完全退出 Harness 后重新打开，以切换原生窗口透明模式。关闭到托盘不会重启应用。",
+  "appearance.reset": "恢复默认设置",
+  "appearance.save_failed": "无法保存外观设置。"
 }

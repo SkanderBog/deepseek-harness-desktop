@@ -18,6 +18,7 @@ import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { queryClient } from '@/config/client'
 import { queryKeys } from '@/config/query-keys'
+import { useAppearance } from '@/hooks/use-appearance'
 import { useDshStyle } from '@/hooks/use-dsh-style'
 import { useIframeMessage } from '@/hooks/use-iframe-message'
 import { useIframePost } from '@/hooks/use-iframe-post'
@@ -209,6 +210,7 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   const [loadedUrl, setLoadedUrl] = useState('')
   const remoteLoading = remoteMode && loadedUrl !== srcOverride
 
+  const appearanceCss = useAppearance(iframeRef)
   const post = useIframePost(iframeRef)
 
   /** 待合并的按钮动作，按「tag + actionId」索引（见 `handleNotificationAction`）。 */
@@ -523,6 +525,7 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
 
   return (
     <div className="relative min-h-0 flex-1">
+      <style>{appearanceCss}</style>
       <If
         cond={remoteMode || harness.serviceHealthy}
         else={<Loadable subtitle={t(harness.startupStatusKey)} />}

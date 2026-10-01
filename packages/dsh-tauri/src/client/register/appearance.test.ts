@@ -1,0 +1,109 @@
+// @vitest-environment jsdom
+import type { ClientContext } from '../types'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { registerAppearance } from './appearance'
+
+const disposers: Array<() => void> = []
+
+afterEach(() => {
+  disposers.splice(0).forEach(dispose => dispose())
+  document.body.replaceChildren()
+  document.head.replaceChildren()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
+
+function setup() {
+  document.body.innerHTML = '<main style="grid-template-columns:280px minmax(400px, 1fr) minmax(0px, 350px)"><aside data-slot="sidebar"></aside><div></div><aside></aside><div data-shell-overlay></div></main>'
+  const frame = document.querySelector('main')!
+  const listeners = new Set<() => void>()
+  let scheme: 'dark' | 'light' = 'dark'
+  const retract = vi.fn()
+  const theme = {
+    getTheme: () => ({ active: { colorScheme: scheme } }),
+    overrideTokens: vi.fn((_source: string, _tokens: Record<string, unknown>) => retract),
+  }
+  const ctx = {
+    get: (name: string) => name === 'theme' ? theme : undefined,
+    layout: { toggleSidebar: vi.fn(() => frame.toggleAttribute('data-sidebar-collapsed')) },
+    on: (_event: string, callback: () => void) => {
+      listeners.add(callback)
+      return () => listeners.delete(callback)
+    },
+  }
+  const post = vi.fn()
+  vi.stubGlobal('parent', { postMessage: post })
+  disposers.push(registerAppearance.call(ctx as unknown as ClientContext))
+  function send(appearance: unknown, source: MessageEventSource = window.parent) {
+    window.dispatchEvent(new MessageEvent('message', { source, data: { type: 'dsh://appearance', appearance } }))
+  }
+  return { frame, ctx, theme, retract, post, send, listeners, setScheme(value: 'dark' | 'light') {
+    scheme = value
+    listeners.forEach(fn => fn())
+  } }
+}
+
+describe('desktop appearance bridge', () => {
+  it('requests initial settings once and leaves defaults and layout untouched', () => {
+    const { post, send, ctx, theme } = setup()
+    expect(post.mock.calls[0][0]).toMatchObject({ type: 'dsh://appearance:ready' })
+    send({})
+    expect(theme.overrideTokens).not.toHaveBeenCalled()
+    expect(ctx.layout.toggleSidebar).not.toHaveBeenCalled()
+    expect(document.querySelector('style')!.textContent).toBe('')
+  })
+
+  it('ignores messages from windows other than the desktop parent', () => {
+    const { send, theme } = setup()
+    send({ palette: 'nord' }, {} as MessageEventSource)
+    expect(theme.overrideTokens).not.toHaveBeenCalled()
+  })
+
+  it('applies a palette once and retracts it on reset', () => {
+    const { send, theme, retract } = setup()
+    send({ palette: 'nord' })
+    send({ palette: 'nord' })
+    expect(theme.overrideTokens).toHaveBeenCalledTimes(1)
+    expect(theme.overrideTokens.mock.calls[0]).toEqual(['dsh-tauri:appearance', expect.objectContaining({ '--dsw-alias-label-primary': { dark: '#eceff4', light: '#2e3440' } })])
+    send({})
+    expect(retract).toHaveBeenCalledOnce()
+    expect(document.querySelector('style')!.textContent).toBe('')
+  })
+
+  it('puts alpha on the background only and follows light/dark changes', () => {
+    const { send, theme, setScheme } = setup()
+    send({ palette: 'nord', opacity: 70 })
+    expect(document.querySelector('style')!.textContent).toContain('#2e3440 70%')
+    expect(document.querySelector('style')!.textContent).not.toMatch(/(?:^|[;{])opacity:/)
+    expect(theme.overrideTokens.mock.calls[0]).toEqual(['dsh-tauri:appearance', expect.objectContaining({ '--dsw-alias-bg-base': { dark: 'transparent', light: 'transparent' }, '--dsw-specific-menu': { dark: '#343c4a', light: '#e5e9f0' } })])
+    setScheme('light')
+    expect(document.querySelector('style')!.textContent).toContain('#eceff4 70%')
+  })
+
+  it('hides the collapsed sidebar while retaining the live right-panel width and restores layout on reset', async () => {
+    const { send, frame, ctx } = setup()
+    send({ terminal: true })
+    expect(frame.hasAttribute('data-sidebar-collapsed')).toBe(true)
+    expect(frame.style.getPropertyValue('--dsh-appearance-columns')).toBe('0px minmax(400px, 1fr) minmax(0px, 350px)')
+    frame.style.gridTemplateColumns = '56px minmax(0px, 1fr) minmax(0px, 480px)'
+    await vi.waitFor(() => expect(frame.style.getPropertyValue('--dsh-appearance-columns')).toBe('0px minmax(0px, 1fr) minmax(0px, 480px)'))
+    ctx.layout.toggleSidebar()
+    expect(frame.hasAttribute('data-sidebar-collapsed')).toBe(false)
+    ctx.layout.toggleSidebar()
+    send({})
+    expect(frame.hasAttribute('data-sidebar-collapsed')).toBe(false)
+    expect(frame.style.getPropertyValue('--dsh-appearance-columns')).toBe('')
+    expect(document.querySelector('style')!.textContent).toBe('')
+  })
+
+  it('removes styles, subscriptions and token overrides on unload', () => {
+    const { send, theme, retract, listeners } = setup()
+    send({ palette: 'forest', terminal: true })
+    disposers.pop()!()
+    expect(retract).toHaveBeenCalledOnce()
+    expect(listeners.size).toBe(0)
+    expect(document.querySelector('style')).toBeNull()
+    send({ palette: 'amber' })
+    expect(theme.overrideTokens).toHaveBeenCalledOnce()
+  })
+})

@@ -36,6 +36,7 @@ pub fn is_dev_build() -> bool {
 #[allow(clippy::too_many_arguments)]
 pub async fn update_app_config(
     app_handle: AppHandle,
+    appearance: Option<config::Appearance>,
     port: Option<u16>,
     harness_max_heap_mb: Option<u32>,
     auto_start: Option<bool>,
@@ -59,6 +60,9 @@ pub async fn update_app_config(
         }
     }
     let setting = config::update_store_dat_setting(&app_handle, |setting| {
+        if let Some(appearance) = appearance {
+            setting.appearance = appearance;
+        }
         if let Some(port) = port {
             setting.port = port;
             // 记住用户手动选择的端口：自动避让递增后仍能回落回用户值，而不是
