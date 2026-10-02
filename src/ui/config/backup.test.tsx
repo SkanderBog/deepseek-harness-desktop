@@ -83,10 +83,11 @@ describe('backup recovery controls', () => {
     mocks.invoke.mockImplementation(async (command: string) => {
       if (command === 'list_backups')
         return []
-      if (command === 'export_recovery_backup')
+      if (command === 'export_recovery_backup') {
         return new Promise((resolve) => {
           finish = resolve
         })
+      }
       throw new Error(`Unexpected command: ${command}`)
     })
     await mount()
