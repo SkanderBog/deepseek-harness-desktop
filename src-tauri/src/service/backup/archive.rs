@@ -193,6 +193,16 @@ pub const PROFILE_SECTION: &str = "profile";
 /// 分节归档中的会话节名（`sessions/`）。
 pub const SESSIONS_SECTION: &str = "sessions";
 
+/// 分节归档的布局标记条目名：写入归档首条目。
+///
+/// 不能靠"首条目是否带 `profile/`、`sessions/` 前缀"判断布局：旧版平铺备份的
+/// 首条目完全可能是档案里的 `sessions/…`，误判会让还原把该条目当共享节解压
+/// 而跳过真正的档案文件。因此新版归档显式写入本标记，无标记一律按旧版处理。
+pub const LAYOUT_MARKER: &str = ".dsh-backup-layout";
+
+/// 布局标记内容（仅用于标记存在性）。
+const LAYOUT_MARKER_CONTENT: &[u8] = b"sectioned\n";
+
 /// 归档布局。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveLayout {
@@ -220,8 +230,17 @@ pub fn create_archive_sections(
     enc.multithread(workers)
         .map_err(|e| format!("BACKUP_ARCHIVE_MULTITHREAD: {e}"))?;
     let mut archive = tar::Builder::new(enc);
+    append_layout_marker(&mut archive)?;
     for (section, source) in sections {
         if !source.is_dir() {
+            // 档案节缺失时必须报错：否则会产出"只含会话"的备份，
+            // 还原后档案为空且没有回滚副本（比没有备份更危险）
+            if *section == PROFILE_SECTION {
+                return Err(format!(
+                    "BACKUP_ARCHIVE_PROFILE_SOURCE_MISSING: {}",
+                    source.display()
+                ));
+            }
             continue;
         }
         let rel = Path::new(section);
@@ -242,6 +261,18 @@ pub fn create_archive_sections(
     Ok(())
 }
 
+/// 写入布局标记条目（必须是归档首条目，`detect_layout` 只认它）。
+fn append_layout_marker<W: Write>(archive: &mut tar::Builder<W>) -> Result<(), String> {
+    let mut header = tar::Header::new_gnu();
+    header.set_size(LAYOUT_MARKER_CONTENT.len() as u64);
+    header.set_mode(0o644);
+    header.set_mtime(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    archive
+        .append_data(&mut header, LAYOUT_MARKER, LAYOUT_MARKER_CONTENT)
+        .map_err(|e| format!("BACKUP_ARCHIVE_MARKER: {e}"))
+}
+
 /// 探测归档布局：只看首条目，不整包解压。
 pub fn detect_layout(archive: &Path) -> Result<ArchiveLayout, String> {
     let file = fs::File::open(archive).map_err(|e| format!("BACKUP_EXTRACT_OPEN: {e}"))?;
@@ -253,12 +284,9 @@ pub fn detect_layout(archive: &Path) -> Result<ArchiveLayout, String> {
         .map_err(|e| format!("BACKUP_EXTRACT_ENTRIES: {e}"))?;
     let layout = match entries.next() {
         None => ArchiveLayout::Flat,
+        // 只有显式带布局标记的才是分节归档
         Some(Ok(entry)) => match entry.path() {
-            Ok(path)
-                if path.starts_with(PROFILE_SECTION) || path.starts_with(SESSIONS_SECTION) =>
-            {
-                ArchiveLayout::Sectioned
-            }
+            Ok(path) if path.as_ref() == Path::new(LAYOUT_MARKER) => ArchiveLayout::Sectioned,
             _ => ArchiveLayout::Flat,
         },
         Some(Err(e)) => return Err(format!("BACKUP_EXTRACT_ENTRY: {e}")),
@@ -266,7 +294,7 @@ pub fn detect_layout(archive: &Path) -> Result<ArchiveLayout, String> {
     Ok(layout)
 }
 
-/// 解压分节归档中的某一节到 `dest`（剥离节前缀）。
+/// 解压分节归档中的某一节到 `dest`（剥离节前缀），同名文件按备份覆盖。
 ///
 /// 归档中不存在该节时返回 `Ok(false)`（例如不含会话的旧分节备份），
 /// 存在并解压完成返回 `Ok(true)`。
@@ -275,12 +303,29 @@ pub fn extract_archive_section(
     section: &str,
     dest: &Path,
 ) -> Result<bool, String> {
+    extract_section(archive, section, dest, false)
+}
+
+/// 合并分节归档中的某一节到 `dest`：**已存在的文件保留**，只补入缺失内容。
+///
+/// 会话日志只增不改，用覆盖式解压会把备份里的旧日志盖回现有会话。
+pub fn merge_archive_section(archive: &Path, section: &str, dest: &Path) -> Result<bool, String> {
+    extract_section(archive, section, dest, true)
+}
+
+/// [`extract_archive_section`] / [`merge_archive_section`] 的公共实现。
+fn extract_section(
+    archive: &Path,
+    section: &str,
+    dest: &Path,
+    keep_existing: bool,
+) -> Result<bool, String> {
     fs::create_dir_all(dest).map_err(|e| format!("BACKUP_EXTRACT_MKDIR: {e}"))?;
     let file = fs::File::open(archive).map_err(|e| format!("BACKUP_EXTRACT_OPEN: {e}"))?;
     let dec =
         zstd::stream::Decoder::new(file).map_err(|e| format!("BACKUP_EXTRACT_DECODER: {e}"))?;
     let mut archive = tar::Archive::new(dec);
-    extract_tar_entries_inner(&mut archive, dest, Some(section))
+    extract_tar_entries_inner(&mut archive, dest, Some(section), keep_existing)
 }
 
 /// 从 tar 归档安全解压所有条目到 `dest`（压缩格式无关）。
@@ -289,15 +334,16 @@ pub fn extract_archive_section(
 /// 符号链接按 target 创建、普通文件先写临时文件再原子 rename。自定义
 /// 解压（替代 `entry.unpack`）是为了规避 macOS 上的 tar bug。
 fn extract_tar_entries<R: Read>(archive: &mut tar::Archive<R>, dest: &Path) -> Result<(), String> {
-    extract_tar_entries_inner(archive, dest, None).map(|_| ())
+    extract_tar_entries_inner(archive, dest, None, false).map(|_| ())
 }
 
 /// [`extract_tar_entries`] 的实现：`section` 为 `Some` 时只解压该节并剥离前缀，
-/// 返回归档中是否存在该节。
+/// 返回归档中是否存在该节。`keep_existing` 为真时保留目标处的既有文件。
 fn extract_tar_entries_inner<R: Read>(
     archive: &mut tar::Archive<R>,
     dest: &Path,
     section: Option<&str>,
+    keep_existing: bool,
 ) -> Result<bool, String> {
     let mut matched_section = false;
     // 禁用 ownership 保留：归档里 uid/gid 可能是 root（uid=0），非 root 用户无法 chown
@@ -325,6 +371,11 @@ fn extract_tar_entries_inner<R: Read>(
             ));
         }
 
+        // 布局标记只是元数据，不落盘
+        if path.as_path() == Path::new(LAYOUT_MARKER) {
+            continue;
+        }
+
         // 分节归档只处理目标节，剥离 `profile/`、`sessions/` 节前缀后再落盘
         let stripped: std::path::PathBuf = match section {
             Some(prefix) => match path.strip_prefix(prefix) {
@@ -341,6 +392,11 @@ fn extract_tar_entries_inner<R: Read>(
         matched_section = true;
 
         let dest_path = dest.join(&stripped);
+
+        // 保留既有内容：会话合并时备份里的文件不覆盖目标处已存在的同名条目
+        if keep_existing && dest_path.symlink_metadata().is_ok() {
+            continue;
+        }
 
         // 拒绝硬链接
         let entry_type = entry.header().entry_type();
@@ -936,5 +992,151 @@ mod tests {
         let _ = fs::remove_dir_all(&source);
         let _ = fs::remove_file(&dest);
         let _ = fs::remove_dir_all(&restore_dir);
+    }
+
+    /// 回归 CodeRabbit：旧版平铺备份的首条目可能正好是 `sessions/…`，
+    /// 不能因此被判成分节归档（否则还原会跳过真正的档案文件）。
+    #[test]
+    fn flat_archive_with_sessions_first_entry_is_not_sectioned() {
+        let source =
+            setup_source_dir(&[("sessions/--ws--/session-1/session.v4.jsonl.zstd", "turn 484")]);
+        let dest = archive_dest(&source);
+        create_archive(&source, &dest, false).unwrap();
+
+        let entries = list_archive_entries(&dest).unwrap();
+        assert!(
+            entries[0] == "sessions" || entries[0].starts_with("sessions/"),
+            "夹具首条目必须是 sessions…，实际为 {:?}",
+            entries[0]
+        );
+        assert_eq!(
+            detect_layout(&dest).unwrap(),
+            ArchiveLayout::Flat,
+            "没有布局标记的归档一律按 Flat 处理"
+        );
+
+        let restore_dir =
+            std::env::temp_dir().join(format!("dsh-backup-flat-sessions-{}", unique_suffix()));
+        extract_archive(&dest, &restore_dir).unwrap();
+        assert_eq!(
+            fs::read_to_string(
+                restore_dir.join("sessions/--ws--/session-1/session.v4.jsonl.zstd")
+            )
+            .unwrap(),
+            "turn 484"
+        );
+
+        let _ = fs::remove_dir_all(&source);
+        let _ = fs::remove_file(&dest);
+        let _ = fs::remove_dir_all(&restore_dir);
+    }
+
+    /// 回归 CodeRabbit：档案节缺失时必须报错，不能产出"只含会话"的备份。
+    #[test]
+    fn create_archive_sections_rejects_missing_profile_section() {
+        let root =
+            std::env::temp_dir().join(format!("dsh-backup-missing-profile-{}", unique_suffix()));
+        let _ = fs::remove_dir_all(&root);
+        let missing_profile = root.join("profiles").join("web");
+        let sessions = root.join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        fs::write(sessions.join("session.v4.jsonl.zstd"), b"turn 484").unwrap();
+
+        let dest = root.join("out.tar.zst");
+        let err = create_archive_sections(
+            &[
+                (PROFILE_SECTION, missing_profile.as_path()),
+                (SESSIONS_SECTION, sessions.as_path()),
+            ],
+            &dest,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("BACKUP_ARCHIVE_PROFILE_SOURCE_MISSING"),
+            "档案节缺失必须拒绝，实际错误: {err}"
+        );
+
+        let err = create_archive_sections(
+            &[
+                (SESSIONS_SECTION, sessions.as_path()),
+                (PROFILE_SECTION, missing_profile.as_path()),
+            ],
+            &dest,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("BACKUP_ARCHIVE_PROFILE_SOURCE_MISSING"),
+            "节顺序不影响档案节缺失的判断，实际错误: {err}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 回归 CodeRabbit：合并会话时不覆盖目标处已存在的文件。
+    #[test]
+    fn merge_archive_section_keeps_existing_files() {
+        let root = std::env::temp_dir().join(format!("dsh-backup-merge-{}", unique_suffix()));
+        let _ = fs::remove_dir_all(&root);
+        let profile = root.join("profile");
+        let sessions = root.join("sessions");
+        fs::create_dir_all(&profile).unwrap();
+        fs::create_dir_all(sessions.join("new")).unwrap();
+        fs::write(profile.join("cordis.patch.yml"), b"plugins: []").unwrap();
+        fs::write(sessions.join("same.txt"), b"from-backup").unwrap();
+        fs::write(sessions.join("new").join("b.txt"), b"new-backup").unwrap();
+
+        let dest = root.join("out.tar.zst");
+        create_archive_sections(
+            &[
+                (PROFILE_SECTION, profile.as_path()),
+                (SESSIONS_SECTION, sessions.as_path()),
+            ],
+            &dest,
+            false,
+        )
+        .unwrap();
+
+        let target = root.join("target-sessions");
+        fs::create_dir_all(target.join("new")).unwrap();
+        fs::write(target.join("same.txt"), b"current").unwrap();
+        fs::write(target.join("local-only.txt"), b"keep-me").unwrap();
+
+        assert!(
+            merge_archive_section(&dest, SESSIONS_SECTION, &target).unwrap(),
+            "会话节应存在"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("same.txt")).unwrap(),
+            "current",
+            "已存在的会话文件不能被备份里的旧内容覆盖"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("new").join("b.txt")).unwrap(),
+            "new-backup",
+            "目标缺失的会话文件应补入"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("local-only.txt")).unwrap(),
+            "keep-me",
+            "目标独有的文件必须保留"
+        );
+        assert!(
+            !target.join(LAYOUT_MARKER).exists(),
+            "布局标记是元数据，不能落到目标目录"
+        );
+
+        let overwrite = root.join("overwrite-sessions");
+        fs::create_dir_all(&overwrite).unwrap();
+        fs::write(overwrite.join("same.txt"), b"current").unwrap();
+        extract_archive_section(&dest, SESSIONS_SECTION, &overwrite).unwrap();
+        assert_eq!(
+            fs::read_to_string(overwrite.join("same.txt")).unwrap(),
+            "from-backup",
+            "覆盖式解压（档案节语义）应替换同名文件"
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

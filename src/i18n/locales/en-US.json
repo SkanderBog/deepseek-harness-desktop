@@ -255,7 +255,7 @@
   "backup.restore_as_new": "Restore as New",
   "backup.delete": "Delete",
   "backup.restore_confirm_title": "Restore backup",
-  "backup.restore_confirm_desc": "Restore from {{timestamp}}? Your current profile will be replaced and the backup's sessions will be merged back (existing sessions are kept). The Harness service will stop during restore.",
+  "backup.restore_confirm_desc": "Restore from {{timestamp}}? Your current profile will be replaced and the backup's sessions will be merged back (existing session files are left untouched; only missing sessions are added). The Harness service will stop during restore.",
   "backup.restore_new_confirm_title": "Restore as new profile",
   "backup.restore_new_confirm_desc": "Create a new profile from the {{timestamp}} backup? Your current profile will not be changed.",
   "backup.delete_confirm_title": "Delete backup",

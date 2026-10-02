@@ -1,5 +1,5 @@
 import type { Binding } from '../types'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -8,8 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const fixtureParent = fileURLToPath(new URL('../../../../../.temp/', import.meta.url))
 const dshHome = vi.hoisted(() => ({ value: '' }))
 
-// 本 worktree 的 node_modules 只有仓库根一层，包内无法解析 lodash-es；优先用
-// pnpm 的 hoisted 目录，解析不到（例如完整安装的 CI）时回落到真实模块。
 vi.mock('lodash-es', async (importOriginal) => {
   try {
     const { createRequire } = await import('node:module')
@@ -189,6 +187,8 @@ describe('worktree deletion safety (#848)', () => {
     { dirname: ['repo'] },
     { worktreePath: null },
     { worktreePath: 848 },
+    { hash: 'abc123def456\0' },
+    ...(process.platform === 'win32' ? [{ dirname: 'repo.' }, { dirname: 'repo ' }, { hash: 'C:' }] : []),
   ])('rejects malformed persisted identity %j without cleaning the binding', async (overrides) => {
     const marker = markerIn(dshHome.value)
     const persisted = persistBinding(overrides)
@@ -213,6 +213,32 @@ describe('worktree deletion safety (#848)', () => {
     expect(readFileSync(marker, 'utf8')).toBe('must survive #848\n')
     expect(lstatSync(alias).isSymbolicLink()).toBe(true)
     expect(readFileSync(aliased.path, 'utf8')).toBe(aliased.raw)
+  })
+
+  it('rejects an absolute dot-segment alias instead of normalizing persisted deletion intent', async () => {
+    const path = join(dshHome.value, 'worktrees', 'abc123def456', 'repo')
+    const marker = markerIn(path)
+    const persisted = persistBinding({ worktreePath: `${path}${sep}..${sep}repo` })
+
+    const result = await worktree.remove('safety-session')
+
+    expect(existsSync(marker)).toBe(true)
+    expect(readFileSync(marker, 'utf8')).toBe('must survive #848\n')
+    expect(result).toMatchObject({ ok: false })
+    expect(readFileSync(persisted.path, 'utf8')).toBe(persisted.raw)
+  })
+
+  it('rejects a cwd-relative alias even when it resolves to the expected worktree', async () => {
+    const path = join(dshHome.value, 'worktrees', 'abc123def456', 'repo')
+    const marker = markerIn(path)
+    const persisted = persistBinding({ worktreePath: relative(process.cwd(), path) })
+
+    const result = await worktree.remove('safety-session')
+
+    expect(existsSync(marker)).toBe(true)
+    expect(readFileSync(marker, 'utf8')).toBe('must survive #848\n')
+    expect(result).toMatchObject({ ok: false })
+    expect(readFileSync(persisted.path, 'utf8')).toBe(persisted.raw)
   })
 
   it('keeps an invalid missing-path binding during recovery instead of enabling orphan fallback', async () => {
@@ -242,6 +268,26 @@ describe('worktree deletion safety (#848)', () => {
     expect(lstatSync(join(dshHome.value, '.trash')).isSymbolicLink()).toBe(true)
   })
 
+  it('recovers normal trash and stale empty worktrees while preserving occupied siblings', async () => {
+    const persisted = persistBinding()
+    const trash = join(dshHome.value, '.trash', 'abc123def456', 'repo')
+    markerIn(trash)
+    const empty = join(dshHome.value, 'worktrees', 'empty-hash', 'repo')
+    mkdirSync(empty, { recursive: true })
+    const sibling = markerIn(join(dshHome.value, 'worktrees', 'occupied-hash', 'repo'))
+    const old = new Date('2026-01-01T00:00:00.000Z')
+    for (const directory of [empty, dirname(empty)])
+      utimesSync(directory, old, old)
+
+    const recovered = await worktree.recover()
+
+    expect(recovered).toEqual({ ok: true, resumed: 0, swept: 3, pruned: 1 })
+    expect(existsSync(trash)).toBe(false)
+    expect(existsSync(empty)).toBe(false)
+    expect(existsSync(persisted.path)).toBe(false)
+    expect(readFileSync(sibling, 'utf8')).toBe('must survive #848\n')
+  })
+
   it('removes only the normal bound worktree and its stale trash', async () => {
     const persisted = persistBinding()
     markerIn(persisted.binding.worktreePath)
@@ -249,6 +295,9 @@ describe('worktree deletion safety (#848)', () => {
     markerIn(stale)
     const sibling = markerIn(join(dshHome.value, 'worktrees', 'def456abc123', 'repo'))
     const external = markerIn(join(fixture, 'external-repository'))
+    const dependencies = join(fixture, 'source-dependencies')
+    const dependencyMarker = markerIn(dependencies)
+    linkDirectory(dependencies, join(persisted.binding.worktreePath, 'node_modules'))
 
     const result = await worktree.remove('safety-session')
 
@@ -258,6 +307,7 @@ describe('worktree deletion safety (#848)', () => {
     expect(existsSync(persisted.path)).toBe(false)
     expect(readFileSync(sibling, 'utf8')).toBe('must survive #848\n')
     expect(readFileSync(external, 'utf8')).toBe('must survive #848\n')
+    expect(readFileSync(dependencyMarker, 'utf8')).toBe('must survive #848\n')
   })
 
   it('completes an already missing valid target without deleting unrelated data', async () => {

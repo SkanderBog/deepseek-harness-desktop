@@ -7,6 +7,7 @@ import type {
   WorktreeProcessController,
 } from '../types'
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 import process from 'node:process'
 import { defineService, DSH_HOME } from 'dsh-tauri'
 import { compact, filter, find, get, isEmpty, map, reject, some } from 'lodash-es'
@@ -597,8 +598,10 @@ async function removeWorktreeOnDisk(
 }
 
 function isSafeRemovalTarget(path: string, hash: string, dirname: string): boolean {
-  if (typeof path !== 'string' || !path || !isSafeKeySegment(hash) || !isSafeKeySegment(dirname))
+  if (typeof path !== 'string' || !isAbsolute(path) || !isSafeKeySegment(hash) || !isSafeKeySegment(dirname)
+    || path.replaceAll('\\', '/').split('/').some(segment => segment === '.' || segment === '..')) {
     return false
+  }
   return samePath(path, worktreePath(hash, dirname), false)
     && isSafeOwnedDirectory(WORKTREES_DIR, [hash, dirname])
     && isSafeOwnedDirectory(TRASH_DIR, [hash, dirname])
