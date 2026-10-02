@@ -187,14 +187,18 @@ pub fn create_backup(
     let timestamp = collision_safe_timestamp(&backup_dir, &active, &now_timestamp());
     let dest = backup_dir.join(archive_filename(&active, &timestamp));
 
-    archive::create_archive_sections(
+    if let Err(e) = archive::create_archive_sections(
         &[
             (archive::PROFILE_SECTION, source.as_path()),
             (archive::SESSIONS_SECTION, sessions.as_path()),
         ],
         &dest,
         options.include_credentials,
-    )?;
+    ) {
+        // 失败时删除半成品归档，避免留下不含档案内容的孤儿备份文件
+        let _ = fs::remove_file(&dest);
+        return Err(e);
+    }
 
     let size = fs::metadata(&dest)
         .map(|m| m.len())
@@ -302,15 +306,6 @@ pub fn restore_backup(
 
     match mode {
         RestoreMode::Overwrite => {
-            // 会话是共享数据，先合并还原（只增不改旧档案）：失败时直接返回，
-            // 不会在解压失败后留下已被替换的 profile
-            if layout == archive::ArchiveLayout::Sectioned {
-                archive::extract_archive_section(
-                    &archive_path,
-                    archive::SESSIONS_SECTION,
-                    &home.join("sessions"),
-                )?;
-            }
             // 重命名旧 profile → 备份目录（避开文件锁），解压到新目录，
             // 成功后删除旧备份；失败则回滚（rename 旧目录回来）
             let dest = crate::service::profile::profile_dir_of(app_handle, &active);
@@ -330,14 +325,20 @@ pub fn restore_backup(
             fs::create_dir_all(&dest).map_err(|e| {
                 format!("BACKUP_RESTORE_MKDIR_NEW: {e} (dest={})", dest.display())
             })?;
-            // 解压到新目录
+            // 解压到新目录；分节归档缺档案节时按失败处理（否则会留下空档案）
             let extract_result = match layout {
                 archive::ArchiveLayout::Sectioned => archive::extract_archive_section(
                     &archive_path,
                     archive::PROFILE_SECTION,
                     &dest,
                 )
-                .map(|_| ()),
+                .and_then(|found| {
+                    if found {
+                        Ok(())
+                    } else {
+                        Err("BACKUP_RESTORE_PROFILE_SECTION_MISSING".to_string())
+                    }
+                }),
                 archive::ArchiveLayout::Flat => archive::extract_archive(&archive_path, &dest),
             };
             match extract_result {
@@ -351,6 +352,16 @@ pub fn restore_backup(
                     let _ = fs::rename(&backup_old, &dest);
                     return Err(format!("BACKUP_RESTORE_EXTRACT_FAILED: {e}。已自动回滚到原状态。"));
                 }
+            }
+            // 档案还原成功后才合并会话（会话是共享数据，只增不改：已存在的
+            // 会话文件保留），档案失败时不会留下半截的会话改动
+            if layout == archive::ArchiveLayout::Sectioned {
+                archive::merge_archive_section(
+                    &archive_path,
+                    archive::SESSIONS_SECTION,
+                    &home.join("sessions"),
+                )
+                .map_err(|e| format!("BACKUP_RESTORE_SESSIONS_FAILED: {e}"))?;
             }
         }
         RestoreMode::AsNew => {
@@ -369,11 +380,19 @@ pub fn restore_backup(
             }
             match layout {
                 archive::ArchiveLayout::Sectioned => {
-                    archive::extract_archive_section(
+                    let found = archive::extract_archive_section(
                         &archive_path,
                         archive::PROFILE_SECTION,
                         &new_dir,
                     )?;
+                    if !found {
+                        // 缺档案节：删掉刚建出的空目录，避免留下空档案
+                        let _ = fs::remove_dir_all(&new_dir);
+                        return Err(format!(
+                            "BACKUP_RESTORE_PROFILE_SECTION_MISSING: {}",
+                            archive_path.display()
+                        ));
+                    }
                 }
                 archive::ArchiveLayout::Flat => archive::extract_archive(&archive_path, &new_dir)?,
             }
