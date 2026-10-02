@@ -24,7 +24,7 @@
     "test:e2e:desktop": "vitest --project desktop",
     "lint": "eslint",
     "lint:fix": "eslint . --fix",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --project tsconfig.typecheck.json --noEmit",
     "icons": "tauri icon public/favicon.svg && tsx scripts/rebuild-macos-icon.ts"
   },
   "dependencies": {
