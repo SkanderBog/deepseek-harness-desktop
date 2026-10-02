@@ -706,10 +706,12 @@ function isManagedPath(path: unknown, ...parts: string[]): boolean {
   if (typeof path !== 'string' || !path)
     return false
   const normalize = (value: string) => process.platform === 'win32' ? resolve(value).toLowerCase() : resolve(value)
-  const expected = normalize(join(canonicalPath(DSH_HOME), ...parts))
+  const home = canonicalPath(DSH_HOME)
+  const expected = normalize(join(home, ...parts))
   const source = normalize(path)
-  // 只允许配置的根路径或其真实路径；外部别名即使指向正确目录也不能作为删除入口。
-  if (source !== normalize(join(DSH_HOME, ...parts)) && source !== expected)
+  const root = parts.reduce(parent => dirname(parent), resolve(path))
+  // 根目录允许链接和 Windows 短路径，受管子路径必须原样匹配，不能用外部别名替代。
+  if (source !== normalize(join(root, ...parts)) || normalize(canonicalPath(root)) !== normalize(home))
     return false
   return normalize(canonicalPath(path)) === expected
 }
