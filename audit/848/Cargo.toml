@@ -1,0 +1,9 @@
+[package]
+name = "dsh-848-archive-probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tar = "0.4"
+zstd = { version = "0.13", features = ["zstdmt"] }
+flate2 = "1"
