@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -252,3 +253,11 @@ jobs:
       - name: Run tests
         run: cargo test --all-features --locked
         working-directory: src-tauri
+
+      - name: Repeat recovery tests five times
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          for attempt in 1 2 3 4 5; do
+            cargo test --all-features --locked service::backup::recovery::tests -- --test-threads=1
+          done
