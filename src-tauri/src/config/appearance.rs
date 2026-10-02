@@ -47,7 +47,14 @@ impl Appearance {
     pub fn normalize(&mut self) {
         if !matches!(
             self.palette.as_str(),
-            "default" | "nord" | "solarized" | "forest" | "amber"
+            "default"
+                | "nord"
+                | "solarized"
+                | "forest"
+                | "amber"
+                | "github"
+                | "github-dimmed"
+                | "github-high-contrast"
         ) {
             self.palette = "default".into();
         }
@@ -143,6 +150,23 @@ mod tests {
                     ..Default::default()
                 },
                 "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn github_palettes_survive_saving_and_reloading() {
+        for palette in ["github", "github-dimmed", "github-high-contrast"] {
+            let appearance: Appearance = serde_json::from_value(serde_json::json!({
+                "palette": palette, "terminal": true, "transparency": true,
+                "opacity": 78, "sidebarOnly": true
+            }))
+            .unwrap();
+            assert_eq!(appearance.palette, palette);
+            let saved = serde_json::to_value(&appearance).unwrap();
+            assert_eq!(
+                serde_json::from_value::<Appearance>(saved).unwrap(),
+                appearance
             );
         }
     }

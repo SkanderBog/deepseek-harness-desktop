@@ -16,6 +16,21 @@ describe('appearance preferences', () => {
     expect(normalizeAppearance({ palette: 'nord', terminal: true, opacity: input })).toEqual({ palette: 'nord', terminal: true, transparency: opacity < 100, opacity, sidebarOnly: false })
   })
 
+  it.each(['github', 'github-dimmed', 'github-high-contrast'])('preserves the saved %s palette', (palette) => {
+    expect(normalizeAppearance({ palette }).palette).toBe(palette)
+  })
+
+  it.each(['light', 'dark'] as const)('keeps high-contrast text at 7:1 and borders at 3:1 in %s mode', (scheme) => {
+    const tokens = appearanceTokens(normalizeAppearance({ palette: 'github-high-contrast' }))
+    for (const background of ['--dsw-alias-bg-base', '--dsw-alias-bg-layer-1', '--dsw-alias-bg-layer-2']) {
+      for (const foreground of ['--dsw-alias-label-primary', '--dsw-alias-label-secondary', '--dsw-alias-label-tertiary', '--dsw-alias-label-caption', '--dsw-alias-link', '--dsw-alias-border-l2']) {
+        const [dark, light] = [luminance(tokens[background][scheme]), luminance(tokens[foreground][scheme])].sort((a, b) => a - b)
+        const minimum = foreground.includes('border') ? 3 : foreground.includes('link') ? 4.5 : 7
+        expect((light + 0.05) / (dark + 0.05), `${foreground} on ${background}`).toBeGreaterThanOrEqual(minimum)
+      }
+    }
+  })
+
   it('does not override core theme tokens under default settings', () => {
     expect(appearanceTokens(APPEARANCE_DEFAULTS)).toEqual({})
   })
@@ -24,7 +39,7 @@ describe('appearance preferences', () => {
     for (const scheme of ['light', 'dark'] as const) {
       const colors = appearanceColors({ ...APPEARANCE_DEFAULTS, palette }, scheme)
       for (const background of [colors.canvas, colors.panel, colors.surface]) {
-        for (const foreground of [colors.text, colors.muted]) {
+        for (const foreground of [colors.text, colors.muted, ...(palette.startsWith('github') ? [colors.accent] : [])]) {
           const [dark, light] = [luminance(background), luminance(foreground)].sort((a, b) => a - b)
           expect((light + 0.05) / (dark + 0.05), `${palette}/${scheme}: ${foreground} on ${background}`).toBeGreaterThanOrEqual(4.5)
         }

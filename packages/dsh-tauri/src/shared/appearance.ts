@@ -1,5 +1,5 @@
 export const APPEARANCE_DEFAULTS = { palette: 'default', terminal: false, transparency: false, opacity: 100, sidebarOnly: false } as const
-export const APPEARANCE_PALETTES = ['default', 'nord', 'solarized', 'forest', 'amber'] as const
+export const APPEARANCE_PALETTES = ['default', 'nord', 'solarized', 'forest', 'amber', 'github', 'github-dimmed', 'github-high-contrast'] as const
 
 export interface Appearance {
   palette: typeof APPEARANCE_PALETTES[number]
@@ -23,25 +23,30 @@ export function normalizeAppearance(value: unknown): Appearance {
   }
 }
 
-const PALETTES = {
-  default: { dark: ['#151517', '#1b1b1c', '#2c2c2e', '#f9fafb', '#adb2b8', '#7aaaff'], light: ['#ffffff', '#f9fafb', '#f1f3f5', '#0f1115', '#61666b', '#4176e6'] },
-  nord: { dark: ['#2e3440', '#343c4a', '#434c5e', '#eceff4', '#b8c5d6', '#88c0d0'], light: ['#eceff4', '#e5e9f0', '#d8dee9', '#2e3440', '#4c566a', '#375f85'] },
-  solarized: { dark: ['#002b36', '#073642', '#164450', '#eee8d5', '#a4b4b3', '#64b5c5'], light: ['#fdf6e3', '#eee8d5', '#e3dcc8', '#073642', '#4a5d62', '#006c82'] },
-  forest: { dark: ['#15211b', '#1c2d23', '#2b3d31', '#e8f4e9', '#b0c9b6', '#8bcea0'], light: ['#f4f8f0', '#e8efe2', '#d8e4d0', '#203b29', '#49614d', '#276b3d'] },
-  amber: { dark: ['#211c14', '#2b241a', '#3c3223', '#fff1d6', '#cfbd9d', '#f0bd68'], light: ['#fff8eb', '#f3e8d1', '#e8d8b8', '#3c2c13', '#695638', '#875700'] },
-} as const
+type Palette = readonly [canvas: string, panel: string, surface: string, text: string, muted: string, accent: string, border?: string]
+
+const PALETTES: Record<Appearance['palette'], Record<'dark' | 'light', Palette>> = {
+  'default': { dark: ['#151517', '#1b1b1c', '#2c2c2e', '#f9fafb', '#adb2b8', '#7aaaff'], light: ['#ffffff', '#f9fafb', '#f1f3f5', '#0f1115', '#61666b', '#4176e6'] },
+  'nord': { dark: ['#2e3440', '#343c4a', '#434c5e', '#eceff4', '#b8c5d6', '#88c0d0'], light: ['#eceff4', '#e5e9f0', '#d8dee9', '#2e3440', '#4c566a', '#375f85'] },
+  'solarized': { dark: ['#002b36', '#073642', '#164450', '#eee8d5', '#a4b4b3', '#64b5c5'], light: ['#fdf6e3', '#eee8d5', '#e3dcc8', '#073642', '#4a5d62', '#006c82'] },
+  'forest': { dark: ['#15211b', '#1c2d23', '#2b3d31', '#e8f4e9', '#b0c9b6', '#8bcea0'], light: ['#f4f8f0', '#e8efe2', '#d8e4d0', '#203b29', '#49614d', '#276b3d'] },
+  'amber': { dark: ['#211c14', '#2b241a', '#3c3223', '#fff1d6', '#cfbd9d', '#f0bd68'], light: ['#fff8eb', '#f3e8d1', '#e8d8b8', '#3c2c13', '#695638', '#875700'] },
+  'github': { dark: ['#0d1117', '#010409', '#151b23', '#f0f6fc', '#9198a1', '#4493f8', '#3d444d'], light: ['#ffffff', '#f6f8fa', '#f6f8fa', '#1f2328', '#59636e', '#0969da', '#d1d9e0'] },
+  'github-dimmed': { dark: ['#212830', '#151b23', '#262c36', '#d1d7e0', '#9198a1', '#6cb6ff', '#3d444d'], light: ['#ffffff', '#f6f8fa', '#f6f8fa', '#1f2328', '#59636e', '#0969da', '#d1d9e0'] },
+  'github-high-contrast': { dark: ['#010409', '#151b23', '#151b23', '#ffffff', '#b7bdc8', '#74b9ff', '#b7bdc8'], light: ['#ffffff', '#eff2f5', '#e6eaef', '#010409', '#454c54', '#023b95', '#454c54'] },
+}
 
 export function appearanceColors(appearance: Appearance, scheme: 'dark' | 'light') {
-  const [canvas, panel, surface, text, muted, accent] = PALETTES[appearance.palette][scheme]
-  return { canvas, panel, surface, text, muted, accent }
+  const [canvas, panel, surface, text, muted, accent, border] = PALETTES[appearance.palette][scheme]
+  return { canvas, panel, surface, text, muted, accent, border }
 }
 
 export function appearanceTokens(appearance: Appearance): Record<string, { dark: string, light: string }> {
   if (appearance.palette === 'default' && (!appearance.transparency || appearance.opacity === 100))
     return {}
-  const modes = (scheme: 'dark' | 'light') => {
-    const { canvas, panel, surface, text, muted, accent } = appearanceColors(appearance, scheme)
-    return {
+  function modes(scheme: 'dark' | 'light'): Record<string, string> {
+    const { canvas, panel, surface, text, muted, accent, border } = appearanceColors(appearance, scheme)
+    const tokens: Record<string, string> = {
       '--dsw-alias-bg-base': canvas,
       '--dsw-specific-sidebar-fill': panel,
       '--dsw-alias-bg-layer-1': panel,
@@ -55,13 +60,20 @@ export function appearanceTokens(appearance: Appearance): Record<string, { dark:
       '--dsw-alias-label-primary': text,
       '--dsw-alias-label-secondary': muted,
       '--dsw-alias-label-tertiary': muted,
+      '--dsw-alias-label-caption': muted,
       '--dsw-alias-state-business-primary': accent,
     }
+    if (border) {
+      tokens['--dsw-alias-link'] = accent
+      for (const level of ['l1', 'l2', 'l2-darkmode-thin', 'l3', 'l4'])
+        tokens[`--dsw-alias-border-${level}`] = border
+    }
+    return tokens
   }
   const dark = modes('dark')
   const light = modes('light')
   return Object.fromEntries(Object.keys(dark).map(key => [key, {
-    dark: dark[key as keyof typeof dark],
-    light: light[key as keyof typeof light],
+    dark: dark[key],
+    light: light[key],
   }]))
 }

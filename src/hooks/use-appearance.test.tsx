@@ -65,6 +65,19 @@ describe('desktop appearance projection', () => {
     expect(hook.result.current).toContain('#343c4a 100%')
   })
 
+  it('applies high-contrast borders to the shell and removes them when switching palettes', async () => {
+    const { hook } = setup(false)
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'github-high-contrast', opacity: 100 }
+    })
+    expect(hook.result.current).toContain('--color-canvas:#010409')
+    expect(hook.result.current).toContain('--field-border:#b7bdc8')
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'nord', opacity: 100 }
+    })
+    expect(hook.result.current).not.toContain('--field-border:')
+  })
+
   it('rejects an appearance handshake from the wrong origin', () => {
     const { post, ready } = setup(true)
     ready('https://example.invalid')

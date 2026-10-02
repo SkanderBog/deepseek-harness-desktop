@@ -11,15 +11,20 @@ afterAll(async () => {
 })
 
 describe('built-in desktop appearance', () => {
-  it('renders palette tokens in the real core and restores its original colours', async () => {
+  it.each([
+    ['nord', '#eceff4', '#2e3440'],
+    ['github', '#f0f6fc', '#1f2328'],
+    ['github-dimmed', '#d1d7e0', '#1f2328'],
+    ['github-high-contrast', '#ffffff', '#010409'],
+  ])('renders %s tokens in the real core and restores its original colours', async (palette, darkText, lightText) => {
     const app = await newDshPage(browser, { ready: 'style[id="dsh-tauri:appearance"]' })
     try {
       const initial = await app.frame.locator('body').evaluate(el => getComputedStyle(el).getPropertyValue('--dsw-alias-label-primary'))
-      await app.page.evaluate(() => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'dsh://appearance', appearance: { palette: 'nord' } }, location.origin))
-      await expect.poll(() => app.frame.locator('body').evaluate((el) => {
+      await app.page.evaluate(palette => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'dsh://appearance', appearance: { palette } }, location.origin), palette)
+      await expect.poll(() => app.frame.locator('body').evaluate((el, [darkText, lightText]) => {
         const dark = el.hasAttribute('data-ds-dark-theme')
-        return getComputedStyle(el).getPropertyValue('--dsw-alias-label-primary') === (dark ? '#eceff4' : '#2e3440')
-      }), { message: '配色必须通过真实主题服务应用到页面' }).toBe(true)
+        return getComputedStyle(el).getPropertyValue('--dsw-alias-label-primary') === (dark ? darkText : lightText)
+      }, [darkText, lightText]), { message: '配色必须通过真实主题服务应用到页面' }).toBe(true)
       await app.page.evaluate(() => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'dsh://appearance', appearance: {} }, location.origin))
       await expect.poll(() => app.frame.locator('body').evaluate(el => getComputedStyle(el).getPropertyValue('--dsw-alias-label-primary')), { message: '重置必须恢复原有主题变量' }).toBe(initial)
       expect(app.errors, '外观切换不得产生浏览器错误').toEqual([])
