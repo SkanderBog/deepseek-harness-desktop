@@ -1,5 +1,5 @@
 import type { Binding } from '../types'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -85,6 +85,22 @@ describe('worktree deletion boundaries', () => {
     expectProtectedData()
   })
 
+  it('preserves an external alias and its binding instead of reporting successful removal', async () => {
+    const managed = binding.worktreePath
+    mkdirSync(managed, { recursive: true })
+    writeFileSync(join(managed, 'keep.txt'), 'worktree data')
+    const alias = join(scratch, 'external-alias')
+    linkDirectory(managed, alias)
+    binding.worktreePath = alias
+    saveBinding()
+    const result = await worktree.remove('session')
+    expect(result.ok).toBe(false)
+    expect(existsSync(alias)).toBe(true)
+    expect(readFileSync(join(managed, 'keep.txt'), 'utf8')).toBe('worktree data')
+    expect(existsSync(join(home.value, 'ledger/session.json'))).toBe(true)
+    expectProtectedData()
+  })
+
   it.each(['..', '.. ', '', null, {}])('rejects a saved binding with malformed hash %j', async (hash) => {
     Object.assign(binding, { hash })
     mkdirSync(binding.worktreePath, { recursive: true })
@@ -146,7 +162,7 @@ describe('worktree deletion boundaries', () => {
     expectProtectedData()
   })
 
-  it('allows a linked DSH_HOME while keeping managed children contained', async () => {
+  it.each(['configured', 'canonical'])('allows a linked DSH_HOME with a %s binding path', async (pathKind) => {
     const realHome = home.value
     const alias = join(scratch, 'home-alias')
     linkDirectory(realHome, alias)
@@ -154,7 +170,9 @@ describe('worktree deletion boundaries', () => {
     const managed = join(alias, 'worktrees/hash/project')
     mkdirSync(managed, { recursive: true })
     writeFileSync(join(managed, 'remove.txt'), 'orphan worktree')
-    const result = await worktree.remove('', 'hash/project')
+    binding.worktreePath = pathKind === 'configured' ? managed : realpathSync(managed)
+    saveBinding()
+    const result = await worktree.remove('session')
     expect(result.ok).toBe(true)
     expect(existsSync(managed)).toBe(false)
     expectProtectedData()

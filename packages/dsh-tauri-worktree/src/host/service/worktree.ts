@@ -705,11 +705,13 @@ function isSafeRemovalTarget(path: unknown, hash: unknown, dirname: unknown): bo
 function isManagedPath(path: unknown, ...parts: string[]): boolean {
   if (typeof path !== 'string' || !path)
     return false
-  const expected = join(canonicalPath(DSH_HOME), ...parts)
-  const actual = canonicalPath(path)
-  return process.platform === 'win32'
-    ? resolve(actual).toLowerCase() === resolve(expected).toLowerCase()
-    : resolve(actual) === resolve(expected)
+  const normalize = (value: string) => process.platform === 'win32' ? resolve(value).toLowerCase() : resolve(value)
+  const expected = normalize(join(canonicalPath(DSH_HOME), ...parts))
+  const source = normalize(path)
+  // 只允许配置的根路径或其真实路径；外部别名即使指向正确目录也不能作为删除入口。
+  if (source !== normalize(join(DSH_HOME, ...parts)) && source !== expected)
+    return false
+  return normalize(canonicalPath(path)) === expected
 }
 
 function projectFromWorktree(path: string): string {
