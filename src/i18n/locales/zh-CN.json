@@ -481,6 +481,7 @@
   "appearance.terminal": "终端模式",
   "appearance.terminal_description": "隐藏侧栏，保留原有字体。点击左上角侧栏按钮可重新展开。",
   "appearance.transparency": "启用原生透明模式",
+  "appearance.transparency_description": "让窗口背景半透明，使桌面颜色透出。",
   "appearance.sidebar_only": "会话区域保持不透明",
   "appearance.opacity": "背景不透明度",
   "appearance.opacity_description": "文字和菜单保持不透明。桌面透明效果取决于窗口系统。",
