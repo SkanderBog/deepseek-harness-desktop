@@ -531,7 +531,13 @@ fn resolve_restore_target(node_modules: &Path, id: &str) -> Result<PathBuf, Stri
                 if !real.is_dir() {
                     return Err(format!("SNAPSHOT_NOT_DIR: {}", real.display()));
                 }
-                Ok(real)
+                // 目录链接还原到真实目录；普通目录返回词法路径，避免把 macOS 的
+                // `/private/var` 等链接真实前缀泄漏给调用方（旧行为即如此）。
+                if meta.file_type().is_symlink() {
+                    Ok(real)
+                } else {
+                    Ok(entry)
+                }
             }
             Err(e) if meta.file_type().is_symlink() && e.kind() == std::io::ErrorKind::NotFound => {
                 #[cfg(windows)]
