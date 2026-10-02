@@ -1,7 +1,7 @@
 //! 档案备份与还原。
 //!
-//! 把 `$DSH_HOME` 打包为版本化的 `.tar.zst` 快照，存放在 `$DSH_HOME/.backups/`，
-//! 支持手动创建 / 还原（覆盖或新建）/ 列表 / 删除，以及自动备份调度与保留份数裁剪。
+//! 档案备份仅打包当前 profile，存放在 `$DSH_HOME/.backups/`，支持还原与保留份数裁剪。
+//! [`recovery`] 另行导出含会话的完整数据到应用数据目录，不参与档案还原或裁剪。
 
 pub mod archive;
 pub mod recovery;
@@ -37,7 +37,7 @@ pub struct BackupInfo {
 /// 还原模式。
 #[derive(Debug, Clone, Copy)]
 pub enum RestoreMode {
-    /// 覆盖当前 `$DSH_HOME`。
+    /// 覆盖当前激活的 profile。
     Overwrite,
     /// 创建新档案目录并解压到其中。
     AsNew,
@@ -496,4 +496,3 @@ mod tests {
         let _ = fs::remove_dir_all(&dest);
     }
 }
-
