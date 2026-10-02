@@ -38,6 +38,8 @@ Run from the repository root:
 
 For portable desktop/plugin development, use separate terminals for the plugin watcher and `pnpm tauri dev`.
 
+`pnpm typecheck` checks workspace package sources through `tsconfig.typecheck.json`, so a fresh checkout needs only `pnpm install`, without generated declarations or a running plugin watcher. Build and runtime resolution still use package exports; CI builds the shared packages and tests their packaged entrypoints separately.
+
 **Build protection:** [AGENTS.md](<../AGENTS.md>) forbids builds during plugin changes. `pnpm build:plugins`, `pnpm build`, `pnpm build:debug`, and `pnpm tauri build` are deliberate artifact-preparation/release actions; `pnpm build` also invokes the plugin prebuild.
 
 ## Validation
