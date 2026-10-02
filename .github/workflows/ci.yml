@@ -2,6 +2,12 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Validation suite
+        type: choice
+        options: [full, unit]
+        default: full
   push:
     branches: [main]
   pull_request:
@@ -15,7 +21,7 @@ permissions:
 
 # 同一分支/PR 的新提交会取消上次仍在运行的 CI，避免浪费 runner 时间。
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.suite || 'full' }}
   cancel-in-progress: true
 
 env:
@@ -85,7 +91,7 @@ jobs:
   plugins-e2e:
     name: Plugins E2E Tests (vitest + playwright)
     needs: pre_job
-    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' && inputs.suite != 'unit' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -135,7 +141,7 @@ jobs:
   desktop-e2e:
     name: Desktop E2E Tests (vitest + webdriverio)
     needs: pre_job
-    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' && inputs.suite != 'unit' }}
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -213,7 +219,7 @@ jobs:
   rust-test:
     name: Rust tests
     needs: pre_job
-    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' && inputs.suite != 'unit' }}
     strategy:
       fail-fast: false
       matrix:

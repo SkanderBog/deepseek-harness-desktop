@@ -55,6 +55,8 @@ macOS 运行时最低版本为 12+，Web 界面需要 Safari 17.4+ 能力。Linu
 
 E2E 需要已准备好的夹具与运行时，桌面测试还需要 Debug 二进制。请遵循[插件测试指南](<./specs/plugin.test.md>)与[桌面测试指南](<./specs/desktop.test.md>)；不要仅为验证文档或插件修改触发构建。
 
+本机内存有限时，可以对已推送的分支手动运行 CI。选择 `unit` 执行源码与包导出类型检查、lint、插件构建及单元测试；默认的 `full` 还包含浏览器、桌面与 Rust 检查。Push 和 pull request 触发时始终执行完整套件。
+
 Rust 检查（仓库根目录）：
 
 ```bash

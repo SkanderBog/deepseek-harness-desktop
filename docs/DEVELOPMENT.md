@@ -55,6 +55,8 @@ The scripts in [package.json](<../package.json>) map to these explicit, non-watc
 
 E2E requires prepared fixtures/runtime and, for desktop tests, a debug binary. Follow the [plugin test guide](<./specs/plugin.test.md>) and [desktop test guide](<./specs/desktop.test.md>); do not trigger builds just to validate documentation or plugin edits.
 
+For machines with limited memory, the CI workflow can be dispatched on a pushed branch. Select `unit` for source and package-export typechecks, lint, plugin builds and unit tests, or `full` (the default) to include browser, desktop and Rust checks. Push and pull-request runs always use the full suite.
+
 Rust checks from the repository root:
 
 ```bash
