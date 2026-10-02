@@ -16,15 +16,17 @@ fn probe(root: &std::path::Path) {
     let relative = PathBuf::from("project/session-a/session.v4.jsonl.zstd");
     fs::create_dir_all(saved.join(relative.parent().unwrap())).unwrap();
     fs::write(saved.join(&relative), b"turn 10").unwrap();
+    fs::write(saved.join("project/session-a/missing-from-live.txt"), b"backup-only content").unwrap();
     let archive_path = root.join("backup.tar.zst");
     archive::create_archive_sections(&[(archive::SESSIONS_SECTION, &saved)], &archive_path, false).unwrap();
     let live = root.join("live-sessions");
     fs::create_dir_all(live.join(relative.parent().unwrap())).unwrap();
     fs::write(live.join(&relative), b"turn 20").unwrap();
-    let found = archive::extract_archive_section(&archive_path, archive::SESSIONS_SECTION, &live).unwrap();
+    let found = archive::merge_archive_section(&archive_path, archive::SESSIONS_SECTION, &live).unwrap();
     assert!(found);
     let after = fs::read_to_string(live.join(&relative)).unwrap();
     println!("AUDIT session_merge_before=turn20 after={after:?} preserved_newer={}", after == "turn 20");
+    assert_eq!(after, "turn 20");
     let profile = root.join("restored-profile");
     let profile_found = archive::extract_archive_section(&archive_path, archive::PROFILE_SECTION, &profile).unwrap();
     println!("AUDIT missing_profile_result={profile_found} profile_directory_created={}", profile.is_dir());
@@ -42,9 +44,12 @@ fn probe(root: &std::path::Path) {
         let status = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(&link).arg(&external).status().unwrap();
         assert!(status.success());
     }
-    let restored = archive::extract_archive_section(&archive_path, archive::SESSIONS_SECTION, &redirected);
+    let restored = archive::merge_archive_section(&archive_path, archive::SESSIONS_SECTION, &redirected);
     let after = fs::read_to_string(external.join("session-a/session.v4.jsonl.zstd")).unwrap();
     println!("AUDIT redirected_restore_ok={} external_preserved={} after={after:?}", restored.is_ok(), after == "outside sentinel");
+    let outside_added = external.join("session-a/missing-from-live.txt");
+    println!("AUDIT linked_parent_escaped_write={} outside_added_content={:?}", outside_added.exists(), fs::read_to_string(outside_added));
+    assert_eq!(after, "outside sentinel");
     #[cfg(windows)]
     fs::remove_dir(link).unwrap();
 }
