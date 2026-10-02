@@ -40,6 +40,8 @@ interface Harness {
   documentListeners: () => number
   sent: ParentMessage[]
   styles: HTMLStyleElement[]
+  paint: () => void
+  pendingFrames: () => number
   dispatch: (data: ParentMessage) => void
   keydown: (event: KeyboardEvent) => void
 }
@@ -64,16 +66,31 @@ function stubEnv(): Harness {
   vi.stubGlobal('document', {
     body: {},
     head,
+    documentElement: { style: { colorScheme: 'light' } },
     createElement: () => ({ setAttribute: () => {}, textContent: '', parentElement: head }),
     querySelector: () => null,
+    querySelectorAll: () => [],
     addEventListener: (_type: string, handler: (event: KeyboardEvent) => void) => documentListeners.add(handler),
     removeEventListener: (_type: string, handler: (event: KeyboardEvent) => void) => documentListeners.delete(handler),
   })
   vi.stubGlobal('MutationObserver', FakeMutationObserver)
+  const frames = new Map<number, FrameRequestCallback>()
+  let nextFrame = 0
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    frames.set(++nextFrame, callback)
+    return nextFrame
+  })
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
   return {
     labels: [],
     sent,
     styles,
+    paint() {
+      const batch = [...frames.values()]
+      frames.clear()
+      batch.forEach(callback => callback(16))
+    },
+    pendingFrames: () => frames.size,
     dispatch(data) {
       for (const handler of windowListeners)
         handler({ source: window.parent, data } as MessageEvent)
@@ -149,7 +166,7 @@ describe('apply', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('内嵌页面保留五条 effect 与侧边栏、导航、缩放桥', async () => {
+  it('内嵌页面登记桌面 effect 并保留样式、侧边栏、导航、缩放桥', async () => {
     const env = stubEnv()
 
     const toggleSidebar = vi.fn()
@@ -163,6 +180,9 @@ describe('apply', () => {
 
     apply(ctx)
 
+    expect(env.pendingFrames()).toBe(1)
+    env.paint()
+    expect(env.sent).toContainEqual({ type: 'dsh://style', sidebar: null, marked: null, frame: null, colorScheme: 'light' })
     expect(env.sent).toContainEqual({ type: 'dsh://sidebar:collapsed', collapsed: false })
     env.dispatch({ type: 'dsh://sidebar:toggle' })
     expect(toggleSidebar).toHaveBeenCalledTimes(1)
@@ -190,6 +210,7 @@ describe('apply', () => {
       expect(env.windowListeners()).toBe(0)
       expect(env.documentListeners()).toBe(0)
       expect(env.styles).toEqual([])
+      expect(env.pendingFrames()).toBe(0)
       expect(vi.getTimerCount()).toBe(0)
     })
   })
