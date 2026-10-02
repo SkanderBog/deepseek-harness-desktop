@@ -261,3 +261,22 @@ jobs:
           for attempt in 1 2 3 4 5; do
             cargo test --all-features --locked service::backup::recovery::tests -- --test-threads=1
           done
+
+  cleanup-platforms:
+    name: Worktree cleanup safety
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-node-pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter dsh-tauri build
+      - name: Repeat cleanup regressions on native filesystems
+        shell: bash
+        run: |
+          for seed in 501 502 503 504 505; do
+            node node_modules/vitest/vitest.mjs run --project unit packages/dsh-tauri-worktree/src/host/service/worktree-safety.test.ts packages/dsh-tauri-worktree/src/host/service/worktree.test.ts packages/dsh-tauri-worktree/src/host/routes/index.test.ts --maxWorkers=1 --sequence.shuffle --sequence.seed=$seed || exit 1
+          done
