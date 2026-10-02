@@ -22,7 +22,7 @@ export function sessionsRoot(): string {
 export function isWithinRoot(root: string, candidate: string): boolean {
   const base = resolve(root)
   const target = resolve(candidate)
-  return target === base || target.startsWith(`${base}${sep}`)
+  return target !== base && target.startsWith(`${base}${sep}`)
 }
 
 /** 与 dsh 宿主 JSONL 持久化后端逐字一致的会话 id 编码。 */
@@ -58,6 +58,7 @@ export function readDirectory(path: string): string[] | null {
  */
 export function findSessionDataDir(root: string, sessionId: string): string | null {
   const markers = [encodeSessionId(sessionId), `${SESSION_DIRECTORY_PREFIX}${sessionId}`, sessionId]
+    .filter(marker => marker !== DOT_SEGMENT && marker !== DOT_DOT_SEGMENT && !/[/\\\0]/.test(marker))
   const candidates = [
     ...markers.map(marker => join(root, marker)),
     ...directoryNames(root).flatMap(group => markers.map(marker => join(root, group, marker))),
