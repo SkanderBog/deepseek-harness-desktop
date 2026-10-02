@@ -38,6 +38,7 @@ pub async fn update_app_config(
     app_handle: AppHandle,
     appearance: Option<config::Appearance>,
     port: Option<u16>,
+    zoom_factor: Option<f64>,
     harness_max_heap_mb: Option<u32>,
     auto_start: Option<bool>,
     cli_link_enabled: Option<bool>,
@@ -68,6 +69,9 @@ pub async fn update_app_config(
             // 记住用户手动选择的端口：自动避让递增后仍能回落回用户值，而不是
             // 一路顶高（issue #91，见 workflow::launch 的端口自愈逻辑）
             setting.manual_port = Some(port);
+        }
+        if let Some(zoom_factor) = zoom_factor {
+            setting.zoom_factor = zoom_factor;
         }
         if let Some(mb) = harness_max_heap_mb {
             setting.harness_max_heap_mb = (mb != 0).then_some(mb);

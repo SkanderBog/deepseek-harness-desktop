@@ -95,13 +95,10 @@ export function ConfigDebug() {
     },
   })
 
-  /**
-   * 缩放真值写进 setting store（persist 写入的 `setting` 键与 Rust 共用同一份 `.store.dat`），
-   *  WebView 上的应用由 `iframe.tsx` 的 `useZoomFactor` 完成，因此这里没有失败分支。
-   */
-  function onSetZoom(zoomFactor: number) {
-    store.setting.zoom_factor = zoomFactor
-  }
+  const { mutate: onSetZoom } = useMutation({
+    mutationFn: (zoomFactor: number) => store.setting.update({ zoomFactor }),
+    onError: () => toast(t('messages.zoom_save_failed'), { variant: 'danger' }),
+  })
 
   const { mutate: onCopyServiceUrl } = useMutation({
     mutationFn: async () => {

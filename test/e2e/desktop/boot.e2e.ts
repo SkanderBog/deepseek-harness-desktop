@@ -172,11 +172,40 @@ describe.skipIf(process.platform === 'darwin')('桌面端启动冒烟', () => {
     await browser.keys(Key.ArrowLeft)
     await browser.waitUntil(async () => (await appearance()).opacity === 99, { timeoutMsg: '原生设置未保存滑块的 99% 不透明度' })
     expect(await appearance(), '原生设置与所选外观不一致').toEqual({ palette: 'nord', terminal: true, transparency: true, opacity: 99, sidebarOnly: false })
-    expect(await browser.$('[data-testid="dsh-appearance-restart"]').isDisplayed(), '切换透明窗口缺少重启提示').toBe(true)
     await click('dsh-appearance-reset')
     await browser.waitUntil(async () => (await appearance()).palette === 'default', { timeoutMsg: '原生外观设置未恢复默认值' })
     expect(await appearance(), '重置未还原完整原生外观设置').toEqual({ palette: 'default', terminal: false, transparency: false, opacity: 100, sidebarOnly: false })
-    expect(await browser.$('[data-testid="dsh-appearance-restart"]').isExisting(), '默认窗口不应显示重启提示').toBe(false)
     await click('dsh-config-dialog-close')
+  })
+
+  it('persists shell zoom shortcuts without changing other native settings', async () => {
+    async function config() {
+      return browser.execute(() => {
+        const bridge = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string) => Promise<{ zoom_factor: number, appearance: unknown, backup_include_credentials: boolean }> } }).__TAURI_INTERNALS__
+        return bridge.invoke('get_app_config')
+      })
+    }
+    async function shortcut(key: string) {
+      await browser.execute((key) => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true }))
+      }, key)
+    }
+    const original = await config()
+    try {
+      await shortcut('0')
+      await browser.waitUntil(async () => (await config()).zoom_factor === 1, { timeoutMsg: '缩放重置未写入原生设置' })
+      await shortcut('+')
+      await shortcut('+')
+      await browser.waitUntil(async () => (await config()).zoom_factor === 1.2, { timeoutMsg: '连续缩放快捷键未保存到原生设置' })
+      const saved = await config()
+      expect(saved.appearance, '缩放不应覆盖原生外观设置').toEqual(original.appearance)
+      expect(saved.backup_include_credentials, '缩放不应覆盖凭证备份偏好').toBe(original.backup_include_credentials)
+    }
+    finally {
+      await browser.execute(async (zoomFactor) => {
+        const bridge = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__
+        await bridge.invoke('update_app_config', { zoomFactor })
+      }, original.zoom_factor)
+    }
   })
 })

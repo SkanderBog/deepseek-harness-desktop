@@ -295,7 +295,7 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     if (!action)
       return
     event.preventDefault()
-    setting.zoom(action)
+    void setting.zoom(action).catch(error => console.error('[Zoom] failed to save zoom:', error))
   }
 
   /**
@@ -400,7 +400,7 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   function handleZoomShortcut(data: IframeBridgeMessage) {
     const action = zoomActionFromBridgeMessage(data)
     if (action)
-      setting.zoom(action)
+      void setting.zoom(action).catch(error => console.error('[Zoom] failed to save zoom:', error))
   }
 
   function handleFrameLog(data: IframeBridgeMessage) {

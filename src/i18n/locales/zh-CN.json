@@ -167,6 +167,7 @@
   "messages.port_restart_hint": "重启服务后生效，是否立即重启？",
   "messages.launch_on_login_failed": "更新开机自启动设置失败",
   "messages.close_action_failed": "更新关闭行为设置失败",
+  "messages.zoom_save_failed": "保存缩放比例失败",
   "messages.cli_link_failed": "更新命令行集成设置失败",
   "messages.port_invalid": "端口必须是 1 到 65535 之间的整数",
   "messages.port_save_failed": "保存端口失败",
