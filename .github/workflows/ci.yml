@@ -6,22 +6,62 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: 0
+
 jobs:
-  cleanup-platforms:
-    name: Worktree cleanup safety
+  rust-test:
+    name: Rust tests
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
+        # Linux 用与 release workflow 相同的 ubuntu-22.04 + 同一套 apt 包，
+        # 保证首次跑 CI 就能编译（tauri 的 webkit/appindicator 原生依赖对齐已知可用环境）。
+        # macOS 用官方矩阵的 macos-14（Apple Silicon）。
+        os: [ubuntu-22.04, macos-14, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-node-pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter dsh-tauri build
-      - name: Repeat cleanup regressions on native filesystems
-        shell: bash
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
-          for seed in 701 702 703 704 705; do
-            node node_modules/vitest/vitest.mjs run --project unit packages/dsh-tauri-worktree/src/host/service/worktree-safety.test.ts packages/dsh-tauri-worktree/src/host/service/worktree.test.ts packages/dsh-tauri-worktree/src/host/routes/index.test.ts --maxWorkers=1 --sequence.shuffle --sequence.seed=$seed || exit 1
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Setup Xcode
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/setup-xcode
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          # 同上：PR 只读缓存，避免每轮生成新条目挤掉 main 的暖缓存。
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Run Windows native notification tests
+        if: runner.os == 'Windows'
+        run: cargo test -p tauri-plugin-notifications --lib --no-default-features --locked
+        working-directory: src-tauri
+
+      - name: Run tests
+        run: cargo test --all-features --locked
+        working-directory: src-tauri
+
+      - name: Repeat recovery tests five times
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          for attempt in 1 2 3 4 5; do
+            cargo test --all-features --locked service::backup::recovery::tests -- --test-threads=1
           done
+
