@@ -162,7 +162,7 @@ describe('worktree deletion boundaries', () => {
     expectProtectedData()
   })
 
-  it.each(['configured', 'canonical'])('allows a linked DSH_HOME with a %s binding path', async (pathKind) => {
+  it.each(['configured', 'canonical', 'original'])('allows a linked DSH_HOME with a %s binding path', async (pathKind) => {
     const realHome = home.value
     const alias = join(scratch, 'home-alias')
     linkDirectory(realHome, alias)
@@ -170,7 +170,7 @@ describe('worktree deletion boundaries', () => {
     const managed = join(alias, 'worktrees/hash/project')
     mkdirSync(managed, { recursive: true })
     writeFileSync(join(managed, 'remove.txt'), 'orphan worktree')
-    binding.worktreePath = pathKind === 'configured' ? managed : realpathSync(managed)
+    binding.worktreePath = pathKind === 'configured' ? managed : pathKind === 'canonical' ? realpathSync(managed) : join(realHome, 'worktrees/hash/project')
     saveBinding()
     const result = await worktree.remove('session')
     expect(result.ok).toBe(true)
