@@ -144,7 +144,7 @@ mod tests {
     fn export_preserves_sessions_shared_storage_and_every_profile_after_source_loss() {
         let fixture = Fixture::new();
         let info = export(&fixture.home, &fixture.app, false).unwrap();
-        assert!(Path::new(&info.path).starts_with(fixture.app.join("recovery-backups")));
+        assert!(Path::new(&info.path).starts_with(dunce::canonicalize(&fixture.app).unwrap().join("recovery-backups")));
         assert!(info.size > 0);
         assert!(!info.include_credentials);
         assert_eq!(fs::read_to_string(fixture.home.join(".credentials.yaml")).unwrap(), "secret");
