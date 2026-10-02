@@ -45,10 +45,19 @@ pub fn export(source: &Path, app_data: &Path, include_credentials: bool) -> Resu
         archive::create_recovery_archive(&source, &partial, include_credentials)?;
         fs::OpenOptions::new().write(true).open(&partial).and_then(|file| file.sync_all())
             .map_err(|e| format!("RECOVERY_SYNC: {e}"))?;
-        fs::write(directory.join("README.txt"), RECOVERY_README)
+        let readme = directory.join("README.txt");
+        fs::write(&readme, RECOVERY_README)
             .map_err(|e| format!("RECOVERY_README: {e}"))?;
+        fs::OpenOptions::new().write(true).open(&readme).and_then(|file| file.sync_all())
+            .map_err(|e| format!("RECOVERY_SYNC_README: {e}"))?;
         let size = fs::metadata(&partial).map_err(|e| format!("RECOVERY_METADATA: {e}"))?.len();
         fs::rename(&partial, &path).map_err(|e| format!("RECOVERY_PUBLISH: {e}"))?;
+        // Unix 还需同步目录项，避免断电后已返回的归档路径或新建目录丢失。
+        #[cfg(unix)]
+        for parent in [&directory, &root, &app_data] {
+            fs::File::open(parent).and_then(|file| file.sync_all())
+                .map_err(|e| format!("RECOVERY_SYNC_DIRECTORY: {e}"))?;
+        }
         Ok(BackupInfo {
             timestamp,
             path: path.to_string_lossy().into_owned(),
