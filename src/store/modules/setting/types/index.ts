@@ -1,5 +1,9 @@
+import type { Appearance } from '../../../../../packages/dsh-tauri/src/shared/appearance'
+
 export interface AppSettingUpdate {
+  appearance?: Appearance
   port?: number
+  zoomFactor?: number
   harnessMaxHeapMb?: number
   autoStart?: boolean
   cliLinkEnabled?: boolean

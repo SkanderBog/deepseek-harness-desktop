@@ -1,6 +1,6 @@
 import type { PropsWithOverlays } from '@overlastic/react'
 import type { DshPlugin } from '@/types'
-import { Cpu, LogoWindows, PersonPencil, Puzzle } from '@gravity-ui/icons'
+import { Brush, Cpu, LogoWindows, PersonPencil, Puzzle } from '@gravity-ui/icons'
 import { cn, Modal } from '@heroui/react'
 import { useDisclosure } from '@overlastic/react'
 import { useListener } from '@reause/core'
@@ -11,13 +11,14 @@ import { useTranslation } from 'react-i18next'
 import { Case, If, Switch } from 'react-if-lite'
 import { hooks } from '@/config/hooks'
 import { queryKeys } from '@/config/query-keys'
+import { ConfigAppearance } from '@/ui/config/appearance'
 import { ConfigCore } from '@/ui/config/core'
 import { ConfigDebug } from '@/ui/config/debug'
 import { ConfigPlugin } from '@/ui/config/plugin'
 import { ConfigProfile } from '@/ui/config/profile'
 
 /** 配置面板标识（左侧导航与顶部「配置」菜单共用同一组值） */
-export type ConfigTab = 'application' | 'profiles' | 'plugins' | 'harness'
+export type ConfigTab = 'appearance' | 'application' | 'profiles' | 'plugins' | 'harness'
 
 export interface ConfigDialogProps extends PropsWithOverlays {
   /** 打开时定位到的面板；缺省为「应用」 */
@@ -37,6 +38,7 @@ export function ConfigDialog(props: ConfigDialogProps) {
 
   const navs: { label: string, value: ConfigTab, icon: typeof Cpu }[] = [
     { label: t('config.application'), value: 'application', icon: LogoWindows },
+    { label: t('config.appearance'), value: 'appearance', icon: Brush },
     { label: t('config.profiles'), value: 'profiles', icon: PersonPencil },
     { label: t('config.plugins'), value: 'plugins', icon: Puzzle },
     { label: t('config.harness'), value: 'harness', icon: Cpu },
@@ -90,6 +92,9 @@ export function ConfigDialog(props: ConfigDialogProps) {
                 <Switch value={activeTab} as="div">
                   <Case cond="application">
                     <ConfigDebug />
+                  </Case>
+                  <Case cond="appearance">
+                    <ConfigAppearance />
                   </Case>
                   <Case cond="profiles">
                     <ConfigProfile />

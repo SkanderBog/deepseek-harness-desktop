@@ -45,6 +45,8 @@
 - ⌨️ **CLI integration** — Managed `dsh` / `pnpm` shims, not a global npm core installation.
 - 🐾 **Desktop pets** — Pets / Codex resources, pack imports, and conversation activity; preset media comes from remote hosts.
 
+**Settings → Appearance** offers Default, Nord, Solarized, Forest, Amber, GitHub, GitHub Dimmed, and GitHub High Contrast palettes that follow the existing Light/Dark/System preference. Terminal mode keeps the original fonts and hides the sidebar; the top-left button reveals it. Enable native transparency to show the 20–100% background opacity slider and the option to keep the session area opaque. Text and menus stay opaque. Setting opacity to 100% does not disable native transparency. Enabling or disabling native transparency requires fully quitting and reopening the app, and the effect depends on the window system. Restore defaults resets all appearance settings.
+
 ## Built-in plugins
 
 The 11 first-party plugins distributed with desktop resources:

@@ -27,8 +27,7 @@ use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{PredefinedMenuItem, Submenu};
 
 #[cfg(target_os = "macos")]
-static MACOS_FULLSCREEN_MENU_ITEM: OnceLock<Mutex<Option<PredefinedMenuItem<Wry>>>> =
-    OnceLock::new();
+static MACOS_FULLSCREEN_MENU_ITEM: OnceLock<Mutex<Option<MenuItem<Wry>>>> = OnceLock::new();
 
 #[cfg(windows)]
 use crate::desktop::window::on_page_load;
@@ -268,7 +267,7 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
     let config = MenuItem::with_id(
         app,
         "desktop-config",
-        crate::config::i18n::t("menu.application"),
+        crate::config::i18n::t("menu.settings"),
         true,
         Some("CmdOrCtrl+,"),
     )?;
@@ -293,50 +292,6 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
-    let run_separator = PredefinedMenuItem::separator(app)?;
-    let is_fullscreen = app
-        .get_webview_window("main")
-        .and_then(|window| window.is_fullscreen().ok())
-        .unwrap_or(false);
-    let fullscreen_label = crate::config::i18n::t(fullscreen_menu_label_key(is_fullscreen));
-    let fullscreen = PredefinedMenuItem::fullscreen(app, Some(&fullscreen_label))?;
-    let run_menu = Submenu::with_id_and_items(
-        app,
-        "desktop-run-menu",
-        crate::config::i18n::t("menu.run"),
-        true,
-        &[
-            &config,
-            &profiles,
-            &plugins,
-            &harness,
-            &run_separator,
-            &fullscreen,
-        ],
-    )?;
-
-    let hide = PredefinedMenuItem::hide(app, None)?;
-    let hide_others = PredefinedMenuItem::hide_others(app, None)?;
-    let show_all = PredefinedMenuItem::show_all(app, None)?;
-    let quit_separator = PredefinedMenuItem::separator(app)?;
-    let quit = PredefinedMenuItem::quit(app, None)?;
-    // macOS 会把首个菜单标题强制显示为应用名称；这里只承载必要的系统动作，
-    // 文件、运行、帮助菜单放在其后，避免被系统改名。
-    let system_application_menu = Submenu::with_id_and_items(
-        app,
-        "desktop-system-application-menu",
-        app.package_info().name.clone(),
-        true,
-        &[&hide, &hide_others, &show_all, &quit_separator, &quit],
-    )?;
-
-    let run_logs = MenuItem::with_id(
-        app,
-        "desktop-copy-run-logs",
-        crate::config::i18n::t("menu.run_logs"),
-        true,
-        None::<&str>,
-    )?;
     let restart = MenuItem::with_id(
         app,
         "desktop-restart",
@@ -344,10 +299,93 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
+    let run_separator = PredefinedMenuItem::separator(app)?;
+    let is_fullscreen = app
+        .get_webview_window("main")
+        .and_then(|window| window.is_fullscreen().ok())
+        .unwrap_or(false);
+    let fullscreen_label = crate::config::i18n::t(fullscreen_menu_label_key(is_fullscreen));
+    // AppKit 会因标准 toggleFullScreen: 菜单项省略“窗口”中的自动全屏入口。
+    let fullscreen = MenuItem::with_id(
+        app,
+        "desktop-fullscreen",
+        &fullscreen_label,
+        true,
+        Some("Ctrl+Super+F"),
+    )?;
+    let run_menu = Submenu::with_id_and_items(
+        app,
+        "desktop-run-menu",
+        crate::config::i18n::t("menu.run"),
+        true,
+        &[&profiles, &plugins, &harness, &run_separator, &restart],
+    )?;
+    let view_menu = Submenu::with_id_and_items(
+        app,
+        "desktop-view-menu",
+        crate::config::i18n::t("menu.view"),
+        true,
+        &[&fullscreen],
+    )?;
+
+    let about = MenuItem::with_id(
+        app,
+        "desktop-about",
+        crate::config::i18n::t("menu.about"),
+        true,
+        None::<&str>,
+    )?;
+    let about_separator = PredefinedMenuItem::separator(app)?;
     let check_update = MenuItem::with_id(
         app,
         "desktop-check-update",
         crate::config::i18n::t("menu.check_update"),
+        true,
+        None::<&str>,
+    )?;
+    let settings_separator = PredefinedMenuItem::separator(app)?;
+    let services =
+        PredefinedMenuItem::services(app, Some(&crate::config::i18n::t("menu.services")))?;
+    let services_separator = PredefinedMenuItem::separator(app)?;
+    let app_name = app
+        .config()
+        .product_name
+        .as_deref()
+        .unwrap_or(&app.package_info().name);
+    let hide_label = format!("{} {}", crate::config::i18n::t("menu.hide"), app_name);
+    let hide = PredefinedMenuItem::hide(app, Some(&hide_label))?;
+    let hide_others =
+        PredefinedMenuItem::hide_others(app, Some(&crate::config::i18n::t("menu.hide_others")))?;
+    let show_all =
+        PredefinedMenuItem::show_all(app, Some(&crate::config::i18n::t("menu.show_all")))?;
+    let quit_separator = PredefinedMenuItem::separator(app)?;
+    let quit_label = format!("{} {}", crate::config::i18n::t("menu.quit"), app_name);
+    let quit = PredefinedMenuItem::quit(app, Some(&quit_label))?;
+    let system_application_menu = Submenu::with_id_and_items(
+        app,
+        "desktop-system-application-menu",
+        app.package_info().name.clone(),
+        true,
+        &[
+            &about,
+            &about_separator,
+            &config,
+            &check_update,
+            &settings_separator,
+            &services,
+            &services_separator,
+            &hide,
+            &hide_others,
+            &show_all,
+            &quit_separator,
+            &quit,
+        ],
+    )?;
+
+    let run_logs = MenuItem::with_id(
+        app,
+        "desktop-copy-run-logs",
+        crate::config::i18n::t("menu.run_logs"),
         true,
         None::<&str>,
     )?;
@@ -359,10 +397,10 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
-    let about = MenuItem::with_id(
+    let keyboard_shortcuts = MenuItem::with_id(
         app,
-        "desktop-about",
-        crate::config::i18n::t("menu.about"),
+        "desktop-keyboard-shortcuts",
+        crate::config::i18n::t("menu.keyboard_shortcuts"),
         true,
         None::<&str>,
     )?;
@@ -372,18 +410,13 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         crate::config::i18n::t("menu.help"),
         true,
         &[
-            &run_logs,
-            &restart,
-            &check_update,
-            &help_separator,
             &documentation,
-            &about,
+            &keyboard_shortcuts,
+            &help_separator,
+            &run_logs,
         ],
     )?;
 
-    // 文件菜单：非 macOS 上同一组项渲染在壳层导航栏（`layout/components/navbar.tsx`）。
-    // 图标化的系统动作（新建窗口/新聊天/打开文件夹/关闭/退出）本身只发动作 id，
-    // 由前端复用壳层实现——新建窗口更必须在异步运行时里建窗（见 desktop::window）。
     let new_window = MenuItem::with_id(
         app,
         "desktop-new-window",
@@ -406,11 +439,7 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         Some("CmdOrCtrl+O"),
     )?;
     let file_separator_close = PredefinedMenuItem::separator(app)?;
-    // 关闭：走系统 close_window（⌘W）。主窗口的 CloseRequested 由壳层接管为
-    // 「隐藏到托盘」（setting.close_action=tray），语义与导航栏「关闭」一致。
     let close = PredefinedMenuItem::close_window(app, Some(&crate::config::i18n::t("menu.close")))?;
-    let file_separator_quit = PredefinedMenuItem::separator(app)?;
-    let file_quit = PredefinedMenuItem::quit(app, Some(&crate::config::i18n::t("menu.quit")))?;
     let file_menu = Submenu::with_id_and_items(
         app,
         "desktop-file-menu",
@@ -422,16 +451,64 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
             &open_folder,
             &file_separator_close,
             &close,
-            &file_separator_quit,
-            &file_quit,
         ],
+    )?;
+
+    let undo = PredefinedMenuItem::undo(app, Some(&crate::config::i18n::t("menu.undo")))?;
+    let redo = PredefinedMenuItem::redo(app, Some(&crate::config::i18n::t("menu.redo")))?;
+    let edit_separator = PredefinedMenuItem::separator(app)?;
+    let cut = PredefinedMenuItem::cut(app, Some(&crate::config::i18n::t("menu.cut")))?;
+    let copy = PredefinedMenuItem::copy(app, Some(&crate::config::i18n::t("menu.copy")))?;
+    let paste = PredefinedMenuItem::paste(app, Some(&crate::config::i18n::t("menu.paste")))?;
+    let select_all =
+        PredefinedMenuItem::select_all(app, Some(&crate::config::i18n::t("menu.select_all")))?;
+    let edit_menu = Submenu::with_id_and_items(
+        app,
+        "desktop-edit-menu",
+        crate::config::i18n::t("menu.edit"),
+        true,
+        &[
+            &undo,
+            &redo,
+            &edit_separator,
+            &cut,
+            &copy,
+            &paste,
+            &select_all,
+        ],
+    )?;
+
+    let minimize =
+        PredefinedMenuItem::minimize(app, Some(&crate::config::i18n::t("menu.minimize")))?;
+    let zoom = PredefinedMenuItem::maximize(app, Some(&crate::config::i18n::t("menu.zoom")))?;
+    let window_separator = PredefinedMenuItem::separator(app)?;
+    let bring_all_to_front = PredefinedMenuItem::bring_all_to_front(
+        app,
+        Some(&crate::config::i18n::t("menu.bring_all_to_front")),
+    )?;
+    let window_menu = Submenu::with_id_and_items(
+        app,
+        "desktop-window-menu",
+        crate::config::i18n::t("menu.window"),
+        true,
+        &[&minimize, &zoom, &window_separator, &bring_all_to_front],
     )?;
 
     let menu = Menu::with_items(
         app,
-        &[&system_application_menu, &file_menu, &run_menu, &help_menu],
+        &[
+            &system_application_menu,
+            &file_menu,
+            &edit_menu,
+            &view_menu,
+            &run_menu,
+            &window_menu,
+            &help_menu,
+        ],
     )?;
     let _ = app.set_menu(menu)?;
+    window_menu.set_as_windows_menu_for_nsapp()?;
+    help_menu.set_as_help_menu_for_nsapp()?;
     *MACOS_FULLSCREEN_MENU_ITEM
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -451,6 +528,11 @@ fn fullscreen_menu_label_key(is_fullscreen: bool) -> &'static str {
 /// 原生全屏动画会连续触发 Resize；只在状态真正变化时刷新菜单文案。
 #[cfg(target_os = "macos")]
 fn sync_macos_fullscreen_menu(window: &tauri::Window<Wry>) {
+    if window.label() == crate::desktop::pet::PET_WINDOW_LABEL
+        || !window.is_focused().unwrap_or(false)
+    {
+        return;
+    }
     let Ok(is_fullscreen) = window.is_fullscreen() else {
         return;
     };
@@ -568,7 +650,13 @@ fn with_shell_chrome<'a>(
     app: &'a tauri::AppHandle<Wry>,
     builder: WebviewWindowBuilder<'a, Wry, tauri::AppHandle<Wry>>,
 ) -> tauri::Result<WebviewWindowBuilder<'a, Wry, tauri::AppHandle<Wry>>> {
+    let transparent = crate::config::get_store_dat_setting(app).appearance.transparency;
     let builder = builder
+        .transparent(transparent)
+        .initialization_script(format!(
+            "window.__DSH_TRANSPARENT__ = {transparent}; window.__DSH_STORE_FILE__ = {};",
+            serde_json::json!(crate::config::store_dat_file_name())
+        ))
         .inner_size(1280.0, 840.0)
         .min_inner_size(860.0, 620.0)
         .resizable(true);
@@ -728,9 +816,12 @@ pub fn build_main_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::We
 /// macOS 未实现窗口底色接口，`set_background_color` 会返回错误并被忽略——那里由
 /// `config::apply_window_theme` 同步原生外观。
 fn apply_window_background(app: &tauri::AppHandle<Wry>, window: &tauri::WebviewWindow<Wry>) {
-    let Some(color) =
+    let background = if crate::config::get_store_dat_setting(app).appearance.transparency {
+        Some(tauri::webview::Color(0, 0, 0, 0))
+    } else {
         crate::config::window_background(crate::config::get_dsh_theme(app), window.theme().ok())
-    else {
+    };
+    let Some(color) = background else {
         return;
     };
     if let Err(error) = window.as_ref().set_background_color(Some(color)) {
@@ -1166,6 +1257,20 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
+            #[cfg(target_os = "macos")]
+            "desktop-fullscreen" => {
+                if let Some(window) = app.webview_windows().into_values().find(|window| {
+                    window.label() != crate::desktop::pet::PET_WINDOW_LABEL
+                        && window.is_focused().unwrap_or(false)
+                }) {
+                    if let Err(error) = window
+                        .is_fullscreen()
+                        .and_then(|is_fullscreen| window.set_fullscreen(!is_fullscreen))
+                    {
+                        log::warn!("[menu] FULLSCREEN_TOGGLE_FAILED: {error}");
+                    }
+                }
+            }
             "desktop-config"
             | "desktop-profiles"
             | "desktop-plugins"
@@ -1175,6 +1280,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             | "desktop-check-update"
             | "desktop-restart"
             | "desktop-documentation"
+            | "desktop-keyboard-shortcuts"
             | "desktop-new-window"
             | "desktop-new-chat"
             | "desktop-open-folder" => {
@@ -1260,19 +1366,20 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                     label if label == MAIN_WINDOW_LABEL => crate::config::save_geometry(window),
                     _ => {}
                 }
-                // 全屏菜单文案与 Accessory 切换都只针对主窗口：附加窗口没有
-                // 独立的全屏菜单项，也不参与「关闭主窗口即后台化」的激活策略。
                 #[cfg(target_os = "macos")]
                 {
-                    if window.label() == MAIN_WINDOW_LABEL
-                        && matches!(event, tauri::WindowEvent::Resized(_))
-                    {
-                        // 退出全屏后补做全屏期间被推迟的 Accessory 切换
+                    if matches!(event, tauri::WindowEvent::Resized(_)) {
+                        // 全屏文案跟随聚焦的壳层窗口，Accessory 切换仍只处理主窗口。
                         sync_macos_fullscreen_menu(window);
-                        crate::desktop::activation::on_window_resized(window);
+                        if window.label() == MAIN_WINDOW_LABEL {
+                            // 退出全屏后补做全屏期间被推迟的 Accessory 切换。
+                            crate::desktop::activation::on_window_resized(window);
+                        }
                     }
                 }
             }
+            #[cfg(target_os = "macos")]
+            tauri::WindowEvent::Focused(true) => sync_macos_fullscreen_menu(window),
             _ => {}
         });
 

@@ -39,5 +39,7 @@ export const tauriStorageDriver = defineDriver<TauriStorageDriverOptions | undef
 })
 
 export const storage = createStorage({
-  driver: tauriStorageDriver({ path: '.store.dat' }),
+  driver: tauriStorageDriver({
+    path: (globalThis as typeof globalThis & { __DSH_STORE_FILE__?: string }).__DSH_STORE_FILE__ ?? '.store.dat',
+  }),
 })

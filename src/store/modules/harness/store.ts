@@ -559,7 +559,7 @@ export const harness = defineStore({
         // 已安装过则跳过安装界面，避免每次启动都闪现"正在安装依赖..."
         // 设置由 setting store 持有（与 Rust 共享同一份 .store.dat）。必须先等水合
         // 完成再读，否则会把默认值当成真实安装状态：多跑一次安装，还漏掉更新检查。
-        await setting.$persist.rehydrate()
+        await setting.refresh()
         // 取快照：后面的 `install_dependencies` 会把 installed 置位并广播，
         // 而本次 boot 的判断应当基于「启动开始时是否已安装」
         const config = { ...setting.$state }
