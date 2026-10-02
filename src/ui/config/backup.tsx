@@ -25,7 +25,7 @@ function formatSize(bytes: number): string {
 
 export function ConfigBackup({ onBack }: ConfigBackupProps) {
   const { t } = useTranslation()
-  const { backups, loading, error, createBackup, restoreBackup, deleteBackup, busy, creating, restoring, deleting } = useBackups()
+  const { backups, loading, error, createBackup, restoreBackup, deleteBackup, busy, creating, restoring, deleting, exporting, recoveryBackup, exportRecoveryBackup } = useBackups()
   const [dialogHolder, openDialog] = useOverlay(Modal, { type: 'holder' })
 
   const [includeCredentials, toggleIncludeCredentials] = useToggle()
@@ -38,6 +38,39 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
     catch (err) {
       console.error('[ConfigBackup] create failed:', err)
       toast(`${t('backup.failed_toast')}: ${String(err)}`, { variant: 'danger' })
+    }
+  }
+
+  async function handleExportRecovery() {
+    try {
+      await openDialog({
+        status: 'warning',
+        title: t('backup.recovery_confirm_title'),
+        description: <p>{t('backup.recovery_confirm_desc')}</p>,
+        confirmText: t('backup.export_recovery'),
+      })
+    }
+    catch (e) {
+      silence(e, 'backup: recovery export cancelled')
+      return
+    }
+    try {
+      await exportRecoveryBackup(includeCredentials)
+      toast(t('backup.recovery_created'), { variant: 'accent', timeout: 10000 })
+    }
+    catch (err) {
+      toast(`${t('backup.failed_toast')}: ${String(err)}`, { variant: 'danger' })
+    }
+  }
+
+  async function handleRevealRecovery() {
+    if (!recoveryBackup)
+      return
+    try {
+      await invoke('reveal_in_folder', { path: recoveryBackup.path })
+    }
+    catch (err) {
+      toast(String(err), { variant: 'danger' })
     }
   }
 
@@ -152,7 +185,7 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
       </Button>
 
       {/* 手动备份 */}
-      <Panel.Header title={t('backup.manual_section')} description="" />
+      <Panel.Header title={t('backup.manual_section')} description={t('backup.profile_scope')} />
       <div className="flex flex-col gap-3">
         <Button
           variant="primary"
@@ -188,6 +221,23 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
           </Description>
         </If>
       </div>
+
+      <Panel.Header title={t('backup.recovery_section')} description={t('backup.recovery_desc')} />
+      <Button variant="secondary" isDisabled={busy} onPress={handleExportRecovery}>
+        <If cond={exporting}>
+          <Spinner size="sm" color="current" />
+          <span>{t('backup.exporting_recovery')}</span>
+        </If>
+        <If cond={!exporting}>
+          <span>{t('backup.export_recovery')}</span>
+        </If>
+      </Button>
+      <If cond={Boolean(recoveryBackup)}>
+        <div className="space-y-2">
+          <p className="break-all text-xs text-muted">{recoveryBackup?.path}</p>
+          <Button variant="tertiary" onPress={handleRevealRecovery}>{t('backup.reveal_recovery')}</Button>
+        </div>
+      </If>
 
       {/* 备份列表 */}
       <Panel.Header title={t('backup.list_section')} description="" />

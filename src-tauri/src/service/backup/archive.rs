@@ -64,6 +64,7 @@ fn append_dir_filtered(
     source: &Path,
     rel: &Path,
     include_credentials: bool,
+    reject_links: bool,
 ) -> Result<(), String> {
     for entry in fs::read_dir(dir).map_err(|e| format!("BACKUP_ARCHIVE_READDIR: {e}"))? {
         let entry = entry.map_err(|e| format!("BACKUP_ARCHIVE_ENTRY: {e}"))?;
@@ -82,11 +83,19 @@ fn append_dir_filtered(
         let ty = entry
             .file_type()
             .map_err(|e| format!("BACKUP_ARCHIVE_TYPE: {e}"))?;
+        #[cfg(windows)]
+        if reject_links {
+            use std::os::windows::fs::MetadataExt;
+            let meta = fs::symlink_metadata(&path).map_err(|e| format!("BACKUP_ARCHIVE_TYPE: {e}"))?;
+            if meta.file_attributes() & 0x400 != 0 {
+                return Err(format!("RECOVERY_LINK_UNSUPPORTED: {}", path.display()));
+            }
+        }
         if ty.is_dir() {
             builder
                 .append_dir(&archived, &path)
                 .map_err(|e| format!("BACKUP_ARCHIVE_APPEND_DIR: {e}"))?;
-            append_dir_filtered(builder, &path, source, &archived, include_credentials)?;
+            append_dir_filtered(builder, &path, source, &archived, include_credentials, reject_links)?;
         } else if ty.is_file() {
             builder
                 .append_file(
@@ -95,6 +104,9 @@ fn append_dir_filtered(
                 )
                 .map_err(|e| format!("BACKUP_ARCHIVE_APPEND_FILE: {e}"))?;
         } else if ty.is_symlink() {
+            if reject_links {
+                return Err(format!("RECOVERY_LINK_UNSUPPORTED: {}", path.display()));
+            }
             // 符号链接：读取 target，tar Symlink 存储（GNU header 限制 100 字节）
             let target =
                 std::fs::read_link(&path).map_err(|e| format!("BACKUP_ARCHIVE_READLINK: {e}"))?;
@@ -130,11 +142,19 @@ fn append_dir_filtered(
 /// `node_modules/`。使用 zstd 多线程压缩（级别 0 = 默认 3，
 /// 启用 multithread 加速）。
 pub fn create_archive(source: &Path, dest: &Path, include_credentials: bool) -> Result<(), String> {
+    create_archive_impl(source, dest, include_credentials, false)
+}
+
+pub(super) fn create_recovery_archive(source: &Path, dest: &Path, include_credentials: bool) -> Result<(), String> {
+    create_archive_impl(source, dest, include_credentials, true)
+}
+
+fn create_archive_impl(source: &Path, dest: &Path, include_credentials: bool, reject_links: bool) -> Result<(), String> {
     let file = fs::File::create(dest).map_err(|e| format!("BACKUP_ARCHIVE_CREATE: {e}"))?;
     // 级别 0 使用 zstd 默认压缩级别（3），在速度与压缩率间取得平衡。
     // 多线程压缩：利用多核 CPU 并行压缩块，速度比单线程快 3-5 倍。
     let workers = std::thread::available_parallelism()
-        .map(|n| n.get() as u32)
+        .map(|n| if reject_links { n.get().min(2) } else { n.get() } as u32)
         .unwrap_or(1);
     let mut enc =
         zstd::stream::Encoder::new(file, 0).map_err(|e| format!("BACKUP_ARCHIVE_ENCODER: {e}"))?;
@@ -147,6 +167,7 @@ pub fn create_archive(source: &Path, dest: &Path, include_credentials: bool) -> 
         source,
         Path::new("."),
         include_credentials,
+        reject_links,
     )?;
     archive
         .finish()

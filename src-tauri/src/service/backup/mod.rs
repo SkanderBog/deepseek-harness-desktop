@@ -4,6 +4,7 @@
 //! 支持手动创建 / 还原（覆盖或新建）/ 列表 / 删除，以及自动备份调度与保留份数裁剪。
 
 pub mod archive;
+pub mod recovery;
 pub mod retention;
 
 use std::fs;

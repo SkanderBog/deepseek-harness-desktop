@@ -26,6 +26,9 @@ export interface UseBackupsResult {
   restoring: boolean
   /** 仅删除进行中 */
   deleting: boolean
+  exporting: boolean
+  recoveryBackup: BackupInfo | undefined
+  exportRecoveryBackup: (includeCredentials: boolean) => Promise<BackupInfo>
 }
 
 /**
@@ -63,6 +66,10 @@ export function useBackups(): UseBackupsResult {
     mutationFn: (timestamp: string) => invoke<void>('delete_backup', { timestamp }),
     onSuccess: invalidate,
   })
+  const recovery = useMutation({
+    mutationFn: (includeCredentials: boolean) =>
+      invoke<BackupInfo>('export_recovery_backup', { includeCredentials }),
+  })
   return {
     backups: data ?? [],
     loading: isLoading,
@@ -80,9 +87,12 @@ export function useBackups(): UseBackupsResult {
       await remove.mutateAsync(timestamp)
       await refetch()
     },
-    busy: create.isPending || restore.isPending || remove.isPending,
+    busy: create.isPending || restore.isPending || remove.isPending || recovery.isPending,
     creating: create.isPending,
     restoring: restore.isPending,
     deleting: remove.isPending,
+    exporting: recovery.isPending,
+    recoveryBackup: recovery.data,
+    exportRecoveryBackup: recovery.mutateAsync,
   }
 }

@@ -8,6 +8,25 @@ use tauri::AppHandle;
 
 use crate::service::backup;
 
+#[tauri::command]
+pub async fn export_recovery_backup(
+    app_handle: AppHandle,
+    include_credentials: bool,
+) -> Result<backup::BackupInfo, String> {
+    let transition = crate::service::workflow::acquire_core_transition().await?;
+    let operation = crate::service::plugin::acquire_operation_lock().await;
+    crate::service::workflow::stop(app_handle.clone()).await?;
+    let source = crate::config::get_dsh_data_path(&app_handle);
+    let app_data = crate::config::get_base_dir(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _transition = transition;
+        let _operation = operation;
+        backup::recovery::export(&source, &app_data, include_credentials)
+    })
+    .await
+    .map_err(|e| format!("RECOVERY_TASK: {e}"))?
+}
+
 /// 创建备份（`$DSH_HOME` → `$DSH_HOME/.backups/<timestamp>.tar.zst`）。
 ///
 /// 异步命令：zstd 多线程压缩 + 目录遍历在 `spawn_blocking` 线程池执行。
