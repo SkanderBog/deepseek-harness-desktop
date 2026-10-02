@@ -66,6 +66,8 @@ export const worktree = defineService({
     const hash = computeHash(projectPath, sessionId)
     const dirname = projectDirname(projectPath)
     const path = worktreePath(hash, dirname)
+    if (!isSafeRemovalTarget(path, hash, dirname))
+      return { ok: false, error: '工作树路径不安全，已保留数据' }
     const linkDirectories = normalizeLinkDirectories(options.linkDependencyDirectories)
     const linkDependencies = options.linkDependencies ?? LINK_DEPENDENCIES
 
@@ -206,6 +208,8 @@ export const worktree = defineService({
     const binding = resolveBinding(params.sessionId, params.worktreeHashDirname ?? params.worktree_hash_dirname)
     if (!binding)
       return { ok: false, error: '未找到绑定的工作树' }
+    if (!isSafeRemovalTarget(binding.worktreePath, binding.hash, binding.dirname))
+      return { ok: false, error: '工作树路径不安全，已保留数据' }
     if (!existsSync(binding.worktreePath))
       return { ok: false, error: `工作树目录不存在：${binding.worktreePath}` }
 
@@ -572,6 +576,8 @@ async function removeWorktreeOnDisk(
   linkDirectories: readonly string[] = [],
   signal?: AbortSignal,
 ): Promise<OperationResult> {
+  if (!isSafeRemovalTarget(path, hash, dirname))
+    return { ok: false, error: '工作树路径不安全，已保留数据' }
   await stopWorktreeProcesses(sessionId, path)
 
   if (linkDirectories.length > 0)
@@ -658,14 +664,19 @@ interface RemovalTarget {
  */
 async function removalTarget(sessionId: string, key: string): Promise<RemovalTarget | null> {
   const binding = resolveBinding(sessionId, key)
-  if (binding)
+  if (binding) {
+    if (!isSafeRemovalTarget(binding.worktreePath, binding.hash, binding.dirname))
+      return null
     return { ...binding, binding, bound: true }
+  }
   const parsed = parseWorktreeKey(key)
   // 未绑定的 key 直接来自请求体：任一段越出 `worktrees/<hash>/<dirname>` 都拒绝，
   // 否则 `../..` 这类 key 会被 join() 归一化到工作树根之外再被递归删除
   if (!parsed || !isSafeKeySegment(parsed.hash) || !isSafeKeySegment(parsed.dirname))
     return null
   const path = worktreePath(parsed.hash, parsed.dirname)
+  if (!isSafeRemovalTarget(path, parsed.hash, parsed.dirname))
+    return null
   return {
     sessionId,
     hash: parsed.hash,
@@ -678,8 +689,27 @@ async function removalTarget(sessionId: string, key: string): Promise<RemovalTar
 }
 
 /** key 的每一段都必须是单一目录名：不接受空串、`.`、`..` 与任何路径分隔符。 */
-function isSafeKeySegment(segment: string): boolean {
-  return Boolean(segment) && segment !== '.' && segment !== '..' && !segment.includes('/') && !segment.includes('\\')
+function isSafeKeySegment(segment: unknown): segment is string {
+  return typeof segment === 'string' && Boolean(segment.trim())
+    && segment.trim() !== '.' && segment.trim() !== '..'
+    && !/[\\/:\0]/.test(segment)
+}
+
+// issue #848：落盘绑定也可能损坏；源目录和回收站都必须匹配 DSH_HOME 内的固定路径。
+function isSafeRemovalTarget(path: unknown, hash: unknown, dirname: unknown): boolean {
+  return isSafeKeySegment(hash) && isSafeKeySegment(dirname)
+    && isManagedPath(path, WORKTREES_DIR, hash, dirname)
+    && isManagedPath(worktreeTrashPath(hash, dirname), TRASH_DIR, hash, dirname)
+}
+
+function isManagedPath(path: unknown, ...parts: string[]): boolean {
+  if (typeof path !== 'string' || !path)
+    return false
+  const expected = join(canonicalPath(DSH_HOME), ...parts)
+  const actual = canonicalPath(path)
+  return process.platform === 'win32'
+    ? resolve(actual).toLowerCase() === resolve(expected).toLowerCase()
+    : resolve(actual) === resolve(expected)
 }
 
 function projectFromWorktree(path: string): string {
@@ -720,19 +750,27 @@ async function worktreeOccupant(root: string, branch: string, worktreePath: stri
 async function sweepAbandoned(): Promise<number> {
   let swept = 0
   const trashRoot = join(DSH_HOME, TRASH_DIR)
+  const worktreesRoot = join(DSH_HOME, WORKTREES_DIR)
+  if (!isManagedPath(trashRoot, TRASH_DIR) || !isManagedPath(worktreesRoot, WORKTREES_DIR))
+    throw new Error('工作树清理目录不安全，已保留数据')
   for (const hash of listDirectoryNames(trashRoot)) {
     const container = join(trashRoot, hash)
+    if (!isSafeKeySegment(hash) || !isManagedPath(container, TRASH_DIR, hash))
+      throw new Error('工作树回收站目录不安全，已保留数据')
     await removeDirectoryTree(container)
     if (!existsSync(container))
       swept += 1
   }
 
-  const worktreesRoot = join(DSH_HOME, WORKTREES_DIR)
   for (const hash of listDirectoryNames(worktreesRoot)) {
     const container = join(worktreesRoot, hash)
+    if (!isSafeKeySegment(hash) || !isManagedPath(container, WORKTREES_DIR, hash))
+      throw new Error('工作树目录不安全，已保留数据')
     const staleContainer = isSweepable(container)
     for (const name of listDirectoryNames(container)) {
       const path = join(container, name)
+      if (!isSafeKeySegment(name) || !isManagedPath(path, WORKTREES_DIR, hash, name))
+        throw new Error('工作树目录不安全，已保留数据')
       if (isSweepable(path))
         await removeEmptyDirectories([path])
       if (!existsSync(path))
