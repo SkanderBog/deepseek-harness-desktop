@@ -15,7 +15,8 @@ import { SKILL_NAME_RE, SKILLS_DATA_DIR } from '../config/constants'
 import { getCurrentHostInstance } from '../config/runtime'
 import { storage } from '../storage'
 import { skillDir, skillFilePath } from '../utils/paths.utils'
-import { isSkillSourceEntry, rewriteSkillContent, rewriteSkillPolicy, serializeSkill } from './skills.utils'
+import { rmtree } from './rmtree'
+import { isOwnedMaterialDir, isSkillSourceEntry, rewriteSkillContent, rewriteSkillPolicy, serializeSkill } from './skills.utils'
 
 const STATE_FILE_NAME = 'state.json'
 
@@ -76,7 +77,13 @@ export const skills = defineService({
     const at = sources.findIndex(entry => entry.id === id)
     if (at === -1)
       return null
-    const [removed] = sources.splice(at, 1)
+    const removed = sources[at]
+    if (removed.materialDir !== undefined) {
+      if (!isOwnedMaterialDir(removed.id, removed.materialDir))
+        throw new Error(`unsafe skill material directory: ${removed.materialDir}`)
+      rmtree.remove(removed.materialDir)
+    }
+    sources.splice(at, 1)
     await writeSources(sources)
     return removed
   },

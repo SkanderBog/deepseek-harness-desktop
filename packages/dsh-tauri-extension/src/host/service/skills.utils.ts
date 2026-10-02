@@ -1,7 +1,10 @@
 import type { SkillInput, SkillSourceEntry, SkillSourceView } from './skills.types'
+import { lstatSync } from 'node:fs'
 import { isEmpty } from 'lodash-es'
-import { SKILL_NAME_RE } from '../config/constants'
+import { dirname, resolve } from 'pathe'
+import { SKILL_NAME_RE, SKILLS_DATA_DIR } from '../config/constants'
 import { directoryExists } from '../utils/filesystem.utils'
+import { materialDirFor } from '../utils/paths.utils'
 
 const SKILL_DESCRIPTION_MAX_LENGTH = 1024
 
@@ -18,6 +21,27 @@ export function isSkillSourceEntry(entry: unknown): entry is SkillSourceEntry {
     return false
   const candidate = entry as Record<string, unknown>
   return typeof candidate.id === 'string' && Array.isArray(candidate.roots)
+}
+
+/**
+ * `materialDir` 是否就是本条目托管的实体目录：必须是 `$DSH_HOME/skills/repos/<id>`
+ * 的直接子目录，且 skills、repos、条目三层都不是符号链接或目录联接
+ * （联接会被 readdir/chmod/rm 跟随，从而删到用户既有目录）。
+ */
+export function isOwnedMaterialDir(entryId: string, materialDir: string): boolean {
+  if (typeof entryId !== 'string' || typeof materialDir !== 'string')
+    return false
+  const expected = materialDirFor(entryId)
+  if (dirname(resolve(expected)) !== resolve(SKILLS_DATA_DIR, 'repos'))
+    return false
+  if (resolve(materialDir) !== resolve(expected))
+    return false
+  return [SKILLS_DATA_DIR, dirname(expected), expected].every(dir => !isLinkLike(dir))
+}
+
+function isLinkLike(path: string): boolean {
+  const stats = lstatSync(path, { throwIfNoEntry: false })
+  return stats !== undefined && stats.isSymbolicLink()
 }
 
 export function serializeSkill(input: SkillInput): string {

@@ -111,16 +111,8 @@ pub fn setup(app_handle: tauri::AppHandle) {
     // workflow::sweep_orphan_harness），避免新实例一路漂移端口
     crate::service::workflow::sweep_orphan_harness(&app_handle);
 
-    // 旧版 AppData data/dsh → 官方 $DSH_HOME（~/.dsh）数据迁移。
-    // 必须在 sweep 之后（先杀掉占用文件句柄的残留 dsh 进程）、scheduler/
-    // auto_start 之前（迁移完成前不启动 dsh）。失败仅告警不阻断：旧数据
-    // 原地保留，下次启动重试。
-    if let Err(e) = crate::service::migrate::migrate(&app_handle) {
-        log::warn!("dsh home migration deferred (old data kept): {e}");
-    }
-
-    // 启动自愈：清理指向旧位置的 pnpm `.modules.yaml`。老版本完成迁移后该文件
-    // 仍记录旧 $DSH_HOME（AppData）下的绝对路径，导致任何 pnpm 操作抛
+    // 启动自愈：清理指向旧位置的 pnpm `.modules.yaml`。老版本完成数据搬迁后该
+    // 文件仍记录旧 $DSH_HOME（AppData）下的绝对路径，导致任何 pnpm 操作抛
     // `ERR_PNPM_UNEXPECTED_VIRTUAL_STORE`（插件安装/更新失败，issue #103）。
     // 幂等、best-effort：仅在检测到失效路径时删除，下次 pnpm 操作自动重建。
     let dsh_home = crate::config::get_dsh_data_path(&app_handle);
@@ -1355,12 +1347,6 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
         .manage(crate::desktop::pet_mouse::PetMouseStreamState::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
-            // 标识符改名（app-data 目录名同步变化）：旧目录必须在任何 store 读写之前
-            // 搬过来，否则升级用户会被误判成首装（见
-            // service::migrate::migrate_app_data_dir）。失败仅告警，不阻断启动。
-            if let Err(error) = crate::service::migrate::migrate_app_data_dir(&app_handle) {
-                log::warn!("[migrate] app data dir migration failed: {error}");
-            }
             // 首装检测必须最先执行：窗口几何恢复/退出保存等任何 store 写入都会
             // 创建 store 文件，判定晚于它们会把首装误判为升级（见
             // config::detect_first_install 的时序说明）。

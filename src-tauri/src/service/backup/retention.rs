@@ -56,10 +56,17 @@ pub fn prune_backups_in_dir(
     fs::rename(&tmp, manifest_path)
         .map_err(|e| format!("BACKUP_PRUNE_RENAME: {e}"))?;
 
-    // 删除文件：使用清单中存储的 path 字段（而非自行拼文件名）
+    // 删除文件：使用清单中存储的 path 字段（而非自行拼文件名）。
+    // 清单可被改写，只有确实位于本目录下的路径才允许删除。
+    let canonical_dir =
+        fs::canonicalize(backup_dir).map_err(|e| format!("BACKUP_PRUNE_DIR: {e}"))?;
     for entry in &to_remove {
         if let Some(path_str) = entry["path"].as_str() {
             let file = Path::new(path_str);
+            if !is_direct_child_of(&canonical_dir, file) {
+                log::warn!("[backup] 跳过清单中的越界备份路径: {path_str}");
+                continue;
+            }
             if file.exists() {
                 if let Err(e) = fs::remove_file(file) {
                     // 文件删除失败不阻断整体裁剪，仅记录警告
@@ -69,6 +76,14 @@ pub fn prune_backups_in_dir(
         }
     }
     Ok(())
+}
+
+/// 路径的父目录（跟随链接解析后）是否就是 `dir`。
+fn is_direct_child_of(dir: &Path, candidate: &Path) -> bool {
+    match candidate.parent() {
+        Some(parent) => matches!(fs::canonicalize(parent), Ok(resolved) if resolved == dir),
+        None => false,
+    }
 }
 
 /// 按保留份数裁剪当前 $DSH_HOME/.backups/ 下的旧备份。
@@ -85,12 +100,16 @@ mod tests {
     use super::*;
     use std::io::Write as _;
 
+    static FIXTURE_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
     /// 在临时目录下构造指定数量的假备份文件 + 清单，返回目录路径。
     fn setup_fake_backups(count: usize) -> std::path::PathBuf {
+        let seq = FIXTURE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "dsh-backup-retention-{}-{}",
+            "dsh-backup-retention-{}-{}-{}",
             std::process::id(),
-            count
+            count,
+            seq
         ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -172,6 +191,32 @@ mod tests {
         assert!(!dir.join("web-20260000000000.tar.zst").exists());
         // 较新的保留
         assert!(dir.join("web-20260000000001.tar.zst").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refuses_to_delete_paths_outside_backup_dir() {
+        let dir = setup_fake_backups(2);
+        let outside = std::env::temp_dir().join(format!(
+            "dsh-backup-retention-outside-{}",
+            std::process::id()
+        ));
+        fs::write(&outside, b"sentinel").unwrap();
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join(".manifest.json")).unwrap())
+                .unwrap();
+        manifest["backups"][0]["path"] = serde_json::json!(outside.to_string_lossy());
+        fs::write(
+            dir.join(".manifest.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        prune_backups_in_dir(&dir, 1).unwrap();
+
+        assert!(outside.exists(), "清单中的越界路径不得被删除");
+        assert_eq!(read_manifest_backups(&dir).len(), 1);
+        let _ = fs::remove_file(&outside);
         let _ = fs::remove_dir_all(&dir);
     }
 

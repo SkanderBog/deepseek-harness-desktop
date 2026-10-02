@@ -129,6 +129,7 @@ fn append_dir_filtered(
 /// `.credentials.yaml`。始终排除 `.backups/`、`.plugin-backups/`、`.harness.pid`、
 /// `node_modules/`。使用 zstd 多线程压缩（级别 0 = 默认 3，
 /// 启用 multithread 加速）。
+#[cfg(test)]
 pub fn create_archive(source: &Path, dest: &Path, include_credentials: bool) -> Result<(), String> {
     let file = fs::File::create(dest).map_err(|e| format!("BACKUP_ARCHIVE_CREATE: {e}"))?;
     // 级别 0 使用 zstd 默认压缩级别（3），在速度与压缩率间取得平衡。
@@ -160,13 +161,10 @@ pub fn create_archive(source: &Path, dest: &Path, include_credentials: bool) -> 
     Ok(())
 }
 
-/// 解压 tar.zst 归档到 `dest` 目录。
+/// 解压“扁平”tar.zst 归档到 `dest` 目录（条目直接是档案内容文件名）。
 ///
-/// 自动兼容两种归档格式：
-/// 1. 旧格式：条目以 `profiles/<id>/...` 开头（备份整个 `$DSH_HOME`）
-/// 2. 新格式：条目直接以文件名开头（只备份激活 profile 内容）
-///
-/// 检测首条目前缀，剥离 `profiles/<id>/` 后解压到 `dest`。
+/// 分节归档（见 [`extract_archive_section`]）请按节解压；本函数不会剥离
+/// `profile/`、`sessions/` 节前缀，直接使用会把节名当成子目录名。
 pub fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
     fs::create_dir_all(dest).map_err(|e| format!("BACKUP_EXTRACT_MKDIR: {e}"))?;
     let file = fs::File::open(archive).map_err(|e| format!("BACKUP_EXTRACT_OPEN: {e}"))?;
@@ -189,12 +187,119 @@ pub fn extract_archive_gzip(archive: &Path, dest: &Path) -> Result<(), String> {
     extract_tar_entries(&mut archive, dest)
 }
 
+/// 分节归档中的档案节名（`profile/`）。
+pub const PROFILE_SECTION: &str = "profile";
+
+/// 分节归档中的会话节名（`sessions/`）。
+pub const SESSIONS_SECTION: &str = "sessions";
+
+/// 归档布局。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveLayout {
+    /// 新版：条目带 `profile/`、`sessions/` 节前缀，按节还原。
+    Sectioned,
+    /// 旧版：条目直接是档案内容文件名，整体解压到档案目录。
+    Flat,
+}
+
+/// 以分节布局创建 tar.zst 归档：每个 `(section, dir)` 写入 `<section>/` 前缀下。
+///
+/// 一份备份同时收录激活档案与 `$DSH_HOME/sessions`（会话日志在档案目录之外，
+/// 否则任何备份都不含会话）。目录不存在时跳过该节，排除规则与 `create_archive` 一致。
+pub fn create_archive_sections(
+    sections: &[(&str, &Path)],
+    dest: &Path,
+    include_credentials: bool,
+) -> Result<(), String> {
+    let file = fs::File::create(dest).map_err(|e| format!("BACKUP_ARCHIVE_CREATE: {e}"))?;
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(1);
+    let mut enc =
+        zstd::stream::Encoder::new(file, 0).map_err(|e| format!("BACKUP_ARCHIVE_ENCODER: {e}"))?;
+    enc.multithread(workers)
+        .map_err(|e| format!("BACKUP_ARCHIVE_MULTITHREAD: {e}"))?;
+    let mut archive = tar::Builder::new(enc);
+    for (section, source) in sections {
+        if !source.is_dir() {
+            continue;
+        }
+        let rel = Path::new(section);
+        archive
+            .append_dir(rel, source)
+            .map_err(|e| format!("BACKUP_ARCHIVE_APPEND_DIR: {e}"))?;
+        append_dir_filtered(&mut archive, source, source, rel, include_credentials)?;
+    }
+    archive
+        .finish()
+        .map_err(|e| format!("BACKUP_ARCHIVE_FINISH: {e}"))?;
+    // 必须显式 finish 编码器，否则尾部帧丢失导致文件截断
+    archive
+        .into_inner()
+        .map_err(|e| format!("BACKUP_ARCHIVE_INNER: {e}"))?
+        .finish()
+        .map_err(|e| format!("BACKUP_ARCHIVE_FLUSH: {e}"))?;
+    Ok(())
+}
+
+/// 探测归档布局：只看首条目，不整包解压。
+pub fn detect_layout(archive: &Path) -> Result<ArchiveLayout, String> {
+    let file = fs::File::open(archive).map_err(|e| format!("BACKUP_EXTRACT_OPEN: {e}"))?;
+    let dec =
+        zstd::stream::Decoder::new(file).map_err(|e| format!("BACKUP_EXTRACT_DECODER: {e}"))?;
+    let mut archive = tar::Archive::new(dec);
+    let mut entries = archive
+        .entries()
+        .map_err(|e| format!("BACKUP_EXTRACT_ENTRIES: {e}"))?;
+    let layout = match entries.next() {
+        None => ArchiveLayout::Flat,
+        Some(Ok(entry)) => match entry.path() {
+            Ok(path)
+                if path.starts_with(PROFILE_SECTION) || path.starts_with(SESSIONS_SECTION) =>
+            {
+                ArchiveLayout::Sectioned
+            }
+            _ => ArchiveLayout::Flat,
+        },
+        Some(Err(e)) => return Err(format!("BACKUP_EXTRACT_ENTRY: {e}")),
+    };
+    Ok(layout)
+}
+
+/// 解压分节归档中的某一节到 `dest`（剥离节前缀）。
+///
+/// 归档中不存在该节时返回 `Ok(false)`（例如不含会话的旧分节备份），
+/// 存在并解压完成返回 `Ok(true)`。
+pub fn extract_archive_section(
+    archive: &Path,
+    section: &str,
+    dest: &Path,
+) -> Result<bool, String> {
+    fs::create_dir_all(dest).map_err(|e| format!("BACKUP_EXTRACT_MKDIR: {e}"))?;
+    let file = fs::File::open(archive).map_err(|e| format!("BACKUP_EXTRACT_OPEN: {e}"))?;
+    let dec =
+        zstd::stream::Decoder::new(file).map_err(|e| format!("BACKUP_EXTRACT_DECODER: {e}"))?;
+    let mut archive = tar::Archive::new(dec);
+    extract_tar_entries_inner(&mut archive, dest, Some(section))
+}
+
 /// 从 tar 归档安全解压所有条目到 `dest`（压缩格式无关）。
 ///
 /// 逐个条目：拒绝含 `..` 的路径（防逃逸）、拒绝硬链接、目录直接创建、
 /// 符号链接按 target 创建、普通文件先写临时文件再原子 rename。自定义
 /// 解压（替代 `entry.unpack`）是为了规避 macOS 上的 tar bug。
 fn extract_tar_entries<R: Read>(archive: &mut tar::Archive<R>, dest: &Path) -> Result<(), String> {
+    extract_tar_entries_inner(archive, dest, None).map(|_| ())
+}
+
+/// [`extract_tar_entries`] 的实现：`section` 为 `Some` 时只解压该节并剥离前缀，
+/// 返回归档中是否存在该节。
+fn extract_tar_entries_inner<R: Read>(
+    archive: &mut tar::Archive<R>,
+    dest: &Path,
+    section: Option<&str>,
+) -> Result<bool, String> {
+    let mut matched_section = false;
     // 禁用 ownership 保留：归档里 uid/gid 可能是 root（uid=0），非 root 用户无法 chown
     archive.set_preserve_ownerships(false);
 
@@ -220,9 +325,20 @@ fn extract_tar_entries<R: Read>(archive: &mut tar::Archive<R>, dest: &Path) -> R
             ));
         }
 
-        // 不剥离 profiles/<id>/ 前缀——新格式备份不再含此前缀
-        // 旧格式备份需用户手动处理（先在 /tmp 解压再 rsync）
-        let stripped: std::path::PathBuf = path.clone();
+        // 分节归档只处理目标节，剥离 `profile/`、`sessions/` 节前缀后再落盘
+        let stripped: std::path::PathBuf = match section {
+            Some(prefix) => match path.strip_prefix(prefix) {
+                Ok(rest) if rest.as_os_str().is_empty() => {
+                    // 节根目录本身：目标目录由调用方创建
+                    matched_section = true;
+                    continue;
+                }
+                Ok(rest) => rest.to_path_buf(),
+                Err(_) => continue,
+            },
+            None => path.clone(),
+        };
+        matched_section = true;
 
         let dest_path = dest.join(&stripped);
 
@@ -299,7 +415,7 @@ fn extract_tar_entries<R: Read>(archive: &mut tar::Archive<R>, dest: &Path) -> R
             })?;
         }
     }
-    Ok(())
+    Ok(matched_section)
 }
 
 /// 列出归档中所有条目的相对路径（用于测试校验排除项）。

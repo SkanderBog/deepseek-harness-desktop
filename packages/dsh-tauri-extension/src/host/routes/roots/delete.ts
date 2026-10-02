@@ -1,7 +1,6 @@
 import type { EventHandlerRequest } from 'dsh-tauri'
 import type { ActionResult, ExtensionRouteDeps, RootRemoveBody } from '../index.types'
 import { defineEventHandler, dshRouteDepsOf, readBody } from 'dsh-tauri'
-import { rmtree } from '../../service/rmtree'
 import { skills } from '../../service/skills'
 
 export default defineEventHandler<EventHandlerRequest, Promise<ActionResult | { error: string }>>(async (event) => {
@@ -18,8 +17,6 @@ export default defineEventHandler<EventHandlerRequest, Promise<ActionResult | { 
       return { error: 'repository not found' }
     }
     await dshRouteDepsOf<ExtensionRouteDeps>(event)!.remountProvider()
-    if (removed.materialDir !== undefined)
-      rmtree.remove(removed.materialDir)
     return { ok: true }
   }
   catch (error) {

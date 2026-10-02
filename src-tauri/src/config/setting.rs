@@ -32,10 +32,6 @@ pub struct Setting {
     /// 内容有变更 → 重新进入预设引导。`None` = 老用户升级（无基线）→ 弹一次建立基线。
     #[serde(default)]
     pub preset_hash: Option<String>,
-    /// 旧版 AppData `data/dsh` → 官方 `$DSH_HOME`（~/.dsh）数据迁移是否已完成。
-    /// 幂等标记：迁移成功并删除旧目录后置位，避免重复合并。
-    #[serde(default)]
-    pub dsh_home_migrated: bool,
     /// 当前使用的档案 id（`$DSH_HOME/profiles/<id>`，默认 web）。
     /// 桌面端启动服务与插件管理都以它为准（见 service::profile）。
     /// 老用户 store 里可能仍是旧引导档案名 `desktop`：启动迁移
@@ -44,7 +40,7 @@ pub struct Setting {
     pub active_profile: String,
     /// 首装档案引导是否已完成：桌面端首次安装时自动新建引导档案（`tauri`）并
     /// 切换为当前档案（见 service::profile::migrate_desktop_profile_name），成功
-    /// 后置位，之后启动不再重做（幂等标记，语义同 dsh_home_migrated）。
+    /// 后置位，之后启动不再重做（一次性幂等标记）。
     #[serde(default)]
     pub desktop_profile_ready: bool,
     /// 活动核心的显式选择：`Some("local")` = 用户 CLI 安装的本地核心，
@@ -190,7 +186,6 @@ impl Default for Setting {
             cli_link_enabled: default_cli_link_enabled(),
             preinstall_done: false,
             preset_hash: None,
-            dsh_home_migrated: false,
             active_profile: default_active_profile(),
             desktop_profile_ready: false,
             active_core: None,
@@ -243,9 +238,6 @@ fn resolve_store_dat_file(e2e: bool, debug: bool) -> &'static str {
 /// 不互读。store 靠文件名区分 dev，目录不带 `dev/` 一层，与日志的做法不同。
 /// 文件缺失、JSON 非法、键缺失一律按关闭处理：此处早于 `logger::init()`，
 /// 无处告警，静默回落到默认行为比中断启动合适。
-///
-/// `migrate_app_data_dir` 在 builder 的 setup 阶段才执行，晚于这里。从旧标识符升级
-/// 上来的用户，升级后的首次启动读不到设置，该次不强制，迁移完成后下次启动恢复。
 pub fn force_xwayland_setting() -> bool {
     crate::logger::identifier_dir()
         .map(|dir| dir.join(store_dat_file_name()))
@@ -556,7 +548,6 @@ mod tests {
                 "dsh_pkg_commit": "saved-core",
                 "dsh_pkg_tag": "saved-release",
                 "preinstall_done": true,
-                "dsh_home_migrated": true,
                 "desktop_profile_ready": true,
                 "cli_link_enabled": false,
                 "harness_max_heap_mb": 2048,

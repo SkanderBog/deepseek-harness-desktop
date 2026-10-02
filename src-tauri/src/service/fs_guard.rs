@@ -68,16 +68,16 @@ pub fn ensure_within(child: &Path, root: &Path) -> Result<PathBuf, String> {
 pub fn safe_remove_target(root: &Path, id: &str) -> Result<PathBuf, String> {
     validate_id(id)?;
     let dir = root.join(id);
-    if dir == root {
-        return Err("REMOVE_ROOT_REJECTED: refusing to remove the root directory".to_string());
-    }
-    // 目标尚不存在：无需解析，直接拒绝（调用方 mismatch 时也不该能删）
     if !dir.exists() {
         return Err("TARGET_NOT_FOUND: target directory does not exist".to_string());
     }
-    // 符号链接：canonicalize 会把链接解析到真实目标——真实目标若仍位于根目录则
-    // 允许（例如 profiles 下到共享目录的链接），否则拒绝；杜绝链接跳走删除。
-    ensure_within(&dir, root)
+    let target = ensure_within(&dir, root)?;
+    let root_real = dunce::canonicalize(root).map_err(|e| format!("ROOT_RESOLVE_FAILED: {e}"))?;
+    // issue #848：链接别名可绕过词法相等检查，删除前必须拒绝真实根目录。
+    if target == root_real {
+        return Err("REMOVE_ROOT_REJECTED: refusing to remove the root directory".to_string());
+    }
+    Ok(target)
 }
 
 /// 便捷封装：校验 ID 并组装根目录下的目标路径（不检查存在性）。
@@ -140,6 +140,30 @@ mod tests {
             assert!(safe_remove_target(&root, "escape-link").is_err());
         }
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn safe_remove_rejects_link_to_root() {
+        let dir = std::env::temp_dir().join(format!("dsh-fsguard-root-{}", std::process::id()));
+        let root = dir.join("profiles");
+        fs::create_dir_all(&root).unwrap();
+        let link = root.join("alias");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let status = std::process::Command::new("cmd")
+                .arg("/C")
+                .raw_arg(format!("mklink /J \"{}\" \"{}\"", link.display(), root.display()))
+                .creation_flags(0x08000000)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+        let result = safe_remove_target(&root, "alias");
+        fs::remove_dir_all(&dir).unwrap();
+        assert!(result.unwrap_err().starts_with("REMOVE_ROOT_REJECTED:"));
     }
 
     #[test]

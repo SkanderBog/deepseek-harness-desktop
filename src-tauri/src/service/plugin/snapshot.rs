@@ -495,19 +495,64 @@ pub fn delete_best_effort(app_handle: &AppHandle, id: &str) {
 /// 解析还原目标：已安装时解析真实目录（有效链接 → `.pnpm/...` 真实目录），
 /// 断裂链接移除后按真实目录重建；未安装时以 `node_modules/<id>` 为落点。
 fn resolve_restore_target(node_modules: &Path, id: &str) -> Result<PathBuf, String> {
-    let entry = node_modules.join(id);
-    if let Ok(meta) = fs::symlink_metadata(&entry) {
-        if meta.file_type().is_symlink() {
-            if let Ok(real) = dunce::canonicalize(&entry) {
-                return Ok(real);
-            }
-            // 断裂链接：目标不可达，移除链接后按真实目录重建（其路径即 node_modules/<id>）
-            fs::remove_file(&entry).map_err(|e| format!("SNAPSHOT_REMOVE_BROKEN_LINK: {e}"))?;
-            return Ok(entry);
-        }
-        return Ok(entry);
+    if id != id.trim() || !is_actionable_plugin_ref(id) {
+        return Err(format!("SNAPSHOT_INVALID_ID: {id}"));
     }
-    Ok(entry)
+    let profile = node_modules
+        .parent()
+        .ok_or_else(|| "SNAPSHOT_NO_PARENT: node_modules 缺少父目录".to_string())?;
+    let profile_real = dunce::canonicalize(profile)
+        .map_err(|e| format!("SNAPSHOT_RESOLVE_PROFILE: {e}"))?;
+    match fs::symlink_metadata(node_modules) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(node_modules).map_err(|e| format!("SNAPSHOT_MKDIR_MODULES: {e}"))?;
+        }
+        Err(e) => return Err(format!("SNAPSHOT_RESOLVE_MODULES: {e}")),
+    }
+    let root = fs_guard::ensure_within(node_modules, &profile_real)
+        .map_err(|e| format!("SNAPSHOT_TARGET_ESCAPE: {e}"))?;
+    if root == profile_real {
+        return Err("SNAPSHOT_TARGET_ESCAPE: node_modules 指向档案根目录".to_string());
+    }
+    let entry = node_modules.join(id);
+    let parent = entry.parent().ok_or_else(|| "SNAPSHOT_NO_PARENT: 插件缺少父目录".to_string())?;
+    if fs::symlink_metadata(parent).is_ok() {
+        fs_guard::ensure_within(parent, &root)
+            .map_err(|e| format!("SNAPSHOT_TARGET_ESCAPE: {e}"))?;
+    }
+    match fs::symlink_metadata(&entry) {
+        Ok(meta) => match dunce::canonicalize(&entry) {
+            Ok(real) => {
+                // issue #848：还原会删除旧目标，仅允许 node_modules 内的严格子目录。
+                if real == root || !real.starts_with(&root) {
+                    return Err(format!("SNAPSHOT_TARGET_ESCAPE: {}", real.display()));
+                }
+                if !real.is_dir() {
+                    return Err(format!("SNAPSHOT_NOT_DIR: {}", real.display()));
+                }
+                Ok(real)
+            }
+            Err(e) if meta.file_type().is_symlink() && e.kind() == std::io::ErrorKind::NotFound => {
+                #[cfg(windows)]
+                let removal = {
+                    use std::os::windows::fs::FileTypeExt;
+                    if meta.file_type().is_symlink_dir() {
+                        fs::remove_dir(&entry)
+                    } else {
+                        fs::remove_file(&entry)
+                    }
+                };
+                #[cfg(not(windows))]
+                let removal = fs::remove_file(&entry);
+                removal.map_err(|e| format!("SNAPSHOT_REMOVE_BROKEN_LINK: {e}"))?;
+                Ok(entry)
+            }
+            Err(e) => Err(format!("SNAPSHOT_RESOLVE_TARGET: {e}")),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(entry),
+        Err(e) => Err(format!("SNAPSHOT_RESOLVE_TARGET: {e}")),
+    }
 }
 
 /// 把插件引用写回 profile 清单（还原被移除的插件时使用）：`dependencies[id]` 与
@@ -840,6 +885,67 @@ mod tests {
         let t2 = resolve_restore_target(&dir.join("node_modules"), "pkg-b").unwrap();
         assert_eq!(t2, dir.join("node_modules").join("pkg-b"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn link_directory(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let status = std::process::Command::new("cmd")
+                .arg("/C")
+                .raw_arg(format!("mklink /J \"{}\" \"{}\"", link.display(), target.display()))
+                .creation_flags(0x08000000)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+    }
+
+    #[test]
+    fn restore_target_rejects_links_to_home_and_node_modules_root() {
+        let dir = std::env::temp_dir().join(format!("dsh-snap-escape-{}", std::process::id()));
+        fs::create_dir_all(dir.join("profiles/web/node_modules")).unwrap();
+        fs::create_dir_all(dir.join("sessions")).unwrap();
+        fs::write(dir.join("sessions/session.jsonl"), "turn 484").unwrap();
+        let node_modules = dir.join("profiles/web/node_modules");
+        link_directory(&dir, &node_modules.join("home-alias"));
+        link_directory(&node_modules, &node_modules.join("root-alias"));
+        let home_result = resolve_restore_target(&node_modules, "home-alias");
+        let root_result = resolve_restore_target(&node_modules, "root-alias");
+        assert_eq!(fs::read_to_string(dir.join("sessions/session.jsonl")).unwrap(), "turn 484");
+        fs::remove_dir_all(&dir).unwrap();
+        assert!(home_result.unwrap_err().starts_with("SNAPSHOT_TARGET_ESCAPE:"));
+        assert!(root_result.unwrap_err().starts_with("SNAPSHOT_TARGET_ESCAPE:"));
+    }
+
+    #[test]
+    fn restore_target_rejects_scoped_parent_link_escape() {
+        let dir = std::env::temp_dir().join(format!("dsh-snap-scope-{}", std::process::id()));
+        let node_modules = dir.join("profile/node_modules");
+        let outside = dir.join("outside");
+        fs::create_dir_all(&node_modules).unwrap();
+        fs::create_dir_all(outside.join("pkg")).unwrap();
+        link_directory(&outside, &node_modules.join("@scope"));
+        let existing = resolve_restore_target(&node_modules, "@scope/pkg");
+        let missing = resolve_restore_target(&node_modules, "@scope/missing");
+        fs::remove_dir_all(&dir).unwrap();
+        assert!(existing.unwrap_err().starts_with("SNAPSHOT_TARGET_ESCAPE:"));
+        assert!(missing.unwrap_err().starts_with("SNAPSHOT_TARGET_ESCAPE:"));
+    }
+
+    #[test]
+    fn restore_target_accepts_pnpm_link_within_node_modules() {
+        let dir = std::env::temp_dir().join(format!("dsh-snap-pnpm-{}", std::process::id()));
+        let node_modules = dir.join("node_modules");
+        let package = node_modules.join(".pnpm/pkg@1.0.0/node_modules/pkg");
+        fs::create_dir_all(&package).unwrap();
+        link_directory(&package, &node_modules.join("pkg"));
+        let expected = dunce::canonicalize(&package).unwrap();
+        let result = resolve_restore_target(&node_modules, "pkg");
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(result.unwrap(), expected);
     }
 
     #[test]

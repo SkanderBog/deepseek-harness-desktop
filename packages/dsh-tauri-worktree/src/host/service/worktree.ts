@@ -6,7 +6,7 @@ import type {
   WorktreeParams,
   WorktreeProcessController,
 } from '../types'
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import process from 'node:process'
 import { defineService, DSH_HOME } from 'dsh-tauri'
 import { compact, filter, find, get, isEmpty, map, reject, some } from 'lodash-es'
@@ -528,9 +528,9 @@ function canonicalPath(p: string): string {
   }
 }
 
-function samePath(a: string, b: string): boolean {
-  const left = canonicalPath(a)
-  const right = canonicalPath(b)
+function samePath(a: string, b: string, canonical = true): boolean {
+  const left = canonical ? canonicalPath(a) : resolve(a)
+  const right = canonical ? canonicalPath(b) : resolve(b)
   return process.platform === 'win32'
     ? left.replaceAll('/', '\\').toLowerCase() === right.replaceAll('/', '\\').toLowerCase()
     : left === right
@@ -572,6 +572,9 @@ async function removeWorktreeOnDisk(
   linkDirectories: readonly string[] = [],
   signal?: AbortSignal,
 ): Promise<OperationResult> {
+  if (!isSafeRemovalTarget(path, hash, dirname))
+    return { ok: false, error: `拒绝删除非法工作树路径：${path}` }
+
   await stopWorktreeProcesses(sessionId, path)
 
   if (linkDirectories.length > 0)
@@ -591,6 +594,44 @@ async function removeWorktreeOnDisk(
     return { ok: false, error: failure }
 
   return pruneWorktreeAdmin(root, signal)
+}
+
+function isSafeRemovalTarget(path: string, hash: string, dirname: string): boolean {
+  if (typeof path !== 'string' || !path || !isSafeKeySegment(hash) || !isSafeKeySegment(dirname))
+    return false
+  return samePath(path, worktreePath(hash, dirname), false)
+    && isSafeOwnedDirectory(WORKTREES_DIR, [hash, dirname])
+    && isSafeOwnedDirectory(TRASH_DIR, [hash, dirname])
+    && samePath(path, worktreePath(hash, dirname))
+}
+
+function isSafeOwnedDirectory(directory: typeof WORKTREES_DIR | typeof TRASH_DIR, segments: readonly string[]): boolean {
+  if (!segments.every(isSafeKeySegment))
+    return false
+  try {
+    let current = DSH_HOME
+    let expected = canonicalPath(DSH_HOME)
+    // #848：记录与回收站路径均不可信，缺失路径也逐级拒绝链接，避免删到根目录或外部目录。
+    for (const segment of [directory, ...segments]) {
+      current = join(current, segment)
+      expected = join(expected, segment)
+      try {
+        const stats = lstatSync(current)
+        if (stats.isSymbolicLink() || !stats.isDirectory())
+          return false
+      }
+      catch (error) {
+        if (get(error, 'code') !== 'ENOENT')
+          return false
+      }
+      if (!samePath(canonicalPath(current), expected, false))
+        return false
+    }
+    return true
+  }
+  catch {
+    return false
+  }
 }
 
 function removalLinkDirectories(binding: Binding | null, configured?: readonly string[]): string[] {
@@ -678,8 +719,9 @@ async function removalTarget(sessionId: string, key: string): Promise<RemovalTar
 }
 
 /** key 的每一段都必须是单一目录名：不接受空串、`.`、`..` 与任何路径分隔符。 */
-function isSafeKeySegment(segment: string): boolean {
-  return Boolean(segment) && segment !== '.' && segment !== '..' && !segment.includes('/') && !segment.includes('\\')
+function isSafeKeySegment(segment: unknown): segment is string {
+  return typeof segment === 'string' && Boolean(segment) && segment !== '.' && segment !== '..' && !/[/\\\0]/.test(segment)
+    && (process.platform !== 'win32' || !/[:. ]$|:/.test(segment))
 }
 
 function projectFromWorktree(path: string): string {
@@ -720,7 +762,9 @@ async function worktreeOccupant(root: string, branch: string, worktreePath: stri
 async function sweepAbandoned(): Promise<number> {
   let swept = 0
   const trashRoot = join(DSH_HOME, TRASH_DIR)
-  for (const hash of listDirectoryNames(trashRoot)) {
+  for (const hash of isSafeOwnedDirectory(TRASH_DIR, []) ? listDirectoryNames(trashRoot) : []) {
+    if (!isSafeOwnedDirectory(TRASH_DIR, [hash]))
+      continue
     const container = join(trashRoot, hash)
     await removeDirectoryTree(container)
     if (!existsSync(container))
@@ -728,12 +772,14 @@ async function sweepAbandoned(): Promise<number> {
   }
 
   const worktreesRoot = join(DSH_HOME, WORKTREES_DIR)
-  for (const hash of listDirectoryNames(worktreesRoot)) {
+  for (const hash of isSafeOwnedDirectory(WORKTREES_DIR, []) ? listDirectoryNames(worktreesRoot) : []) {
+    if (!isSafeOwnedDirectory(WORKTREES_DIR, [hash]))
+      continue
     const container = join(worktreesRoot, hash)
     const staleContainer = isSweepable(container)
     for (const name of listDirectoryNames(container)) {
       const path = join(container, name)
-      if (isSweepable(path))
+      if (isSafeOwnedDirectory(WORKTREES_DIR, [hash, name]) && isSweepable(path))
         await removeEmptyDirectories([path])
       if (!existsSync(path))
         swept += 1
@@ -761,7 +807,7 @@ function isSweepable(path: string): boolean {
 async function pruneVanishedBindings(): Promise<number> {
   let pruned = 0
   for (const binding of ledger.list()) {
-    if (!binding.sessionId || !binding.hash || !binding.dirname)
+    if (!binding.sessionId || !isSafeRemovalTarget(binding.worktreePath, binding.hash, binding.dirname))
       continue
     if (existsSync(binding.worktreePath))
       continue

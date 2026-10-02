@@ -146,10 +146,9 @@ fn should_apply_wayland_egl_workaround(session_type: &str, appimage_present: boo
 ///
 /// 只认裸 `x11`：`wayland` / `x11,wayland` 这类优先级列表只可能来自用户或启动脚本，不覆盖。
 ///
-/// `force_xwayland` 的解析早于 `migrate_app_data_dir`（见 `config::force_xwayland_setting`）：
-/// 旧标识符升级来的用户首次启动读不到设置文件。但该设置 2026-09-23 才引入（38d7f01b），
-/// 标识符 2026-09-21 已改短（67f058c9），旧 store 里不可能存在 `force_xwayland`，
-/// 因此这条读取盲区不会让本判定丢掉任何已持久化的用户意图。
+/// `force_xwayland` 2026-09-23 才引入（38d7f01b），晚于标识符改短（67f058c9，
+/// 2026-09-21）：可能含该键的 store 只存在于当前标识符目录下，读取不会漏掉
+/// 任何已持久化的用户意图。
 fn should_restore_wayland_backend(
     appimage_present: bool,
     wayland_display: &str,

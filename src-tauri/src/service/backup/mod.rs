@@ -150,36 +150,51 @@ fn now_timestamp() -> String {
     )
 }
 
-/// 生成碰撞安全的归档路径：若同名文件已存在，追加 `-2`、`-3`… 直到空闲。
-/// 调用方需持有 `BACKUP_LOCK` 以保证检查-创建的原子性。
-fn collision_safe_path(backup_dir: &Path, profile: &str, timestamp: &str) -> PathBuf {
-    let mut candidate = backup_dir.join(archive_filename(profile, timestamp));
+/// 生成碰撞安全的时间戳：同名归档已存在时追加 `-2`、`-3`… 直到空闲。
+///
+/// 时间戳同时是文件名主体、清单键和 IPC 键，三者必须一致；早期实现只给文件名
+/// 加后缀、`BackupInfo.timestamp` 保持原值，导致还原 / 删除按时间戳拼出的文件名
+/// 指向另一份备份。
+fn collision_safe_timestamp(backup_dir: &Path, profile: &str, timestamp: &str) -> String {
+    let mut candidate = timestamp.to_string();
     let mut counter = 1;
-    while candidate.exists() {
+    while backup_dir
+        .join(archive_filename(profile, &candidate))
+        .exists()
+    {
         counter += 1;
-        let ts = format!("{timestamp}-{counter}");
-        candidate = backup_dir.join(archive_filename(profile, &ts));
+        candidate = format!("{timestamp}-{counter}");
     }
     candidate
 }
 
 /// 创建备份。
 ///
-/// 只备份当前激活的 profile（不是整个 $DSH_HOME），
-/// 输出到 `$DSH_HOME/.backups/{profile}-{yyyymmddhhmmss}.tar.zst`，更新清单，并按保留份数裁剪。
+/// 归档当前激活的 profile 目录与 `$DSH_HOME/sessions`（会话日志位于 profile 之外，
+/// 单独备份档案目录会漏掉全部会话），输出到
+/// `$DSH_HOME/.backups/{profile}-{yyyymmddhhmmss}.tar.zst`，更新清单，并按保留份数裁剪。
 pub fn create_backup(
     app_handle: &AppHandle,
     options: BackupOptions,
 ) -> Result<BackupInfo, String> {
     let backup_dir = get_backup_dir(app_handle);
-    let timestamp = now_timestamp();
+    let home = config::get_dsh_data_path(app_handle);
     // 只备份当前激活的 profile 目录（其他 profile 不参与备份）
     let active = crate::service::profile::active_profile(app_handle);
     let source = crate::service::profile::profile_dir_of(app_handle, &active);
-    // 碰撞安全：同名文件已存在时追加 -2、-3…（锁内检查-创建保证原子性）
-    let dest = collision_safe_path(&backup_dir, &active, &timestamp);
+    let sessions = home.join("sessions");
+    // 碰撞安全：同名文件已存在时追加 -2、-3…
+    let timestamp = collision_safe_timestamp(&backup_dir, &active, &now_timestamp());
+    let dest = backup_dir.join(archive_filename(&active, &timestamp));
 
-    archive::create_archive(&source, &dest, options.include_credentials)?;
+    archive::create_archive_sections(
+        &[
+            (archive::PROFILE_SECTION, source.as_path()),
+            (archive::SESSIONS_SECTION, sessions.as_path()),
+        ],
+        &dest,
+        options.include_credentials,
+    )?;
 
     let size = fs::metadata(&dest)
         .map(|m| m.len())
@@ -260,11 +275,11 @@ pub fn delete_backup(app_handle: &AppHandle, timestamp: &str) -> Result<(), Stri
 
 /// 还原备份。
 ///
-/// `mode` 为 `Overwrite` 时覆盖当前激活 profile 目录（调用方应先停止服务）；
-/// `AsNew` 时创建新档案目录并解压到其中。
+/// `mode` 为 `Overwrite` 时覆盖当前激活 profile 目录，并把备份中的会话日志合并回
+/// `$DSH_HOME/sessions`（调用方应先停止服务）；`AsNew` 时创建新档案目录并解压到其中，
+/// 不改动共享的会话目录。
 ///
-/// 备份现在只包含单个 profile 的内容（无 profile 目录前缀），
-/// 所以还原目标就是 profile 目录本身，不是 `$DSH_HOME`。
+/// 分节归档按节还原（`profile/`、`sessions/`）；旧版扁平归档整体解压到档案目录。
 ///
 /// `timestamp` 经过 `fs_guard::validate_id` 校验。
 pub fn restore_backup(
@@ -274,6 +289,7 @@ pub fn restore_backup(
 ) -> Result<(), String> {
     crate::service::fs_guard::validate_id(timestamp)?;
     let backup_dir = get_backup_dir(app_handle);
+    let home = config::get_dsh_data_path(app_handle);
     let active = crate::service::profile::active_profile(app_handle);
     let filename = archive_filename(&active, timestamp);
     let archive_path = backup_dir.join(&filename);
@@ -282,9 +298,19 @@ pub fn restore_backup(
             "BACKUP_NOT_FOUND: backup {filename} does not exist"
         ));
     }
+    let layout = archive::detect_layout(&archive_path)?;
 
     match mode {
         RestoreMode::Overwrite => {
+            // 会话是共享数据，先合并还原（只增不改旧档案）：失败时直接返回，
+            // 不会在解压失败后留下已被替换的 profile
+            if layout == archive::ArchiveLayout::Sectioned {
+                archive::extract_archive_section(
+                    &archive_path,
+                    archive::SESSIONS_SECTION,
+                    &home.join("sessions"),
+                )?;
+            }
             // 重命名旧 profile → 备份目录（避开文件锁），解压到新目录，
             // 成功后删除旧备份；失败则回滚（rename 旧目录回来）
             let dest = crate::service::profile::profile_dir_of(app_handle, &active);
@@ -305,7 +331,15 @@ pub fn restore_backup(
                 format!("BACKUP_RESTORE_MKDIR_NEW: {e} (dest={})", dest.display())
             })?;
             // 解压到新目录
-            let extract_result = archive::extract_archive(&archive_path, &dest);
+            let extract_result = match layout {
+                archive::ArchiveLayout::Sectioned => archive::extract_archive_section(
+                    &archive_path,
+                    archive::PROFILE_SECTION,
+                    &dest,
+                )
+                .map(|_| ()),
+                archive::ArchiveLayout::Flat => archive::extract_archive(&archive_path, &dest),
+            };
             match extract_result {
                 Ok(()) => {
                     // 成功：删除旧备份
@@ -321,12 +355,28 @@ pub fn restore_backup(
         }
         RestoreMode::AsNew => {
             // 创建新档案目录：$DSH_HOME/profiles/<profile>-<timestamp>
-            let profiles_root = config::get_dsh_data_path(app_handle).join("profiles");
+            let profiles_root = home.join("profiles");
             fs::create_dir_all(&profiles_root).map_err(|e| {
                 format!("BACKUP_RESTORE_MKDIR_PROFILES: {e}")
             })?;
             let new_dir = profiles_root.join(format!("{active}-{timestamp}"));
-            archive::extract_archive(&archive_path, &new_dir)?;
+            // 目标已存在时不合并解压，避免把备份内容混进既有档案
+            if new_dir.exists() {
+                return Err(format!(
+                    "BACKUP_RESTORE_TARGET_EXISTS: {}",
+                    new_dir.display()
+                ));
+            }
+            match layout {
+                archive::ArchiveLayout::Sectioned => {
+                    archive::extract_archive_section(
+                        &archive_path,
+                        archive::PROFILE_SECTION,
+                        &new_dir,
+                    )?;
+                }
+                archive::ArchiveLayout::Flat => archive::extract_archive(&archive_path, &new_dir)?,
+            }
         }
     }
     Ok(())
@@ -416,83 +466,136 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// 直接测试用户实际备份文件的完整还原（绕过 GUI）
+    /// 碰撞安全的时间戳必须同时是文件名主体：还原 / 删除按时间戳拼文件名，
+    /// 若信息里的时间戳与文件名不一致就会指向另一份备份。
     #[test]
-    fn restore_real_backup_to_temp() {
-        let backup = std::path::Path::new(
-            "/Users/coderstory/.dsh/.backups/2026-08-31T15-04-18.tar.zst"
+    fn collision_safe_timestamp_matches_archive_filename() {
+        let dir = std::env::temp_dir().join(format!("dsh-backup-collision-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let base = "2026-10-02T15-24-08";
+        let first = collision_safe_timestamp(&dir, "web", base);
+        assert_eq!(first, base, "无同名文件时应保持原时间戳");
+        fs::write(dir.join(archive_filename("web", &first)), b"first").unwrap();
+
+        let second = collision_safe_timestamp(&dir, "web", base);
+        assert_ne!(second, first, "同名归档已存在时必须换一个时间戳");
+        assert_eq!(second, format!("{base}-2"));
+        assert!(
+            !dir.join(archive_filename("web", &second)).exists(),
+            "换出的时间戳必须是一个空闲文件名"
         );
-        if !backup.exists() {
-            eprintln!("[skip] 备份文件不存在: {}", backup.display());
-            return;
-        }
+        fs::write(dir.join(archive_filename("web", &second)), b"second").unwrap();
+        assert_eq!(
+            collision_safe_timestamp(&dir, "web", base),
+            format!("{base}-3"),
+            "再次碰撞应继续递增"
+        );
 
-        // 还原到临时目录
-        let dest = std::env::temp_dir().join("dsh-restore-real-test");
-        let _ = fs::remove_dir_all(&dest);
-        fs::create_dir_all(&dest).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+    }
 
-        let backup_size = fs::metadata(backup).unwrap().len();
+    /// 回归 #848：备份必须收录 `$DSH_HOME/sessions`，并按节还原到各自的目标目录。
+    #[test]
+    fn archive_sections_roundtrip_includes_sessions() {
+        let root = std::env::temp_dir().join(format!("dsh-backup-sections-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let profile = root.join("profiles").join("web");
+        let sessions = root.join("sessions");
+        let session_dir = sessions.join("--ws--").join("session-1");
+        fs::create_dir_all(&profile).unwrap();
+        fs::create_dir_all(&session_dir).unwrap();
+        fs::write(profile.join("cordis.patch.yml"), b"plugins: []").unwrap();
+        fs::write(session_dir.join("session.v4.jsonl.zstd"), b"turn 484").unwrap();
 
-        // 调用实际的 extract_archive
-        archive::extract_archive(backup, &dest).expect("extract_archive 失败");
+        let dest = root.join("web-20261002T152408.tar.zst");
+        archive::create_archive_sections(
+            &[
+                (archive::PROFILE_SECTION, profile.as_path()),
+                (archive::SESSIONS_SECTION, sessions.as_path()),
+            ],
+            &dest,
+            false,
+        )
+        .unwrap();
 
-        // 递归统计还原后的文件数和大小
-        fn walk(p: &std::path::Path, files: &mut u64, dirs: &mut u64, links: &mut u64, size: &mut u64) {
-            let Ok(rd) = fs::read_dir(p) else { return };
-            for e in rd.flatten() {
-                let Ok(meta) = fs::symlink_metadata(e.path()) else { continue };
-                if meta.is_dir() {
-                    *dirs += 1;
-                    walk(&e.path(), files, dirs, links, size);
-                }
-                else if meta.file_type().is_symlink() {
-                    *links += 1;
-                }
-                else if meta.is_file() {
-                    *files += 1;
-                    *size += meta.len();
-                }
-            }
-        }
-        let mut files = 0u64;
-        let mut dirs = 0u64;
-        let mut links = 0u64;
-        let mut total_size = 0u64;
-        walk(&dest, &mut files, &mut dirs, &mut links, &mut total_size);
+        assert_eq!(
+            archive::detect_layout(&dest).unwrap(),
+            archive::ArchiveLayout::Sectioned,
+            "分节归档必须被识别为 Sectioned，否则会整体解压到档案目录"
+        );
 
-        println!("\n========== 完整还原报告 ==========");
-        println!("备份文件: {} ({} bytes)", backup.display(), backup_size);
-        println!("还原目标: {}", dest.display());
-        println!("还原统计:");
-        println!("  文件:     {}", files);
-        println!("  目录:     {}", dirs);
-        println!("  符号链接: {}", links);
-        println!("  总大小:   {} bytes ({:.2} MB)", total_size, total_size as f64 / 1_048_576.0);
+        let profile_restore = root.join("restore-profile");
+        let sessions_restore = root.join("restore-sessions");
+        let found =
+            archive::extract_archive_section(&dest, archive::PROFILE_SECTION, &profile_restore)
+                .unwrap();
+        assert!(found, "档案节应存在");
+        assert_eq!(
+            fs::read_to_string(profile_restore.join("cordis.patch.yml")).unwrap(),
+            "plugins: []"
+        );
 
-        // 抽样验证关键文件
-        for name in ["cordis.patch.yml", "package.json", "pnpm-workspace.yaml", ".npmrc"] {
-            let path = dest.join(name);
-            if path.exists() {
-                println!("  ✓ {} ({} bytes)", name, fs::metadata(&path).unwrap().len());
-            }
-            else {
-                println!("  ✗ {} 缺失", name);
-            }
-        }
+        let found =
+            archive::extract_archive_section(&dest, archive::SESSIONS_SECTION, &sessions_restore)
+                .unwrap();
+        assert!(found, "会话节应存在");
+        assert_eq!(
+            fs::read_to_string(
+                sessions_restore
+                    .join("--ws--")
+                    .join("session-1")
+                    .join("session.v4.jsonl.zstd")
+            )
+            .unwrap(),
+            "turn 484",
+            "会话日志必须按原目录结构还原"
+        );
+        assert!(
+            !sessions_restore.join("cordis.patch.yml").exists(),
+            "会话节不能包含档案内容"
+        );
+        assert!(
+            !profile_restore.join("session.v4.jsonl.zstd").exists(),
+            "档案节不能包含会话内容"
+        );
 
-        let nm = dest.join("node_modules");
-        if nm.is_dir() {
-            let mut nm_n = 0u64;
-            walk(&nm, &mut nm_n, &mut 0, &mut 0, &mut 0);
-            println!("  ✓ node_modules ({} 文件/目录)", nm_n);
-        }
+        // 缺失的节必须如实报告，调用方据此跳过（旧分节备份可能不含会话）
+        let missing = root.join("restore-missing");
+        assert!(
+            !archive::extract_archive_section(&dest, "not-a-section", &missing).unwrap(),
+            "不存在的节应返回 false"
+        );
 
-        println!("\n压缩比: {:.2}x ({} → {} bytes)",
-            total_size as f64 / backup_size as f64,
-            total_size, backup_size);
+        let _ = fs::remove_dir_all(&root);
+    }
 
-        let _ = fs::remove_dir_all(&dest);
+    /// 旧版扁平归档（只含档案内容、无节前缀）必须仍被识别为 Flat 并可整体还原。
+    #[test]
+    fn legacy_flat_archive_still_restores() {
+        let root = std::env::temp_dir().join(format!("dsh-backup-flat-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let source = root.join("source");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("package.json"), b"{\"name\":\"web\"}").unwrap();
+
+        let dest = root.join("flat.tar.zst");
+        archive::create_archive(&source, &dest, false).unwrap();
+        assert_eq!(
+            archive::detect_layout(&dest).unwrap(),
+            archive::ArchiveLayout::Flat,
+            "无节前缀的旧归档必须识别为 Flat"
+        );
+
+        let restore = root.join("restore");
+        archive::extract_archive(&dest, &restore).unwrap();
+        assert_eq!(
+            fs::read_to_string(restore.join("package.json")).unwrap(),
+            "{\"name\":\"web\"}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
 

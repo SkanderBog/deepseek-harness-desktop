@@ -31,13 +31,10 @@ environment variable when set, otherwise `~/.dsh`
 `npm i -g @deepseek-ai/dsh` install share the same profiles, sessions, settings
 and credentials — no data switching needed.
 
-On the first launch of a build that introduced this change, the app
-**migrates** any existing legacy data from `%APPDATA%/.../data/dsh` into the
-new `$DSH_HOME` (recursive merge, newer mtime wins; `node_modules` trees are
-skipped — they are regenerated on boot). The legacy directory is removed after
-a successful migration, and the one-shot migration is recorded in `.store.dat`
-(`dsh_home_migrated`). Migration failures are non-fatal: legacy data stays in
-place and the migration retries on the next launch.
+The app no longer migrates data out of those legacy locations: it starts from
+the current `$DSH_HOME` directly. Any data still sitting in an old
+`%APPDATA%/.../data/dsh` (or under the pre-rename app-data identifier) is
+neither read nor deleted.
 
 ## Resource manifest — `manifest.jsonc`
 
