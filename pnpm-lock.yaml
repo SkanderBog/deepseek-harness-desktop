@@ -417,7 +417,7 @@ catalogs:
 
 patchedDependencies:
   '@tauri-apps/plugin-http@2.6.0': 6bbec7f8a8e969a867d222e8b2b542d2dbd639ffbaf2184a4df47f330b6ad431
-  bumpp: 362685edd02f1561e78b740e2b4c1ec2bd8e266eb2e26a64055ae305cac1c3ac
+  bumpp: ea42dd1273f65a02e22aa9c25e39361c8dac2320ed2fbff9c58d2bd3f46a40a3
 
 importers:
 

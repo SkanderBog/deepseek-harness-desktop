@@ -1,35 +1,22 @@
-name: Android Native Test Build
+name: Build Android Test
 
-# 校验构建：PR 与手动触发时验证 native 工程能真的编译出 APK。
+# 仅手动触发：用于验证 native 工程能否真的编译出 debug APK。
 # 只出 debug APK（Android Gradle Plugin 自带 debug keystore），不依赖任何签名
-# secret，因此 fork PR 也能拿到真实编译结果；正式签名的产物见 build-android.yml，
-# 随桌面端 release 发布的资产见 release-native.yml。
+# secret；正式签名的产物见 build-android.yml，随桌面端 release 发布的资产见
+# release-native.yml。
 #
 # 原生兼容性以 prebuild + gradle 编译为准：本仓库根 package.json 的 react / react-dom /
 # typescript 由共享 catalog 固定，与 expo 57 期望版本不一致，`expo install --check`
 # 在这里必然以 1 退出，所以不把它当门禁。
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - src-native/**
-      - assets/native/**
-      - app.json
-      - app.config.js
-      - metro.config.js
-      - tsconfig.native.json
-      - vitest.native.config.ts
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - .github/workflows/build-android-test.yml
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# 同一分支的手动构建排队执行，避免并发挤占 runner。
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: build-android-test-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
