@@ -4,8 +4,12 @@ use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
 
 const CLIENT: &str = "node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js";
 const MARKER: &str = "isDshMobileComposer() && t.hasAttribute(\"data-composer-input\")";
-const MOBILE: &str = r#"function isDshMobileComposer() {
+const LEGACY_MOBILE: &str = r#"function isDshMobileComposer() {
     return typeof window !== "undefined" && typeof window.matchMedia === "function" && ["(hover: none)", "(any-pointer: coarse)", "(any-hover: none)"].every(query => window.matchMedia(query).matches);
+}
+"#;
+const MOBILE: &str = r#"function isDshMobileComposer() {
+    return typeof document !== "undefined" && document.documentElement.hasAttribute("data-dsh-mobile-ui") && typeof window.matchMedia === "function" && ["(hover: none)", "(any-pointer: coarse)", "(any-hover: none)"].every(query => window.matchMedia(query).matches);
 }
 "#;
 const KEYMAP: &str = "function registerComposerKeymap(editor, handlers) {";
@@ -19,17 +23,29 @@ const ROOT: &str = "this._updateTags.add(xo), bi(this), this._config.disableEven
 const ROOT_PATCHED: &str = "this._updateTags.add(xo), isDshMobileComposer() && t.hasAttribute(\"data-composer-input\") && this._updateTags.add(\"skip-dom-selection\"), bi(this), this._config.disableEvents";
 
 fn patch_source(source: &str) -> PatchOutcome {
-    if source.contains(MARKER) {
+    if source.contains(MOBILE) && source.contains(MARKER) {
         return PatchOutcome::AlreadyPatched;
     }
-    if source.contains("function isDshMobileComposer()") {
-        if [ENTER_PATCHED, AUTOFOCUS_PATCHED, ROOT]
+    if source.contains(LEGACY_MOBILE) {
+        let root = if source.contains(MARKER) {
+            ROOT_PATCHED
+        } else {
+            ROOT
+        };
+        if [LEGACY_MOBILE, ENTER_PATCHED, AUTOFOCUS_PATCHED, root]
             .iter()
             .any(|anchor| source.matches(anchor).count() != 1)
         {
             return PatchOutcome::AnchorMissing;
         }
-        return PatchOutcome::Patched(source.replacen(ROOT, ROOT_PATCHED, 1));
+        return PatchOutcome::Patched(
+            source
+                .replacen(LEGACY_MOBILE, MOBILE, 1)
+                .replacen(root, ROOT_PATCHED, 1),
+        );
+    }
+    if source.contains("function isDshMobileComposer()") {
+        return PatchOutcome::AnchorMissing;
     }
     if [KEYMAP, ENTER, AUTOFOCUS, ROOT]
         .iter()
@@ -78,7 +94,7 @@ mod tests {
     #[test]
     fn upgrades_previous_patch_without_duplicating_guards() {
         let old = fixture()
-            .replacen(KEYMAP, &format!("{MOBILE}{KEYMAP}"), 1)
+            .replacen(KEYMAP, &format!("{LEGACY_MOBILE}{KEYMAP}"), 1)
             .replacen(ENTER, ENTER_PATCHED, 1)
             .replacen(AUTOFOCUS, AUTOFOCUS_PATCHED, 1);
         let PatchOutcome::Patched(result) = patch_source(&old) else {
@@ -89,6 +105,26 @@ mod tests {
         assert_eq!(patch_source(&result), PatchOutcome::AlreadyPatched);
         assert_eq!(
             patch_source(&old.replace(ROOT, "")),
+            PatchOutcome::AnchorMissing
+        );
+    }
+
+    #[test]
+    fn upgrades_complete_legacy_patch_to_plugin_activation() {
+        let legacy = fixture()
+            .replacen(KEYMAP, &format!("{LEGACY_MOBILE}{KEYMAP}"), 1)
+            .replacen(ENTER, ENTER_PATCHED, 1)
+            .replacen(AUTOFOCUS, AUTOFOCUS_PATCHED, 1)
+            .replacen(ROOT, ROOT_PATCHED, 1);
+        let PatchOutcome::Patched(result) = patch_source(&legacy) else {
+            panic!("not upgraded")
+        };
+        assert!(result.contains(MOBILE));
+        assert!(!result.contains(LEGACY_MOBILE));
+        assert_eq!(result.matches(MARKER).count(), 1);
+        assert_eq!(patch_source(&result), PatchOutcome::AlreadyPatched);
+        assert_eq!(
+            patch_source(&legacy.replace(AUTOFOCUS_PATCHED, "")),
             PatchOutcome::AnchorMissing
         );
     }

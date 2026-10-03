@@ -109,6 +109,7 @@ pub const DOWNLOAD_CACHE_ENV_VAR: &str = "DSH_DOWNLOAD_CACHE_DIR";
 /// 无效，因此 debug 构建的 WebView2 profile（`EBWebView-dev`，内含 localStorage）
 /// 会与用户正在使用的开发版共用：E2E 写入的语言等前端状态会污染开发会话，用例
 /// 之间也会互相串。E2E 把它指向 scratch home 即可每次运行独占。
+#[cfg(target_os = "windows")]
 pub const E2E_WEBVIEW_DATA_DIR_ENV_VAR: &str = "DSH_E2E_WEBVIEW_DATA_DIR";
 pub const STORE_SETTING_KEY: &str = "setting";
 /// Store 中记录主窗口几何（位置/大小/最大化）的键

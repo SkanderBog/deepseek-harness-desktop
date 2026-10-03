@@ -9,11 +9,10 @@ allowBuilds:
 catalogMode: prefer
 
 inject-workspace-packages: true
-
 minimumReleaseAgeExclude:
   - '@reause/core@0.1.7'
   - '@reause/shared@0.1.7'
-  - dsh-pet-component@0.2.2
+  - dsh-pet-component@0.2.3
   - '@deepseek-ai/cordis-plugin-group@1.0.3'
   - '@deepseek-ai/cordis@4.0.4'
   - '@deepseek-ai/cosmokit@1.8.4'
@@ -98,6 +97,8 @@ shellEmulator: true
 
 trustPolicy: no-downgrade
 
+trustPolicyExclude:
+  - dsh-pet-component@0.2.3
 packages:
   - packages/*
 
@@ -205,7 +206,7 @@ catalogs:
     '@overlastic/react': ^0.9.0
     '@reause/core': ^0.1.7
     '@tanstack/react-query': ^5.101.4
-    dsh-pet-component: ^0.2.2
+    dsh-pet-component: ^0.2.3
     i18next: ^26.3.6
     react: ^19.2.8
     react-dom: ^19.2.8

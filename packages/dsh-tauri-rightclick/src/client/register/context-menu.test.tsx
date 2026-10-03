@@ -14,6 +14,7 @@ vi.mock('dsh-tauri/client', async () => {
   const { ofetch } = await import('../../../../dsh-tauri/src/client/request')
   const { invoke } = await import('../../../../dsh-tauri/src/client/service/invoke')
   return {
+    ...await import('../../../../dsh-tauri/src/client/utils/device'),
     ...lodash,
     defineLocale,
     ofetch,
@@ -37,7 +38,6 @@ vi.mock('dsh-tauri/client', async () => {
   }
 })
 vi.mock('dsh-tauri-ui/client', async () => ({
-  ...await import('../../../../dsh-tauri-ui/src/client/utils/device'),
   Menu: (props: ComponentProps<typeof Menu>) => {
     menuProps(props)
     if (!props.items)

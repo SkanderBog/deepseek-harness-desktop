@@ -59,7 +59,7 @@ export function stepSegment<T extends { disabled?: boolean }>(
 }
 
 export function SegmentedControl({ id, label, value, disabled, options, onChange }: SegmentedControlProps): ReactElement {
-  const refs = useRef<(HTMLButtonElement | null)[]>([])
+  const buttonsRef = useRef<(HTMLButtonElement | null)[]>([])
   const styles = segmentedControl()
   const tabbed = id !== undefined
   const selected = options.findIndex(option => option.value === value)
@@ -73,7 +73,7 @@ export function SegmentedControl({ id, label, value, disabled, options, onChange
     const option = options[index]
     if (option === undefined)
       return
-    refs.current[index]?.focus()
+    buttonsRef.current[index]?.focus()
     if (option.value !== value)
       onChange(option.value)
   }
@@ -99,7 +99,7 @@ export function SegmentedControl({ id, label, value, disabled, options, onChange
         return (
           <button
             key={option.value}
-            ref={(node) => { refs.current[index] = node }}
+            ref={(node) => { buttonsRef.current[index] = node }}
             type="button"
             id={segmentId(index)}
             role={tabbed ? 'tab' : undefined}

@@ -1,4 +1,4 @@
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(windows)]
@@ -32,6 +32,12 @@ use tauri::menu::{PredefinedMenuItem, Submenu};
 
 #[cfg(target_os = "macos")]
 static MACOS_FULLSCREEN_MENU_ITEM: OnceLock<Mutex<Option<MenuItem<Wry>>>> = OnceLock::new();
+
+// MainEventsCleared 每轮都触发，但只有窗口布局变化后红绿灯才可能被 AppKit 重置。
+// 无脑每轮校准会克隆窗口句柄，而该克隆会 CFRunLoopWakeUp 主 RunLoop，令
+// MainEventsCleared 立刻再次触发，把主线程烧成 100% CPU（issue #880）。
+#[cfg(target_os = "macos")]
+static MACOS_TITLEBAR_SYNC_PENDING: AtomicBool = AtomicBool::new(true);
 
 #[cfg(target_os = "macos")]
 const MACOS_VIEW_COMMANDS: [(&str, &str); 4] = [
@@ -439,6 +445,21 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
+    let desktop_feedback = MenuItem::with_id(
+        app,
+        "desktop-feedback",
+        crate::config::i18n::t("menu.desktop_feedback"),
+        true,
+        None::<&str>,
+    )?;
+    let harness_feedback = MenuItem::with_id(
+        app,
+        "desktop-harness-feedback",
+        crate::config::i18n::t("menu.harness_feedback"),
+        true,
+        None::<&str>,
+    )?;
+    let feedback_separator = PredefinedMenuItem::separator(app)?;
     let help_menu = Submenu::with_id_and_items(
         app,
         "desktop-help-menu",
@@ -448,6 +469,9 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
             &documentation,
             &keyboard_shortcuts,
             &help_separator,
+            &desktop_feedback,
+            &harness_feedback,
+            &feedback_separator,
             &run_logs,
             &task_manager,
         ],
@@ -559,6 +583,70 @@ fn fullscreen_menu_label_key(is_fullscreen: bool) -> &'static str {
         "menu.exit_fullscreen"
     } else {
         "menu.enter_fullscreen"
+    }
+}
+
+fn help_menu_window_label<'a>(
+    windows: impl IntoIterator<Item = (&'a str, bool)>,
+) -> Option<&'a str> {
+    let mut main_window = None;
+    for (label, focused) in windows {
+        if label == crate::desktop::pet::PET_WINDOW_LABEL {
+            continue;
+        }
+        if focused {
+            return Some(label);
+        }
+        if label == MAIN_WINDOW_LABEL {
+            main_window = Some(label);
+        }
+    }
+    main_window
+}
+
+#[cfg(test)]
+mod help_menu_tests {
+    use super::help_menu_window_label;
+
+    #[test]
+    fn help_links_prefer_the_focused_shell_window() {
+        for windows in [
+            [("main", false), ("window-1", true), ("pet", false)],
+            [("window-1", true), ("main", false), ("pet", false)],
+        ] {
+            assert_eq!(help_menu_window_label(windows), Some("window-1"));
+        }
+        assert_eq!(
+            help_menu_window_label([("window-1", false), ("main", true)]),
+            Some("main")
+        );
+    }
+
+    #[test]
+    fn help_links_fall_back_to_main_when_only_the_pet_is_focused() {
+        assert_eq!(
+            help_menu_window_label([("main", false), ("window-1", false), ("pet", true)]),
+            Some("main")
+        );
+    }
+
+    #[test]
+    fn help_links_fall_back_to_main_when_all_windows_are_unfocused() {
+        for windows in [
+            [("main", false), ("window-1", false), ("pet", false)],
+            [("window-1", false), ("pet", false), ("main", false)],
+        ] {
+            assert_eq!(help_menu_window_label(windows), Some("main"));
+        }
+    }
+
+    #[test]
+    fn help_links_never_fall_back_to_a_pet_or_an_arbitrary_extra_window() {
+        assert_eq!(
+            help_menu_window_label([("window-1", false), ("pet", true)]),
+            None
+        );
+        assert_eq!(help_menu_window_label([]), None);
     }
 }
 
@@ -786,7 +874,23 @@ fn with_shell_chrome<'a>(
 }
 
 #[cfg(target_os = "macos")]
+pub(crate) fn on_macos_titlebar_event(event: &tauri::WindowEvent) {
+    if matches!(
+        event,
+        tauri::WindowEvent::Resized(_)
+            | tauri::WindowEvent::ScaleFactorChanged { .. }
+            | tauri::WindowEvent::ThemeChanged(_)
+            | tauri::WindowEvent::Focused(_)
+    ) {
+        MACOS_TITLEBAR_SYNC_PENDING.store(true, Ordering::Relaxed);
+    }
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn sync_macos_titlebars(app: &tauri::AppHandle<Wry>) {
+    if !MACOS_TITLEBAR_SYNC_PENDING.swap(false, Ordering::Relaxed) {
+        return;
+    }
     for webview in app.webview_windows().into_values() {
         let Ok(handle) = webview.ns_window() else {
             continue;
@@ -811,6 +915,42 @@ pub(crate) fn sync_macos_titlebars(app: &tauri::AppHandle<Wry>) {
             if let Some(content) = window.contentView() {
                 content.display();
             }
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_titlebar_tests {
+    use super::{on_macos_titlebar_event, MACOS_TITLEBAR_SYNC_PENDING};
+    use std::sync::atomic::Ordering;
+    use tauri::{PhysicalPosition, PhysicalSize, Theme, WindowEvent};
+
+    #[test]
+    fn only_layout_events_arm_the_titlebar_sync() {
+        for event in [
+            WindowEvent::Moved(PhysicalPosition::new(10, 10)),
+            WindowEvent::Destroyed,
+        ] {
+            MACOS_TITLEBAR_SYNC_PENDING.store(false, Ordering::Relaxed);
+            on_macos_titlebar_event(&event);
+            assert!(
+                !MACOS_TITLEBAR_SYNC_PENDING.load(Ordering::Relaxed),
+                "{event:?} 不该触发校准：拖动窗口时 Moved 会持续高频触发，\
+                 逐帧校准会克隆窗口句柄并唤醒主 RunLoop，把主线程烧满（issue #880）"
+            );
+        }
+
+        for event in [
+            WindowEvent::Resized(PhysicalSize::new(800, 600)),
+            WindowEvent::ThemeChanged(Theme::Dark),
+            WindowEvent::Focused(true),
+        ] {
+            MACOS_TITLEBAR_SYNC_PENDING.store(false, Ordering::Relaxed);
+            on_macos_titlebar_event(&event);
+            assert!(
+                MACOS_TITLEBAR_SYNC_PENDING.load(Ordering::Relaxed),
+                "{event:?} 会改变标题栏布局，必须触发一次校准"
+            );
         }
     }
 }
@@ -1100,7 +1240,67 @@ mod shell_nav_tests {
 
 #[cfg(test)]
 mod menu_tests {
-    use super::fullscreen_menu_label_key;
+    use super::{fullscreen_menu_label_key, menu_action_window_label};
+    use crate::desktop::pet::PET_WINDOW_LABEL;
+
+    #[test]
+    fn menu_actions_prefer_the_focused_shell_window_in_any_iteration_order() {
+        let windows = [
+            ("main", false),
+            ("window-1", true),
+            (PET_WINDOW_LABEL, false),
+        ];
+        assert_eq!(menu_action_window_label(windows), Some("window-1"));
+        assert_eq!(
+            menu_action_window_label(windows.into_iter().rev()),
+            Some("window-1")
+        );
+    }
+
+    #[test]
+    fn menu_actions_target_main_when_it_is_focused() {
+        assert_eq!(
+            menu_action_window_label([("main", true), ("window-1", false)]),
+            Some("main")
+        );
+    }
+
+    #[test]
+    fn menu_actions_fall_back_to_main_when_only_the_pet_is_focused() {
+        assert_eq!(
+            menu_action_window_label([
+                (PET_WINDOW_LABEL, true),
+                ("window-1", false),
+                ("main", false)
+            ]),
+            Some("main")
+        );
+    }
+
+    #[test]
+    fn menu_actions_fall_back_to_main_when_all_windows_are_unfocused() {
+        assert_eq!(
+            menu_action_window_label([("window-1", false), ("main", false)]),
+            Some("main")
+        );
+    }
+
+    #[test]
+    fn menu_actions_target_a_focused_secondary_window_without_main() {
+        assert_eq!(
+            menu_action_window_label([("window-1", true)]),
+            Some("window-1")
+        );
+    }
+
+    #[test]
+    fn menu_actions_have_no_target_without_a_focused_shell_or_main() {
+        assert_eq!(
+            menu_action_window_label([(PET_WINDOW_LABEL, true), ("window-1", false)]),
+            None
+        );
+        assert_eq!(menu_action_window_label([]), None);
+    }
 
     #[test]
     fn fullscreen_menu_label_tracks_native_fullscreen_state() {
@@ -1343,7 +1543,24 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     ]
 }
 
-// configure tauri builder
+fn menu_action_window_label<'a>(
+    windows: impl IntoIterator<Item = (&'a str, bool)>,
+) -> Option<&'a str> {
+    let mut main = None;
+    for (label, focused) in windows {
+        if label == crate::desktop::pet::PET_WINDOW_LABEL {
+            continue;
+        }
+        if focused {
+            return Some(label);
+        }
+        if label == MAIN_WINDOW_LABEL {
+            main = Some(label);
+        }
+    }
+    main
+}
+
 pub fn builder() -> tauri::Builder<tauri::Wry> {
     let mut builder = tauri::Builder::default();
 
@@ -1399,6 +1616,22 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                     }
                 }
             }
+            "desktop-documentation" | "desktop-feedback" | "desktop-harness-feedback" => {
+                let windows = app.webview_windows();
+                let target = help_menu_window_label(
+                    windows
+                        .values()
+                        .map(|window| (window.label(), window.is_focused().unwrap_or(false))),
+                );
+                if let Some(label) = target {
+                    if let Err(error) = app.emit_to(label, "macos-menu-action", event.id().as_ref())
+                    {
+                        log::warn!("[menu] failed to emit Help action: {error}");
+                    }
+                } else {
+                    log::warn!("[menu] HELP_WINDOW_NOT_FOUND");
+                }
+            }
             #[cfg(target_os = "macos")]
             "desktop-fullscreen" => {
                 if let Some(window) = app.webview_windows().into_values().find(|window| {
@@ -1421,13 +1654,23 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             | "desktop-copy-run-logs"
             | "desktop-check-update"
             | "desktop-restart"
-            | "desktop-documentation"
             | "desktop-keyboard-shortcuts"
             | "desktop-new-window"
             | "desktop-new-chat"
             | "desktop-open-folder" => {
-                if let Err(error) = app.emit("macos-menu-action", event.id().as_ref()) {
-                    log::warn!("[menu] failed to emit macOS menu action: {error}");
+                let windows = app.webview_windows();
+                let target = menu_action_window_label(
+                    windows
+                        .values()
+                        .map(|window| (window.label(), window.is_focused().unwrap_or(false))),
+                );
+                if let Some(label) = target {
+                    if let Err(error) = app.emit_to(label, "macos-menu-action", event.id().as_ref())
+                    {
+                        log::warn!("[menu] failed to emit macOS menu action: {error}");
+                    }
+                } else {
+                    log::warn!("[menu] MENU_WINDOW_NOT_FOUND: {}", event.id().as_ref());
                 }
             }
             _ => {}

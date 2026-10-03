@@ -101,7 +101,11 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const { namespace, schema, settingsPath, operations, t } = props
   const [draft, setDraft] = useState<Record<string, unknown>>(() => draftAt(schema, namespace, settingsPath))
   const [keyDraft, setKeyDraft] = useState('')
-  const [keyState, setKeyState] = useState<CredentialInfo | undefined>(undefined)
+  const [credential, setCredential] = useState<{
+    keyRef: string
+    operations: ModelsOperations
+    info: CredentialInfo | undefined
+  } | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [listBusy, setListBusy] = useState(false)
   const { onBusyChange } = props
@@ -121,6 +125,9 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const accountProvider = props.provider === 'deepseek-account'
   const layout = accountProvider ? 'deepseek' : layoutOf(namespace.ns)
   const keyRef = refFor(schema, namespace, settingsPath, props.provider)
+  const keyState = !accountProvider && credential?.keyRef === keyRef && credential.operations === operations
+    ? credential.info
+    : undefined
 
   const protocols = useMemo(
     () => layout === 'pi-ai' ? protocolChoices(namespace, schema) : [],
@@ -131,12 +138,10 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
     if (accountProvider)
       return
     let stale = false
-    setKeyState(undefined)
-
     void operations.describeCredential(keyRef).then((described) => {
       if (stale)
         return
-      setKeyState(described)
+      setCredential({ keyRef, operations, info: described })
     })
     return () => {
       stale = true

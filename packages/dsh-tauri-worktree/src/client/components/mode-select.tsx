@@ -3,7 +3,7 @@ import type { ConversationAttachments, DraftAttachmentDescriptor } from '../serv
 import type { InputActions, InputState, SessionsRuntime, WorkspacesRuntime } from '../service/session-switch.types'
 import { ChevronDown, Chip, CircleTree, Icon, Menu } from 'dsh-tauri-ui/client'
 import { forEach, get } from 'dsh-tauri/client'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import {
   COMPOSER_MODE_BUTTON_SELECTOR,
@@ -33,14 +33,14 @@ export interface ModeSelectProps {
 export function WorktreeModeSelect(props: ModeSelectProps): ReactElement {
   const { sessionId } = props
   const anchorRef = useRef<HTMLSpanElement>(null)
-  const [portalHost, setPortalHost] = useState<HTMLSpanElement | null>(null)
+  const portalHostRef = useRef<HTMLSpanElement | null>(null)
 
   // keep:effect composer 锚点由组件 ref 决定，DOM 重排观察无法上提到 register
-  useEffect(() => {
+  const subscribe = useCallback((onChange: () => void) => {
     const anchor = anchorRef.current
     const composerSeat = anchor?.closest<HTMLElement>(COMPOSER_SEAT_SELECTOR)
     if (!composerSeat)
-      return
+      return () => {}
 
     let host: HTMLSpanElement | null = null
     const place = (): void => {
@@ -52,19 +52,20 @@ export function WorktreeModeSelect(props: ModeSelectProps): ReactElement {
       }
       target ??= composerSeat.querySelector<HTMLElement>(HERO_PRESET_SLOT_SELECTOR)
       if (!target) {
-        setPortalHost(null)
         host?.remove()
         host = null
-        return
       }
-      if (!host) {
-        host = document.createElement('span')
-        host.dataset.dshTauriWorktreeMode = sessionId
-        host.className = 'inline-flex items-center flex-none'
+      else {
+        if (!host) {
+          host = document.createElement('span')
+          host.dataset.dshTauriWorktreeMode = sessionId
+          host.className = 'inline-flex items-center flex-none'
+        }
+        if (target.nextElementSibling !== host)
+          target.after(host)
       }
-      if (target.nextElementSibling !== host)
-        target.after(host)
-      setPortalHost(host)
+      portalHostRef.current = host
+      onChange()
     }
 
     place()
@@ -73,8 +74,10 @@ export function WorktreeModeSelect(props: ModeSelectProps): ReactElement {
     return () => {
       observer.disconnect()
       host?.remove()
+      portalHostRef.current = null
     }
   }, [sessionId])
+  const portalHost = useSyncExternalStore(subscribe, () => portalHostRef.current, () => null)
 
   return (
     <>

@@ -456,6 +456,9 @@ const TAILWINDCSS_GENERATED = `
   .flex-none {
     flex: none;
   }
+  .flex-shrink {
+    flex-shrink: 1;
+  }
   .shrink-0 {
     flex-shrink: 0;
   }

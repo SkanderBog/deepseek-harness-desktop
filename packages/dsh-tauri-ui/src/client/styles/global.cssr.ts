@@ -1,4 +1,3 @@
-import { MOBILE_MEDIA_QUERIES } from '../constants'
 import { cssr } from '../utils/cssr'
 
 export const GLOBAL_STYLE_ID = 'dsh-tauri-ui-global-styles'
@@ -56,39 +55,6 @@ export default c([
   c('@media (prefers-reduced-motion: reduce)', [
     c(`${INPUT_DOCK_SELECTOR} > :not([data-dsh-tauri-worktree-mode-anchor])`, {
       transition: 'none !important',
-    }),
-  ]),
-  c(`@media ${MOBILE_MEDIA_QUERIES.join(' and ')}`, [
-    c('[data-slot="conversation.composer.bar"] [class$="_dock"]', {
-      display: 'none !important',
-    }),
-    c('[class$="_composerStack"] > [data-slot="conversation.input.dock"]', {
-      display: 'none !important',
-    }),
-    c('[class$="_turnErrorCode"]', {
-      display: 'none !important',
-    }),
-    c('[data-slot="conversation.header"] [class$="_header"]', {
-      display: 'none !important',
-    }),
-    c('[data-slot="main"] header[class*="_pageHead"]', {
-      paddingLeft: '0 !important',
-      paddingTop: '24px !important',
-    }),
-    c('header[class*="_pageHead"] [class*="_toolbar"]', {
-      display: 'none !important',
-    }),
-    // c('[data-slot="conversation.session.header"], [data-slot="conversation.composer.bar"], [class*=""], [data-slot="sidebar"] [class$="_footArea"], [data-slot="sidebar"] [class*="_footArea "]', {
-    //   display: 'none !important',
-    // }),
-    c('[data-slot="conversation.view"] [class$="_scroll"]', {
-      padding: '16px !important',
-    }),
-    c('[class*="_userStack"]', {
-      maxWidth: '100% !important',
-    }),
-    c('[data-slot="main"] [data-conversation-scroll]', {
-      paddingBottom: '0 !important',
     }),
   ]),
   c('[data-slot="sidebar.right.tab.guide"]', [

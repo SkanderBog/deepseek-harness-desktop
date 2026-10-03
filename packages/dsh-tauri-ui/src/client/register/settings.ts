@@ -1,7 +1,7 @@
 import type { PropsStore, StoreHandle } from '@deepseek-ai/dsh-client-store'
 import type { ClientContext, SlotRegistry } from 'dsh-tauri/client'
 import { SlotOutlet } from '@deepseek-ai/dsh-client-ui-renderer'
-import { defineRegister, useWatchImmediate } from 'dsh-tauri/client'
+import { defineRegister, detectMobileDevice, useWatchImmediate } from 'dsh-tauri/client'
 import {
   SETTINGS_LAUNCHER_SLOT,
   SETTINGS_REGISTRANT,
@@ -13,7 +13,6 @@ import {
 import { store } from '../store'
 import { SettingsSidebar } from '../ui/settings-sidebar'
 import { SettingsTrigger } from '../ui/settings-trigger'
-import { detectMobileDevice } from '../utils/device'
 
 const SETTINGS_SHORTCUT_EFFECT = 'dsh-tauri-ui: settings launcher shortcut'
 const SETTINGS_OPEN_RELAY_ID = 'dsh-tauri-ui-settings-open-relay'

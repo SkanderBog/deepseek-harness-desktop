@@ -21,6 +21,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-renderer', () => ({ SlotOutlet: () => null }
 vi.mock('dsh-tauri/client', async () => ({
   ...await import('../../../../dsh-tauri/src/client/register'),
   ...await import('../../../../dsh-tauri/src/client/modules/reause'),
+  ...await import('../../../../dsh-tauri/src/client/utils/device'),
 }))
 
 interface MatchMediaHost {

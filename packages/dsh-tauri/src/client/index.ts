@@ -33,6 +33,8 @@ export type * from './types/harness'
 export type * from './types/iframe'
 export type * from './types/tauri'
 
+export * from './utils/device'
+
 export const name = PLUGIN_ID
 
 export const inject = ['layout', 'theme']

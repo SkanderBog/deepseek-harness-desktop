@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { redoShortcutLabel, shortcutLabel } from './context-menu.utils'
 
-vi.mock('dsh-tauri-ui/client', () => import('../../../../dsh-tauri-ui/src/client/utils/device'))
+vi.mock('dsh-tauri/client', () => import('../../../../dsh-tauri/src/client/utils/device'))
 
 function stubUserAgent(userAgent: string): void {
   vi.stubGlobal('navigator', { userAgent })

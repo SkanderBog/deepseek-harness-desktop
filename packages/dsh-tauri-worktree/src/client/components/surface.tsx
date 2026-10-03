@@ -91,6 +91,7 @@ export function WorktreeSurface({ sessionId }: SurfaceBarProps): ReactElement | 
 }
 
 export function Logs({ log, open }: { log: readonly string[], open: boolean }): ReactElement {
+  const occurrences = new Map<string, number>()
   return (
     <div
       aria-hidden={!open}
@@ -101,7 +102,11 @@ export function Logs({ log, open }: { log: readonly string[], open: boolean }): 
     >
       <div className="min-h-0 overflow-hidden mt-[6px]">
         <div className="max-h-[180px] overflow-y-auto p-[10px] rounded-[10px] border border-border-l2 bg-[var(--dsw-alias-bg-base)] z-30">
-          {log.map((line, index) => <div key={`${index}:${line}`} className="text-[12px] leading-[16px] [font-family:cursive]">{line}</div>)}
+          {log.map((line) => {
+            const occurrence = occurrences.get(line) ?? 0
+            occurrences.set(line, occurrence + 1)
+            return <div key={JSON.stringify([line, occurrence])} className="text-[12px] leading-[16px] [font-family:cursive]">{line}</div>
+          })}
         </div>
       </div>
     </div>

@@ -5,7 +5,7 @@ import type { SelectorHook } from '../types/selector'
 import { Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SlotOutlet } from '@deepseek-ai/dsh-client-ui-renderer'
 import { cn, uniq, useStore } from 'dsh-tauri/client'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Gear } from '../components/icons'
 import {
   SETTINGS_LAUNCHER_SLOT,
@@ -56,10 +56,8 @@ export function SettingsTrigger({ wide, useSessions }: SettingsTriggerProps): Re
     return main === undefined || main.blank === true
   })
 
-  useEffect(() => {
-    if (!onboardingActive)
-      setCompleted([])
-  }, [onboardingActive])
+  if (!onboardingActive && completed.length > 0)
+    setCompleted([])
 
   const step = onboardingActive ? onboarding.find(s => !completed.includes(s.id)) : undefined
 

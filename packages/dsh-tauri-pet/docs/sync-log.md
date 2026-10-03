@@ -26,6 +26,29 @@
 
 ## 同步记录
 
+### 2026 —— 技能 `hatch-dsh-pet` 改述上游素材生成流程（上游 `README.md` @ `d73a2bb`，运行期基线不变）
+
+用户指出原技能「不是对 dsh-pet 视频生成流程的描述」：它只讲本机 Codex 图集契约，第 2 步直说
+「DSH 不自带图像生成工具」，把素材获取整个推给用户。现按上游 `PC2005-cloud/dsh-pet`
+`README.md:430-528`「从零生成你自己的宠物（完整流程）」改写为 ① 提示词 → 源视频、
+② 源视频 → 透明动画（`scripts/` 素材链，路线 A 自动抠像 / 路线 B PR 手工抠像）、
+③ 动画 → 落点 三段；③ 的落点换成本机图集——上游是把 webm `cp` 进它自己的插件包
+（`dsh-pet/assets/webm/`、`$DSH_HOME/dsh-pet/` pet pack），而本机只认
+`<DSH_HOME>/pets/<petId>/` 的 8 列图集，视频宠物只能来自 `manifest.jsonc` 的远端 https 地址
+（`src-tauri/src/bridge/preset_pet.rs` 的出厂校验强制）。
+
+- 新增 `skills/hatch-dsh-pet/references/dsh-pet-video-flow.md`：上游流程逐条转述（提示词通用前缀与
+  按秒分解、素材链命令与依赖 Python 3 + ffmpeg + numpy + scipy、②.5 macOS HEVC-alpha mov、
+  ③ 发布/安装、方式四 pet pack、动作池名对照、项目结构、许可与非商用/署名条款），方便后续核对原文。
+- 新增 `skills/hatch-dsh-pet/references/atlas-compose.md`：上游动作 → 本机 11 行的映射，
+  以及 ffmpeg 等间隔取帧 / 全动作共用裁切框 / 缩放进 192×208 / 空格透明 / `tile=8x11` 拼图 /
+  WebP 无损收缩的配方；帧数与 `atlas-layout.md` 的表严格对齐（逐帧时长写死在组件里）。
+- `SKILL.md` 与 `references/atlas-layout.md` 相应改写：先分清「上游视频产线」与「本机图集落点」，
+  再走 ①②③；`pet.json`、图集契约、失效表现、边界等本机契约事实逐条保留。
+- **不涉及运行期**：代码基线仍为 `631c531`(v0.2.12)、资产 ref 仍为 `e1ff8c1`，
+  未改任何 `src/**`、`src-tauri/**` 或 `manifest.jsonc`。
+- `THIRD_PARTY_NOTICES.md` 补记上游素材条款（允许开源使用、**禁止商用**、二创须署名上游地址）。
+
 ### 2026 —— dsh-pet v0.2.7–v0.2.12 / dafeiyu v0.1.10–v0.1.14：采纳 2 项（goal 续跑轮判定、任务文案）
 
 基线推进：dsh-pet `e1ff8c1`(v0.2.6) → `631c531`(v0.2.12)；dafeiyu `f4f4482`(v0.1.9) → `9c0588c`(v0.1.14)。

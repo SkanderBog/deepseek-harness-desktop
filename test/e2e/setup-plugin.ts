@@ -43,6 +43,7 @@ const DEFAULT_ALSO = [
   'dsh-tauri-archive',
   'dsh-tauri-worktree',
   'dsh-tauri-ui',
+  'dsh-tauri-mobile-ui',
   'dsh-tauri-extension',
   'dsh-tauri-scheduler',
   'dsh-tauri-experimental',

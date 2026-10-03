@@ -13,7 +13,7 @@ declare module '@deepseek-ai/dsh-client-ui-renderer' {
   export const SlotOutlet: ComponentType<{
     slotKey: string
     ownerProps?: Record<string, unknown>
-    opts?: { only?: string, fallback?: ReactNode }
+    opts?: { only?: string, entryKey?: string, fallback?: ReactNode }
   }> | undefined
 }
 

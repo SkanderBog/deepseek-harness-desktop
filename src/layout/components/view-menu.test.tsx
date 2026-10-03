@@ -8,12 +8,13 @@ import { useDshShortcuts } from '@/hooks/use-dsh-shortcuts'
 import { Navbar } from './navbar'
 import { Webview } from './webview'
 
-const { store, userAgent, openOverlay } = vi.hoisted(() => {
+const { store, userAgent, openOverlay, openUrl } = vi.hoisted(() => {
   const userAgent = navigator.userAgent
   Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Macintosh' })
   return {
     userAgent,
     openOverlay: vi.fn().mockResolvedValue(undefined),
+    openUrl: vi.fn<(args: { url: string }) => Promise<void>>(),
     store: {
       harness: { status: 'ready', serviceHealthy: true },
       recovery: { recovery: { required: false } },
@@ -100,6 +101,7 @@ function reportShortcuts() {
 beforeEach(() => {
   listeners.clear()
   openOverlay.mockClear()
+  openUrl.mockReset().mockResolvedValue(undefined)
   menuEntries = []
   store.harness.status = 'ready'
   store.harness.serviceHealthy = true
@@ -107,6 +109,8 @@ beforeEach(() => {
   mockWindows('main')
   mockIPC((command, args) => {
     switch (command) {
+      case 'open_external_url':
+        return openUrl(args as { url: string })
       case 'plugin:event|listen': {
         const listener = args as unknown as Listener
         listeners.set(listener.handler, listener)
@@ -243,5 +247,20 @@ describe('native View menu recipients', () => {
     await waitFor(() => expect([...listeners.values()].filter(listener => listener.event === 'macos-menu-action')).toEqual([]))
     act(() => nativeEvent('macos-menu-action', 'desktop-open-terminal', 'remote-alpha'))
     expect(command).not.toHaveBeenCalled()
+  })
+})
+
+describe('native Help menu links', () => {
+  it.each([
+    ['desktop-documentation', 'https://dshtauri.mintlify.site'],
+    ['desktop-feedback', 'https://github.com/dsh-tauri/deepseek-harness-desktop/issues'],
+    ['desktop-harness-feedback', 'https://trtgsjkv6r.feishu.cn/share/base/form/shrcnlCoGElW7MQznGy9r3YYXcg?hide_uid=1&hide_device_info=1&hide_harness_version=1'],
+  ])('opens the expected destination for %s', async (action, url) => {
+    render(<Navbar onRemoteChange={vi.fn()} />)
+    await waitFor(() => expect([...listeners.values()].filter(listener => listener.event === 'macos-menu-action')).toHaveLength(1))
+
+    act(() => nativeEvent('macos-menu-action', action, 'main'))
+
+    await waitFor(() => expect(openUrl).toHaveBeenCalledExactlyOnceWith({ url }))
   })
 })

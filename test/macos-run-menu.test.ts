@@ -12,6 +12,17 @@ function submenuItems(id: string) {
 }
 
 describe('macOS native menu', () => {
+  it('routes every Help link to a single shell window instead of broadcasting it', () => {
+    const handler = builderSource.slice(builderSource.indexOf('.on_menu_event(|app, event|'))
+    const helpActions = handler.slice(handler.indexOf('"desktop-documentation"'), handler.indexOf('#[cfg(target_os = "macos")]'))
+    const broadcastActions = handler.slice(handler.indexOf('"desktop-config"'), handler.indexOf('_ => {}'))
+    for (const action of ['desktop-documentation', 'desktop-feedback', 'desktop-harness-feedback']) {
+      expect(helpActions).toContain(`"${action}"`)
+      expect(broadcastActions).not.toContain(`"${action}"`)
+    }
+    expect(helpActions).toContain('help_menu_window_label(')
+    expect(helpActions).toContain('app.emit_to(label, "macos-menu-action", event.id().as_ref())')
+  })
   it('declares English and Simplified Chinese for system-provided menu items', () => {
     const plist = readFileSync(new URL('../src-tauri/Info.plist', import.meta.url), 'utf8').replace(/<!--[\s\S]*?-->/g, '')
     const localizations = plist.match(/<key>CFBundleLocalizations<\/key>\s*<array>([\s\S]*?)<\/array>/)
@@ -82,16 +93,19 @@ describe('macOS native menu', () => {
   ])('routes %s from its native item to the %s configuration tab', (action, tab, key, zh, en) => {
     expect(builderSource).toMatch(new RegExp(`MenuItem::with_id\\(\\s*app,\\s*"${action}",\\s*crate::config::i18n::t\\("${key}"\\)`))
     const eventHandler = builderSource.slice(builderSource.indexOf('.on_menu_event(|app, event|'))
-    expect(eventHandler).toMatch(new RegExp(`"${action}"[\\s\\S]*?app.emit\\("macos-menu-action", event.id\\(\\).as_ref\\(\\)\\)`))
+    expect(eventHandler).toMatch(new RegExp(`"${action}"[\\s\\S]*?app.emit_to\\(label, "macos-menu-action", event.id\\(\\).as_ref\\(\\)\\)`))
     expect(navbarSource).toMatch(new RegExp(`case '${action}':\\s*handleOpenConfig\\('${tab}'\\)`))
     expect(i18nSource).toContain(`"${key}" => ("${zh}", "${en}")`)
   })
 
-  it('places the task manager in Help alongside run logs', () => {
+  it('groups feedback links before run logs and the task manager in Help', () => {
     expect(submenuItems('desktop-help-menu')).toEqual([
       '&documentation',
       '&keyboard_shortcuts',
       '&help_separator',
+      '&desktop_feedback',
+      '&harness_feedback',
+      '&feedback_separator',
       '&run_logs',
       '&task_manager',
     ])
@@ -134,6 +148,31 @@ describe('macOS native menu', () => {
     expect(handler).toContain('window.label() != crate::desktop::pet::PET_WINDOW_LABEL')
     expect(handler).toContain('window.is_focused().unwrap_or(false)')
     expect(handler).toMatch(/app\.emit_to\(\s*window.label\(\),\s*"macos-menu-action",\s*event.id\(\).as_ref\(\),?\s*\)/)
+  })
+
+  it('routes shell commands to one window instead of broadcasting them', () => {
+    const handler = builderSource.slice(builderSource.indexOf('.on_menu_event(|app, event|'))
+    const shellActions = handler.slice(handler.indexOf('"desktop-config"'), handler.indexOf('_ => {}'))
+
+    for (const action of [
+      'desktop-config',
+      'desktop-profiles',
+      'desktop-plugins',
+      'desktop-harness',
+      'desktop-about',
+      'desktop-copy-run-logs',
+      'desktop-check-update',
+      'desktop-restart',
+      'desktop-keyboard-shortcuts',
+      'desktop-new-window',
+      'desktop-new-chat',
+      'desktop-open-folder',
+    ]) {
+      expect(shellActions).toContain(`"${action}"`)
+    }
+    expect(shellActions).toContain('menu_action_window_label(')
+    expect(shellActions).toContain('app.emit_to(label, "macos-menu-action", event.id().as_ref())')
+    expect(handler).not.toContain('app.emit("macos-menu-action"')
   })
 
   it('requests current window state only after the rebuilt native menu is installed', () => {

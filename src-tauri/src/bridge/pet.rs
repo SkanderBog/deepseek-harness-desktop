@@ -1832,6 +1832,41 @@ mod tests {
     }
 
     #[test]
+    fn bare_pets_directory_entries_list_without_preset_catalog() {
+        // 落点是纯文件系统扫描：`$DSH_HOME/pets/<dir>/pet.json` 齐备就会被列出，
+        // 不需要先注册进预设清单；preset_pet 的远端校验只管随包分发的条目。
+        let root = TestDirectory::new("pets-root");
+        let pet = root.0.join("my-pet");
+        fs::create_dir_all(pet.join("art")).unwrap();
+        fs::write(
+            pet.join("pet.json"),
+            br#"{"id":"my-pet","displayName":"My Pet","spritesheetPath":"art/pet.png"}"#,
+        )
+        .unwrap();
+        let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+        png.extend_from_slice(&8_u32.to_be_bytes());
+        png.extend_from_slice(&11_u32.to_be_bytes());
+        fs::write(pet.join("art/pet.png"), &png).unwrap();
+        fs::write(root.0.join("README.txt"), b"not a pet").unwrap();
+        let empty = root.0.join("empty");
+        fs::create_dir(&empty).unwrap();
+
+        assert_eq!(
+            immediate_pet_directories(&root.0).unwrap(),
+            vec![empty.clone(), pet.clone()],
+            "只枚举直接子目录，普通文件不进列表"
+        );
+        assert!(read_manifest(&empty).is_err(), "缺少 pet.json 的目录应被跳过");
+
+        let item = manifest_to_list_item(PetSource::Chat, &pet, read_manifest(&pet).unwrap());
+        assert_eq!(item.id, "chat:my-pet");
+        assert_eq!(item.name, "My Pet");
+        assert_eq!(item.source, "chat");
+        assert!(item.thumbnail.is_some(), "图集合规时应生成缩略图");
+        assert!(validate_active_pet_id(&item.id).is_ok());
+    }
+
+    #[test]
     fn extraction_rejects_traversal_before_creating_staging() {
         let archive = build_archive(&[
             (

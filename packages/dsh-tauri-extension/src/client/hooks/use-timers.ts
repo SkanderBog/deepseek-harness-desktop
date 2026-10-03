@@ -7,23 +7,27 @@ export interface TimersController {
 }
 
 export function useTimers(): TimersController {
-  const timers = useRef<Set<number>>(new Set())
-  const mounted = useRef(true)
-  useEffect(() => () => {
-    mounted.current = false
-    for (const timer of timers.current)
-      window.clearTimeout(timer)
-    timers.current.clear()
+  const timersRef = useRef<Set<number>>(new Set())
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    const timers = timersRef.current
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      for (const timer of timers)
+        window.clearTimeout(timer)
+      timers.clear()
+    }
   }, [])
   return {
-    mounted,
+    mounted: mountedRef,
     later(callback, delay) {
       const timer = window.setTimeout(() => {
-        timers.current.delete(timer)
-        if (mounted.current)
+        timersRef.current.delete(timer)
+        if (mountedRef.current)
           callback()
       }, delay)
-      timers.current.add(timer)
+      timersRef.current.add(timer)
     },
   }
 }

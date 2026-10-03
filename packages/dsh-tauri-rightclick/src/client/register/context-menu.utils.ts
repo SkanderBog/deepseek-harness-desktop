@@ -1,4 +1,4 @@
-import { detectMobileDevice } from 'dsh-tauri-ui/client'
+import { detectMobileDevice } from 'dsh-tauri/client'
 
 function isMacOS(): boolean {
   return typeof navigator !== 'undefined' && navigator.userAgent.includes('Macintosh')

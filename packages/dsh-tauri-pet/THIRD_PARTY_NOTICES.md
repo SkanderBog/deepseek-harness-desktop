@@ -21,6 +21,7 @@ Integration points:
 - Asset pin: `e1ff8c1e4001878cbb80441262d530e16541f138`
 - License: MIT — Copyright (c) 2026 PC2005-cloud
 - Streaming only: the pet media assets (WebM animations, preview GIFs, `config.jsonc`) are not bundled or downloaded; `pets.built-in` in `src-tauri/resources/manifest.jsonc` registers the remote URLs and the pet window streams them at play time.
+- Asset terms (upstream `README.md` §许可): the animations, prompt recipes and source videos may be reused openly but **commercial use is forbidden**, and derivative works must credit <https://github.com/PC2005-cloud/dsh-pet> wherever they are introduced, shown or distributed. Those assets are still not bundled here; `skills/hatch-dsh-pet` only documents the upstream generation pipeline so users can produce their own material.
 
 ## dsh-tauri-desk/dsh-pet-mov
 

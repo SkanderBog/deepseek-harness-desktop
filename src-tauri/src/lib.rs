@@ -78,6 +78,10 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
             #[cfg(target_os = "macos")]
+            tauri::RunEvent::WindowEvent { event, .. } => {
+                desktop::builder::on_macos_titlebar_event(&event);
+            }
+            #[cfg(target_os = "macos")]
             tauri::RunEvent::MainEventsCleared => {
                 desktop::builder::sync_macos_titlebars(app_handle);
             }

@@ -1,5 +1,6 @@
 import { MOBILE_MEDIA_QUERIES } from '../constants'
 
+export { MOBILE_MEDIA_QUERIES }
 export function isMobileDevice(match: (query: string) => boolean): boolean {
   return MOBILE_MEDIA_QUERIES.every(query => match(query))
 }

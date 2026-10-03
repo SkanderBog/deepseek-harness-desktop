@@ -75,21 +75,21 @@ describe('壳层 HeroUI 通过官方主题机制对齐 dsh', () => {
   })
 
   it.each([
-    ['.button', 'var(--radius-md)'],
-    ['.button--sm', 'var(--radius-sm)'],
-    ['.button--lg', 'var(--radius-lg)'],
-    ['.card', 'var(--radius-lg)'],
-    ['.dropdown__popover', 'var(--radius-lg)'],
-    ['.select__popover', 'var(--radius-lg)'],
-    ['.popover', 'var(--radius-lg)'],
-    ['.toast', 'var(--radius-lg)'],
-    ['.menu-item', 'var(--radius-md)'],
-    ['.list-box-item', 'var(--radius-md)'],
-    ['.tooltip', 'var(--radius-sm)'],
-    ['.close-button', 'var(--radius-sm)'],
-    ['.checkbox__control', 'var(--radius-xs)'],
-    ['.checkbox__control::before', 'inherit'],
-  ])('%s 的 BEM 全局定制仅设置圆角 %s', (selector, radius) => {
+    ['.button', ['border-radius: var(--radius-md)']],
+    ['.button--sm', ['border-radius: var(--radius-sm)']],
+    ['.button--lg', ['border-radius: var(--radius-lg)']],
+    ['.card', ['border-radius: var(--radius-lg)']],
+    ['.dropdown__popover', ['border-radius: var(--radius-lg)']],
+    ['.select__popover', ['border-radius: var(--radius-lg)']],
+    ['.popover', ['border-radius: var(--radius-lg)']],
+    ['.toast', ['border-radius: var(--radius-lg)']],
+    ['.menu-item', ['border-radius: var(--radius-md)', 'min-height: calc(var(--spacing) * 3)']],
+    ['.list-box-item', ['border-radius: var(--radius-md)', 'min-height: calc(var(--spacing) * 3)']],
+    ['.tooltip', ['border-radius: var(--radius-sm)']],
+    ['.close-button', ['border-radius: var(--radius-sm)']],
+    ['.checkbox__control', ['border-radius: var(--radius-xs)']],
+    ['.checkbox__control::before', ['border-radius: inherit']],
+  ])('%s 的 BEM 全局定制仅设置预期声明', (selector, expected) => {
     const rules: Rule[] = []
     css.walkRules((rule) => {
       const parent = rule.parent
@@ -97,7 +97,7 @@ describe('壳层 HeroUI 通过官方主题机制对齐 dsh', () => {
         rules.push(rule)
     })
     expect(rules).toHaveLength(1)
-    expect(rules[0].nodes?.map(node => node.toString())).toEqual([`border-radius: ${radius}`])
+    expect(rules[0].nodes?.map(node => node.toString())).toEqual(expected)
   })
 
   it('标签沿用 HeroUI 默认胶囊，不添加重复的 BEM 圆角定制', () => {

@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import type { MarketFace } from '../service/market.types'
 import { SegmentedControl } from 'dsh-tauri-ui/client'
-import { useEffect, useId, useState } from 'react'
+import { useId, useState } from 'react'
 import { locale } from '../locales'
 import { resolveActiveTab } from './extension-panel.utils'
 import { McpTab } from './mcp-tab'
@@ -9,7 +9,7 @@ import { SkillsTab } from './skills-tab'
 
 export interface ExtensionPanelProps {
   createSkill: () => Promise<void>
-  /** 市场未安装 / 未发布 `render` 时为 undefined：此时不出现市场标签页。 */
+  plugins?: ReactElement
   market: MarketFace | undefined
 }
 
@@ -19,11 +19,12 @@ interface ExtensionTab {
   render: () => ReactElement
 }
 
-export function ExtensionPanel({ createSkill, market }: ExtensionPanelProps): ReactElement {
+export function ExtensionPanel({ createSkill, market, plugins }: ExtensionPanelProps): ReactElement {
   const t = locale.text
   const tabsId = useId()
   const marketFace = market
   const rows: ExtensionTab[] = [
+    ...(plugins === undefined ? [] : [{ id: 'plugins', label: t('pluginsTab'), render: () => plugins }]),
     ...(marketFace === undefined
       ? []
       : [{ id: 'market', label: t('marketTab'), render: () => <>{marketFace.render({ preferredSubsectionId: 'installed' })}</> }]),
@@ -34,9 +35,8 @@ export function ExtensionPanel({ createSkill, market }: ExtensionPanelProps): Re
   const [requestedId, setRequestedId] = useState(initialId)
   const [visited, setVisited] = useState<ReadonlySet<string>>(() => new Set([initialId]))
   const activeId = resolveActiveTab(rows, requestedId)
-  // 市场服务消失时会回落到别的标签页：那也已经「打开过」，同样要留在挂载集里，
-  // 否则市场一回来它就卸载，用户在那一页里的状态被丢掉。
-  useEffect(() => setVisited(previous => previous.has(activeId) ? previous : new Set([...previous, activeId])), [activeId])
+  if (!visited.has(activeId))
+    setVisited(new Set([...visited, activeId]))
 
   return (
     <div>
@@ -50,7 +50,7 @@ export function ExtensionPanel({ createSkill, market }: ExtensionPanelProps): Re
             onChange={setRequestedId}
           />
         </div>
-        {rows.filter(row => row.id === activeId || visited.has(row.id)).map((row) => {
+        {rows.filter(row => row.id === activeId || (row.id !== 'plugins' && visited.has(row.id))).map((row) => {
           const selected = row.id === activeId
           return <div key={row.id} id={`${tabsId}-${row.id}-panel`} className="min-w-0 pt-[2px]" role="tabpanel" aria-labelledby={`${tabsId}-${row.id}`} hidden={!selected}>{row.render()}</div>
         })}

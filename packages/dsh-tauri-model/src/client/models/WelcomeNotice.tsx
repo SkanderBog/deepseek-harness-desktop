@@ -24,11 +24,11 @@ export type WelcomeNoticeProps
 export function WelcomeNotice(props: WelcomeNoticeProps): ReactNode {
   const { complete, controller, useWelcome, t } = props
   const state = useWelcome(snapshot => snapshot)
-  const finished = useRef(false)
+  const finishedRef = useRef(false)
   const finish = useCallback((): void => {
-    if (finished.current)
+    if (finishedRef.current)
       return
-    finished.current = true
+    finishedRef.current = true
     complete()
   }, [complete])
 

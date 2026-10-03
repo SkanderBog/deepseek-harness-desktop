@@ -33,10 +33,17 @@ afterAll(async () => {
 })
 
 describe('mobile composer keyboard policy', () => {
-  it.each([true, false])('keeps automatic focus and Enter device-specific (mobile=%s)', async (mobile) => {
+  it.each([
+    { mobile: true, enabled: true },
+    { mobile: false, enabled: true },
+    { mobile: true, enabled: false },
+  ])('keeps automatic focus and Enter plugin-specific (mobile=$mobile, enabled=$enabled)', async ({ mobile, enabled }) => {
+    const adapted = mobile && enabled
     const page = await browser.newPage({ isMobile: mobile, hasTouch: mobile, viewport: { width: 390, height: 844 } })
     try {
       await page.setContent('<button id="session">session</button><div id="draft" data-composer-input contenteditable="true">hello</div><button id="send">send</button>')
+      if (enabled)
+        await page.evaluate(() => document.documentElement.setAttribute('data-dsh-mobile-ui', ''))
       await page.evaluate(({ keymap, focus, lexical, focusEditor, primary }) => {
         const root = document.querySelector<HTMLElement>('#draft')!
         // eslint-disable-next-line no-new-func
@@ -75,23 +82,23 @@ describe('mobile composer keyboard policy', () => {
         Object.assign(window, { sends: () => sends, virtualEnter: () => editor.dispatchCommand(api.enter, null) })
       }, { keymap, focus, lexical, focusEditor, primary })
       await page.locator('#session').click()
-      expect(await page.locator('#draft').evaluate(element => document.activeElement === element), '手机切换会话不得自动聚焦，桌面仍聚焦').toBe(!mobile)
+      expect(await page.locator('#draft').evaluate(element => document.activeElement === element), '手机切换会话不得自动聚焦，桌面仍聚焦').toBe(!adapted)
       await page.locator('#draft').click()
       await page.keyboard.type('hello')
       await page.locator('#session').click()
-      expect(await page.locator('#draft').evaluate(element => document.activeElement === element), '重绑已有草稿也不得在手机自动聚焦').toBe(!mobile)
+      expect(await page.locator('#draft').evaluate(element => document.activeElement === element), '重绑已有草稿也不得在手机自动聚焦').toBe(!adapted)
       await page.locator('#draft').click()
       await page.keyboard.press('Enter')
-      expect(await page.evaluate(() => (window as unknown as { sends: () => number }).sends()), '手机 Enter 不发送').toBe(mobile ? 0 : 1)
-      if (mobile) {
+      expect(await page.evaluate(() => (window as unknown as { sends: () => number }).sends()), '手机 Enter 不发送').toBe(adapted ? 0 : 1)
+      if (adapted) {
         expect(await page.locator('#draft').evaluate(element => element.querySelectorAll('div, br').length), '手机 Enter 应保留原生换行节点').toBeGreaterThan(0)
         await page.keyboard.press('Control+Enter')
         expect(await page.evaluate(() => (window as unknown as { sends: () => number }).sends()), '手机组合回车也不发送').toBe(0)
       }
       await page.evaluate(() => (window as unknown as { virtualEnter: () => void }).virtualEnter())
-      expect(await page.evaluate(() => (window as unknown as { sends: () => number }).sends()), '无 KeyboardEvent 的虚拟回车也按设备选择换行或发送').toBe(mobile ? 0 : 2)
+      expect(await page.evaluate(() => (window as unknown as { sends: () => number }).sends()), '无 KeyboardEvent 的虚拟回车也按设备选择换行或发送').toBe(adapted ? 0 : 2)
       await page.locator('#send').click()
-      expect(await page.evaluate(() => (window as unknown as { sends: () => number }).sends()), '实际上游按钮处理函数仍可发送').toBe(mobile ? 1 : 3)
+      expect(await page.evaluate(() => (window as unknown as { sends: () => number }).sends()), '实际上游按钮处理函数仍可发送').toBe(adapted ? 1 : 3)
     }
     finally {
       await page.close()

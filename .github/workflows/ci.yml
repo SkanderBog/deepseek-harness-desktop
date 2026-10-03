@@ -122,10 +122,21 @@ jobs:
           # 0.1.6 起上游改了设置侧栏分区名与未分组 chip 等文案，另需一轮 e2e 适配。
           npm install --no-audit --no-fund @deepseek-ai/dsh@0.1.5-rc.2
 
-      - name: Plugin L2 test
+      - name: Plugin L2 test (legacy core)
         env:
           DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: pnpm run test:e2e:plugin -- --run
+        run: node node_modules/vitest/vitest.mjs run --project plugin --exclude test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts
+
+      - name: Install current dsh CLI (isolated)
+        run: npm install --prefix "$RUNNER_TEMP/dsh-cli-current" --no-audit --no-fund @deepseek-ai/dsh@0.2.0-rc.2
+
+      - name: Official plugins composition (current core)
+        env:
+          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-current/node_modules/@deepseek-ai/dsh/lib/bin.js
+        run: |
+          for seed in 101 102 103 104 105; do
+            node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts || exit $?
+          done
 
   # 桌面端 L3 E2E（vitest + WebdriverIO）：
   # 驱动真实 Tauri 窗口，只能在 Windows 上跑（embedded WebDriver + WebView2）。

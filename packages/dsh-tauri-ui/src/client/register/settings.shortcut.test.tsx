@@ -28,6 +28,7 @@ vi.mock('dsh-tauri/client', async () => ({
   ...await import('../../../../dsh-tauri/src/client/register'),
   ...await import('../../../../dsh-tauri/src/client/modules/valtio-define'),
   ...await import('../../../../dsh-tauri/src/client/modules/reause'),
+  ...await import('../../../../dsh-tauri/src/client/utils/device'),
   ...await import('../../../../dsh-tauri/src/client/modules/lodash-es'),
   ...await import('../../../../dsh-tauri/src/client/modules/tailwind-variants'),
 }))

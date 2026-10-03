@@ -44,6 +44,11 @@ pub fn t(key: &str) -> String {
         "menu.close" => ("关闭", "Close"),
         "menu.quit" => ("退出", "Quit"),
         "menu.documentation" => ("文档", "Documentation"),
+        "menu.desktop_feedback" => ("桌面版问题反馈", "Desktop Feedback"),
+        "menu.harness_feedback" => (
+            "DeepSeek Harness 官方反馈",
+            "DeepSeek Harness Official Feedback",
+        ),
         "menu.settings" => ("设置…", "Settings…"),
         "menu.services" => ("服务", "Services"),
         "menu.hide" => ("隐藏", "Hide"),

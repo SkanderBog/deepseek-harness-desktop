@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { en } from './locales.ts'
 import { Plus } from 'dsh-tauri-ui/client'
 import { useState } from 'react'
+import { useModelRowKeys } from '../hooks/use-model-row-keys'
 import { ModelRow } from './ModelRow.tsx'
 import { modelStyles as styles } from './styles.ts'
 
@@ -102,14 +103,15 @@ export interface DeepSeekModelsEditorProps {
 }
 
 export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNode {
+  const rowKeys = useModelRowKeys(props.models)
   const [editing, setEditing] = useState<ReadonlyMap<string, string>>(() => new Map())
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set())
 
   const update = (index: number, key: CatalogField, value: unknown): void => {
     const next = props.models.map((model, at) => {
-      const copy = { ...model }
       if (at !== index)
-        return copy
+        return model
+      const copy = { ...model }
       if (value === undefined)
         Reflect.deleteProperty(copy, key)
       else copy[key] = value
@@ -139,7 +141,7 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
       }
       return next
     })
-    props.onChange(props.models.filter((_model, at) => at !== index).map(model => ({ ...model })))
+    props.onChange(props.models.filter((_model, at) => at !== index))
   }
 
   const reset = (): void => {
@@ -221,7 +223,7 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
             <div className={styles.modelList}>
               {props.models.map((model, index) => (
                 <ModelRow
-                  key={index}
+                  key={rowKeys[index]}
                   model={model}
                   position={index + 1}
                   inputField="inputModalities"
@@ -247,7 +249,7 @@ export function DeepSeekModelsEditor(props: DeepSeekModelsEditorProps): ReactNod
         type="button"
         className={styles.addModelButton}
         disabled={props.disabled}
-        onClick={() => { props.onChange([...props.models.map(model => ({ ...model })), { id: '' }]) }}
+        onClick={() => { props.onChange([...props.models, { id: '' }]) }}
       >
         <Plus width={14} height={14} />
         {props.t('addModel')}

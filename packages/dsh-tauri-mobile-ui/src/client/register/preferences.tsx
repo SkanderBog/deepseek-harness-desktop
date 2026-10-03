@@ -1,13 +1,10 @@
 import type { SettingsLauncherOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import type { ClientContext } from 'dsh-tauri/client'
-import { defineRegister } from 'dsh-tauri/client'
+import { Button, Gear, Select } from 'dsh-tauri-ui/client'
+import { defineRegister, detectMobileDevice } from 'dsh-tauri/client'
 import { useSyncExternalStore } from 'react'
-import { Button } from '../components/button'
-import { Gear } from '../components/icons'
-import { Select } from '../components/select'
-import { SETTINGS_LAUNCHER_SLOT, SETTINGS_REGISTRANT, SETTINGS_TRIGGER_PRIORITY } from '../constants'
-import { detectMobileDevice } from '../utils/device'
+import { PLUGIN_ID } from '../../shared/constants'
 
 export const registerMobilePreferences = defineRegister<ClientContext>((controller, ctx) => {
   if (!detectMobileDevice())
@@ -53,7 +50,7 @@ export const registerMobilePreferences = defineRegister<ClientContext>((controll
       const locale = useSyncExternalStore(subscribeLocale, getLocale)
 
       return (
-        <div data-dsh-mobile-preferences style={{ display: 'flex', flex: 1, minWidth: 0, alignItems: 'center', gap: 8, padding: '8px 0' }}>
+        <div data-dsh-mobile-preferences>
           <Select
             label={themeText('appearance.title')}
             value={theme.active.colorScheme}
@@ -74,15 +71,14 @@ export const registerMobilePreferences = defineRegister<ClientContext>((controll
             aria-haspopup="dialog"
             aria-expanded={settingsOpen}
             icon={<Gear width={16} height={16} />}
-            style={{ marginLeft: 'auto', flexShrink: 0 }}
             onClick={openSettings}
           />
         </div>
       )
     }
 
-    const unregister = scoped.slots.inject(SETTINGS_LAUNCHER_SLOT, () => scoped.slots.register(
-      { name: SETTINGS_LAUNCHER_SLOT, priority: SETTINGS_TRIGGER_PRIORITY, registrant: SETTINGS_REGISTRANT },
+    const unregister = scoped.slots.inject('settings.launcher', () => scoped.slots.register(
+      { name: 'settings.launcher', priority: -1, registrant: PLUGIN_ID },
       MobilePreferences,
     ))
     return () => {

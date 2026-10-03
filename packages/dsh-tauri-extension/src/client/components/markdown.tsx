@@ -3,11 +3,6 @@ import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { useMemo } from 'react'
 
-function parseMarkdown(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text, { async: false, gfm: true, breaks: false }) as string)
-}
-
-// 注入 HTML 的排版：marked 产出的元素不在 JSX 里，只能由容器用 `[&_tag]` 变体下发。
 const MD_BODY = [
   '[&_h1]:mt-[14px] [&_h1]:mb-[6px] [&_h1]:text-[18px] [&_h1]:text-primary [&_h1]:leading-[1.4]',
   '[&_h2]:mt-[14px] [&_h2]:mb-[6px] [&_h2]:text-[16px] [&_h2]:text-primary [&_h2]:leading-[1.4]',
@@ -21,6 +16,7 @@ const MD_BODY = [
 ].join(' ')
 
 export function MarkdownPreview(props: { text: string }): ReactElement {
-  const html = useMemo(() => parseMarkdown(props.text), [props.text])
+  const html = useMemo(() => DOMPurify.sanitize(marked.parse(props.text, { async: false, gfm: true, breaks: false })), [props.text])
+  // eslint-disable-next-line react/dom-no-dangerously-set-innerhtml -- DOMPurify 净化后保留原生 HTML 属性语义
   return <div className={MD_BODY} dangerouslySetInnerHTML={{ __html: html }} />
 }

@@ -1,7 +1,11 @@
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import mobileStyle from '../../../packages/dsh-tauri-mobile-ui/src/client/styles/mobile.cssr'
 import globalStyle from '../../../packages/dsh-tauri-ui/src/client/styles/global.cssr'
+
+vi.mock('../../../packages/dsh-tauri/dist/client.cjs', () => import('../../../packages/dsh-tauri/src/client/utils/device'))
+vi.mock('../../../packages/dsh-tauri-ui/dist/client.cjs', () => import('../../../packages/dsh-tauri-ui/src/client/utils/cssr'))
 
 let browser: Browser
 let page: Page
@@ -148,7 +152,7 @@ describe('input dock hover geometry', () => {
   it('keeps a stacked dock hidden in the mobile composer stack', async () => {
     const mobilePage = await browser.newPage({ isMobile: true, hasTouch: true, viewport: { width: 390, height: 844 } })
     try {
-      await mobilePage.setContent(`<style>${globalStyle.render()}</style><div class="fixture_composerStack"><div data-slot="conversation.input.dock" style="display:contents"><div>one</div><div>two</div><div>three</div></div></div>`)
+      await mobilePage.setContent(`<style>${globalStyle.render()}${mobileStyle.render()}</style><div class="fixture_composerStack"><div data-slot="conversation.input.dock" style="display:contents"><div>one</div><div>two</div><div>three</div></div></div>`)
       expect(await mobilePage.evaluate(() => matchMedia('(hover: none) and (any-pointer: coarse) and (any-hover: none)').matches), '触摸页面必须命中 Mobile 条件').toBe(true)
       expect(await mobilePage.locator('[data-slot="conversation.input.dock"]').evaluate(element => getComputedStyle(element).display), '堆叠布局不得盖过 Mobile 隐藏规则').toBe('none')
     }

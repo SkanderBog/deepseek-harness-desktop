@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 import type { ConfigFormSnapshot, SettingsLauncherOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ButtonProps, SelectProps } from 'dsh-tauri-ui/client'
 import type { ComponentType } from 'react'
-import type { ButtonProps } from '../components/button'
-import type { SelectProps } from '../components/select'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { registerMobilePreferences } from './mobile-preferences'
+import { detectMobileDevice } from '../../../../dsh-tauri/src/client/utils/device'
+import { registerMobilePreferences } from './preferences'
 
 vi.mock('dsh-tauri/client', () => ({
+  detectMobileDevice,
   defineRegister: (setup: (controller: unknown, ctx: unknown) => void) => function (this: unknown) {
     const disposers: Array<() => void> = []
     setup({
@@ -22,14 +23,13 @@ vi.mock('dsh-tauri/client', () => ({
     return () => disposers.splice(0).reverse().forEach(dispose => dispose())
   },
 }))
-vi.mock('../components/select', () => ({
+vi.mock('dsh-tauri-ui/client', () => ({
   Select: ({ label, value, options, onChange }: SelectProps) => (
     <select aria-label={label} value={value} onChange={event => onChange(event.target.value)}>
       {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
     </select>
   ),
-}))
-vi.mock('../components/button', () => ({
+  Gear: () => <svg />,
   Button: ({ icon, children, ...props }: ButtonProps) => (
     <button {...props}>
       {icon}
@@ -182,7 +182,7 @@ describe('mobile sidebar preferences', () => {
 
   it('uses the native launcher without replacing the settings shell and tracks core preferences', () => {
     const { ctx, Component, registered, dispose, disposeSlot, themeListeners, localeListeners } = setup(true)
-    expect(registered).toHaveBeenCalledWith({ name: 'settings.launcher', priority: -1, registrant: 'dsh-tauri-ui' })
+    expect(registered).toHaveBeenCalledWith({ name: 'settings.launcher', priority: -1, registrant: 'dsh-tauri-mobile-ui' })
     expect(ctx.slots.inject).toHaveBeenCalledWith('settings.launcher', expect.any(Function))
     if (!Component)
       throw new Error('Mobile preferences component was not registered')
@@ -211,8 +211,7 @@ describe('mobile sidebar preferences', () => {
     const view = render(<Component {...props} />)
     const settings = screen.getByRole('button', { name: 'en:trigger' })
     expect(settings).toBe(settings.parentElement?.lastElementChild)
-    expect(settings.parentElement?.style.flex).toBe('1 1 0%')
-    expect(settings.style.marginLeft).toBe('auto')
+    expect(settings.parentElement?.hasAttribute('data-dsh-mobile-preferences')).toBe(true)
     expect(settings.querySelector('svg')).not.toBeNull()
     expect(settings.textContent).toBe('')
     expect(settings.getAttribute('aria-haspopup')).toBe('dialog')

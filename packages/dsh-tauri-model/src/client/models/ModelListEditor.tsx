@@ -6,6 +6,7 @@ import type { ModelsOperations } from './operations.ts'
 import { Button, Modal, rankByName } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Plus } from 'dsh-tauri-ui/client'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useModelRowKeys } from '../hooks/use-model-row-keys'
 import { TEMPLATE_COMPAT_PROTOCOL } from '../service/model-compat'
 import { AutoConfigAllButton, ModelCompatFields, modelExtrasTranslate, ModelFetchConfigButton } from '../ui/model-extras'
 import { formatCapacity, parseCapacity } from './DeepSeekModelsEditor.tsx'
@@ -70,6 +71,7 @@ function adopt(candidate: LlmDiscoveredModel): ModelDraft {
 
 export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   const { models, onChange, probe, operations, t, disabled, onBusyChange } = props
+  const rowKeys = useModelRowKeys(models)
   const { catalogProvider } = props
   const [busy, setBusy] = useState(false)
   useEffect(() => {
@@ -97,12 +99,12 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
   const catalog = inheritedCatalog?.provider === catalogProvider ? inheritedCatalog?.models : undefined
   const inputDefaults = useMemo(() => new Map(catalog?.map(model => [model.id, model.inputModalities])), [catalog])
   const [candidates, setCandidates] = useState<readonly LlmDiscoveredModel[] | undefined>(undefined)
-  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
+  const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set())
   const [candidateQuery, setCandidateQuery] = useState('')
   const [activeCandidate, setActiveCandidate] = useState(0)
-  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set())
 
-  const [editing, setEditing] = useState<ReadonlyMap<string, string>>(new Map())
+  const [editing, setEditing] = useState<ReadonlyMap<string, string>>(() => new Map())
 
   const bufferKey = (index: number, field: CapacityField): string => `${String(index)}:${field}`
 
@@ -334,7 +336,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
       <div className={styles.modelList}>
         {models.map((model, index) => (
           <ModelRow
-            key={index}
+            key={rowKeys[index]}
             model={model}
             position={index + 1}
             inputField="input"

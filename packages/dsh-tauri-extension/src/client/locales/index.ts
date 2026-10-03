@@ -2,7 +2,8 @@ import { defineLocale } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../constants'
 
 const zh = {
-  extension: '扩展管理',
+  extension: '插件扩展',
+  pluginsTab: '插件',
   skillsTab: '技能',
   mcpTab: 'MCP',
   marketTab: '市场',
@@ -118,7 +119,8 @@ const zh = {
 type LocaleKey = keyof typeof zh
 
 const en: Record<LocaleKey, string> = {
-  extension: 'Extension Management',
+  extension: 'Plugin Extensions',
+  pluginsTab: 'Plugins',
   skillsTab: 'Skills',
   mcpTab: 'MCP',
   marketTab: 'Market',
