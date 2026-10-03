@@ -2,6 +2,8 @@ import { defineConfig } from 'bumpp'
 
 export default defineConfig({
   release: 'prompt',
+  all: true,
+  execute: 'node scripts/native-app-version.mjs',
   files: [
     'package.json',
     'src-tauri/Cargo.toml',
