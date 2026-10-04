@@ -68,6 +68,15 @@ jobs:
       - name: Type check package exports
         run: pnpm exec tsc --noEmit
 
+      # src-native 是独立子工程（自己的 tsconfig/vitest 配置与 `@/* -> src-native/*` 别名），
+      # 上面的桌面 tsc 与 `test:unit`（--project unit）都不覆盖它：移动端类型错误或回归
+      # 过去可以伴随全绿 PR 检查合入。两条命令都很轻（本地 550 条用例约 3 秒）。
+      - name: Type check native subproject
+        run: pnpm run typecheck:native
+
+      - name: Native unit test
+        run: pnpm run test:native
+
       - name: Lint
         run: pnpm run lint
 
