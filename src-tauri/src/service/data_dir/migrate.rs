@@ -372,6 +372,9 @@ fn resolved_path(path: &Path) -> Result<PathBuf, String> {
     loop {
         match fs::canonicalize(existing) {
             Ok(mut resolved) => {
+                if !missing.is_empty() && !resolved.is_dir() {
+                    return Err(format!("DATA_DIR_TARGET_NOT_DIR: {}", existing.display()));
+                }
                 for name in missing.iter().rev() {
                     resolved.push(name);
                 }
