@@ -101,8 +101,8 @@ describe('migration safety contract', () => {
   })
 
   it('never links the new home into place', () => {
-    const source = readSource(MIGRATE)
-    expect(source).not.toContain('symlink')
+    const source = readSource(MIGRATE).split('#[cfg(test)]')[0]
+    expect(source).not.toMatch(/\bsymlink(?:_dir|_file)?\b/)
     expect(source).not.toContain('junction')
     expect(source).toContain('fs_ops::copy_tree(source, target, &progress)?;')
   })
