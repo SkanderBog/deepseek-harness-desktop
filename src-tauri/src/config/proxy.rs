@@ -30,7 +30,7 @@ pub fn http_client_builder<R: Runtime>(app: &AppHandle<R>) -> Result<ClientBuild
     client_builder(&super::get_store_dat_setting(app).proxy_url)
 }
 
-fn client_builder(value: &str) -> Result<ClientBuilder, String> {
+pub(crate) fn client_builder(value: &str) -> Result<ClientBuilder, String> {
     let url = normalize_proxy_url(value)?;
     let builder = reqwest::Client::builder();
     if url.is_empty() {

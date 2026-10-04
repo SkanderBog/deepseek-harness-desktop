@@ -57,7 +57,13 @@ fn cache() -> &'static Mutex<HashMap<String, CacheEntry>> {
 }
 
 /// 缓存键：spec、版本或该直接依赖的 Git 锁定提交变化后，旧结果自动失效。
-fn cache_key(id: &str, spec: &str, version: &str, locked: &HashMap<String, String>) -> String {
+fn cache_key(
+    id: &str,
+    spec: &str,
+    version: &str,
+    locked: &HashMap<String, String>,
+    _proxy_url: &str,
+) -> String {
     let locked_commit = extract_github_target(spec)
         .and_then(|_| locked.get(id))
         .map(String::as_str)
@@ -70,8 +76,16 @@ fn cache_key(id: &str, spec: &str, version: &str, locked: &HashMap<String, Strin
 /// 升级「以 0 退出但版本没动」时需要知道本该装到哪个版本：发布时长豁免是按精确
 /// `包名@版本` 写的，没有目标版本就给不出可授权的条目。这里只读缓存、不新发请求
 /// （探测由 [`refresh`] 统一负责），缓存键以 `id` 开头（见 [`cache_key`]）。
-pub(crate) fn known_latest(id: &str) -> Option<String> {
-    let cache = cache().lock().unwrap();
+pub(crate) fn known_latest(app_handle: &AppHandle, id: &str) -> Option<String> {
+    let proxy_url = crate::config::get_store_dat_setting(app_handle).proxy_url;
+    cached_latest(&cache().lock().unwrap(), id, &proxy_url)
+}
+
+fn cached_latest(
+    cache: &HashMap<String, CacheEntry>,
+    id: &str,
+    _proxy_url: &str,
+) -> Option<String> {
     let prefix = format!("{id}\u{0}");
     cache
         .iter()
@@ -535,11 +549,12 @@ async fn compute_update(
 pub fn apply_cache(app_handle: &AppHandle, plugins: &mut [DshPlugin]) {
     let specs = read_specs(app_handle);
     let locked = read_locked_commits(&profile_dir(app_handle), &specs);
+    let proxy_url = crate::config::get_store_dat_setting(app_handle).proxy_url;
     let cache = cache().lock().unwrap();
     let now = Instant::now();
     for p in plugins.iter_mut() {
         let spec = specs.get(&p.id).cloned().unwrap_or_default();
-        let key = cache_key(&p.id, &spec, &p.version, &locked);
+        let key = cache_key(&p.id, &spec, &p.version, &locked, &proxy_url);
         if let Some(entry) = cache.get(&key) {
             if now.duration_since(entry.at) < UPDATES_TTL {
                 p.update_available = entry.info.update_available;
@@ -557,7 +572,8 @@ pub async fn refresh(app_handle: &AppHandle) -> Result<Vec<DshPlugin>, String> {
     let mut plugins = super::watch::list(app_handle);
     let specs = read_specs(app_handle);
     let locked = read_locked_commits(&profile_dir(app_handle), &specs);
-    let client = crate::config::proxy::http_client_builder(app_handle)?
+    let proxy_url = crate::config::get_store_dat_setting(app_handle).proxy_url;
+    let client = crate::config::proxy::client_builder(&proxy_url)?
         .user_agent("deepseek-harness-desktop")
         .timeout(Duration::from_secs(10))
         .build()
@@ -577,7 +593,7 @@ pub async fn refresh(app_handle: &AppHandle) -> Result<Vec<DshPlugin>, String> {
         let cache = cache().lock().unwrap();
         for (idx, p) in plugins.iter_mut().enumerate() {
             let spec = specs.get(&p.id).cloned().unwrap_or_default();
-            let key = cache_key(&p.id, &spec, &p.version, &locked);
+            let key = cache_key(&p.id, &spec, &p.version, &locked, &proxy_url);
             if let Some(entry) = cache.get(&key) {
                 if now.duration_since(entry.at) < UPDATES_TTL {
                     p.update_available = entry.info.update_available;
@@ -633,6 +649,118 @@ pub async fn refresh(app_handle: &AppHandle) -> Result<Vec<DshPlugin>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_update_cache_is_not_reused_after_proxy_changes() {
+        let locked = HashMap::new();
+        for (before, after) in [
+            ("", "http://127.0.0.1:7897/"),
+            ("http://127.0.0.1:7897/", "socks5h://127.0.0.1:1080"),
+            ("http://127.0.0.1:7897/", ""),
+            (
+                "http://user:old@proxy.example/",
+                "http://user:new@proxy.example/",
+            ),
+        ] {
+            let entries = HashMap::from([(
+                cache_key("plugin", "^1.0.0", "1.0.0", &locked, before),
+                CacheEntry {
+                    info: UpdateInfo {
+                        update_available: false,
+                        latest: None,
+                    },
+                    at: Instant::now(),
+                },
+            )]);
+            let key = cache_key("plugin", "^1.0.0", "1.0.0", &locked, after);
+            assert!(
+                !entries.contains_key(&key),
+                "proxy change reused a cached failure"
+            );
+        }
+    }
+
+    #[test]
+    fn normalized_equivalent_proxies_reuse_update_cache() {
+        let locked = HashMap::new();
+        let before =
+            crate::config::proxy::normalize_proxy_url(" HTTP://proxy.example:80 ").unwrap();
+        let after = crate::config::proxy::normalize_proxy_url("http://proxy.example/").unwrap();
+        let entries = HashMap::from([(
+            cache_key("plugin", "^1.0.0", "1.0.0", &locked, &before),
+            CacheEntry {
+                info: UpdateInfo {
+                    update_available: true,
+                    latest: Some("2.0.0".into()),
+                },
+                at: Instant::now(),
+            },
+        )]);
+        let key = cache_key("plugin", "^1.0.0", "1.0.0", &locked, &after);
+        let entry = entries
+            .get(&key)
+            .expect("unchanged proxy lost its cached result");
+        assert!(entry.info.update_available);
+        assert_eq!(entry.info.latest.as_deref(), Some("2.0.0"));
+        assert_eq!(
+            cached_latest(&entries, "plugin", &after).as_deref(),
+            Some("2.0.0")
+        );
+    }
+
+    #[test]
+    fn late_old_proxy_result_does_not_replace_current_update_or_install_target() {
+        let locked = HashMap::new();
+        let proxy = "http://127.0.0.1:7897/";
+        let key = cache_key("plugin", "^1.0.0", "1.0.0", &locked, proxy);
+        let now = Instant::now();
+        let mut entries = HashMap::from([(
+            key.clone(),
+            CacheEntry {
+                info: UpdateInfo {
+                    update_available: true,
+                    latest: Some("2.0.0".into()),
+                },
+                at: now,
+            },
+        )]);
+        entries.insert(
+            cache_key("plugin", "^1.0.0", "1.0.0", &locked, ""),
+            CacheEntry {
+                info: UpdateInfo {
+                    update_available: false,
+                    latest: Some("1.0.0".into()),
+                },
+                at: now + Duration::from_millis(1),
+            },
+        );
+        let entry = entries.get(&key).unwrap();
+        assert!(entry.info.update_available);
+        assert_eq!(entry.info.latest.as_deref(), Some("2.0.0"));
+        assert_eq!(
+            cached_latest(&entries, "plugin", proxy).as_deref(),
+            Some("2.0.0")
+        );
+    }
+
+    #[test]
+    fn cached_install_target_ignores_another_proxy() {
+        let entries = HashMap::from([(
+            cache_key("plugin", "^1.0.0", "1.0.0", &HashMap::new(), ""),
+            CacheEntry {
+                info: UpdateInfo {
+                    update_available: true,
+                    latest: Some("2.0.0".into()),
+                },
+                at: Instant::now(),
+            },
+        )]);
+        assert_eq!(
+            cached_latest(&entries, "plugin", "http://127.0.0.1:7897/"),
+            None
+        );
+        assert_eq!(cached_latest(&entries, "different-plugin", ""), None);
+    }
 
     #[test]
     fn hex_value_accepts_only_ascii_hex_nibbles() {
@@ -1036,11 +1164,11 @@ importers:\n  .:\n    dependencies:\n      stable-plugin:\n        specifier: gi
 
         std::fs::write(&path, format!("{prefix}1111111\n")).unwrap();
         let before = read_locked_commits(&dir, &specs);
-        let before_key = cache_key("plugin", "github:owner/repo", "1.0.0", &before);
+        let before_key = cache_key("plugin", "github:owner/repo", "1.0.0", &before, "");
 
         std::fs::write(&path, format!("{prefix}2222222\n")).unwrap();
         let after = read_locked_commits(&dir, &specs);
-        let after_key = cache_key("plugin", "github:owner/repo", "1.0.0", &after);
+        let after_key = cache_key("plugin", "github:owner/repo", "1.0.0", &after, "");
 
         assert_eq!(before.get("plugin"), Some(&"1111111".to_string()));
         assert_eq!(after.get("plugin"), Some(&"2222222".to_string()));
@@ -1113,23 +1241,23 @@ importers:\n  .:\n    dependencies:\n      plugin:\n        specifier: github:ow
     #[test]
     fn cache_key_changes_with_version() {
         let locked = HashMap::new();
-        let a = cache_key("p", "spec", "1.0.0", &locked);
-        let b = cache_key("p", "spec", "1.0.1", &locked);
+        let a = cache_key("p", "spec", "1.0.0", &locked, "");
+        let b = cache_key("p", "spec", "1.0.1", &locked, "");
         assert_ne!(a, b);
-        let c = cache_key("p", "spec2", "1.0.0", &locked);
+        let c = cache_key("p", "spec2", "1.0.0", &locked, "");
         assert_ne!(a, c);
     }
 
     #[test]
     fn cache_key_changes_with_locked_git_commit() {
         let missing = HashMap::new();
-        let missing_key = cache_key("p", "github:Owner/Repo", "1.0.0", &missing);
+        let missing_key = cache_key("p", "github:Owner/Repo", "1.0.0", &missing, "");
         let mut locked = HashMap::from([("p".into(), "aaaaaaa".into())]);
-        let a = cache_key("p", "github:Owner/Repo", "1.0.0", &locked);
+        let a = cache_key("p", "github:Owner/Repo", "1.0.0", &locked, "");
         let cache = HashMap::from([(a.clone(), true)]);
 
         locked.insert("p".into(), "bbbbbbb".into());
-        let b = cache_key("p", "github:Owner/Repo", "1.0.0", &locked);
+        let b = cache_key("p", "github:Owner/Repo", "1.0.0", &locked, "");
 
         assert_ne!(missing_key, a);
         assert_ne!(a, b);
@@ -1139,10 +1267,10 @@ importers:\n  .:\n    dependencies:\n      plugin:\n        specifier: github:ow
     #[test]
     fn registry_cache_key_ignores_unrelated_git_commits() {
         let mut locked = HashMap::from([("other-plugin".into(), "aaaaaaa".into())]);
-        let a = cache_key("p", "^1.0.0", "1.0.0", &locked);
+        let a = cache_key("p", "^1.0.0", "1.0.0", &locked, "");
 
         locked.insert("other-plugin".into(), "bbbbbbb".into());
-        let b = cache_key("p", "^1.0.0", "1.0.0", &locked);
+        let b = cache_key("p", "^1.0.0", "1.0.0", &locked, "");
 
         assert_eq!(a, b);
     }
