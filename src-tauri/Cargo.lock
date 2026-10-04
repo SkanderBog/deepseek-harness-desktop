@@ -1123,6 +1123,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-store",
  "tauri-plugin-wdio-webdriver",
+ "tempfile",
  "time",
  "tokio",
  "tracing",
