@@ -164,9 +164,12 @@ export function ConfigDebug() {
         }
       }
       await store.setting.update({ proxyUrl })
+      return proxyUrl
     },
-    onSuccess: () => {
-      setProxyInput(undefined)
+    onSuccess: (submitted) => {
+      // 保存期间用户可能又改了输入：只在输入仍等于本次提交值时才收拢编辑态，
+      // 否则会把在途的新输入抹掉。
+      setProxyInput(current => (current !== undefined && current.trim() !== submitted ? current : undefined))
       toast(t('network.saved'))
     },
     onError: (error: unknown) => {
