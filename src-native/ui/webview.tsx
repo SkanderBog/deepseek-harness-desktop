@@ -1,3 +1,4 @@
+import type { Edge } from 'react-native-safe-area-context'
 import type { ShouldStartLoadRequest, WebViewMessageEvent } from 'react-native-webview/lib/WebViewTypes'
 import type { NotificationFocus } from '@/store/modules/connection'
 import type { BridgeAddress } from '@/utils/bridge-protocol'
@@ -9,7 +10,7 @@ import { useThemeColor } from 'heroui-native/hooks'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If, Then } from 'react-if-lite'
-import { BackHandler, Linking, Modal, Pressable, Text, View } from 'react-native'
+import { BackHandler, Linking, Modal, Platform, Pressable, Text, View } from 'react-native'
 import { ArrowLeft, Hand } from 'react-native-lucide'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { WebView } from 'react-native-webview'
@@ -38,6 +39,9 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
   const navigation = useNavigation()
   const appState = useAppState()
   const background = useThemeColor('background')
+  const edges: Edge[] = ['top']
+  if (Platform.OS !== 'ios')
+    edges.push('bottom')
   const shim = createNotificationShim(address.id, nonce)
   // keep:effect Mirror native visibility into the authenticated loaded document.
   useEffect(() => {
@@ -165,7 +169,7 @@ export function BridgeWebView({ address, generation }: { address: BridgeAddress,
     void refreshHealth()
   }
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: background }} edges={['top', 'bottom']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: background }} edges={edges}>
       <View className="flex-1">
         <WebView
           ref={ref}
