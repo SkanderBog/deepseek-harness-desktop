@@ -272,5 +272,10 @@ jobs:
         run: |
           for iteration in 1 2 3 4 5; do
             cargo test --all-features --locked service::plugin::update::tests:: -- --test-threads=1 || exit 1
+      - name: Check startup regression stability
+        shell: bash
+        run: |
+          for iteration in 1 2 3 4 5; do
+            cargo test --all-features --locked desktop::startup::tests:: -- --test-threads=1 || exit 1
           done
         working-directory: src-tauri
