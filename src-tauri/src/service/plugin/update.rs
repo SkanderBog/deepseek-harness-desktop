@@ -14,7 +14,7 @@
 //!   `latest > installed` 才视为有更新（避免把 `latest` 指向更旧版本误判为可升级）。
 //!
 //! 与 market 相同的兜底：任何一次判定失败都报告「无更新」，绝不因一次网络抖动或
-//! 404 让整个插件管理器不可用；结果按 (id, spec, 版本, Git 锁定提交) 缓存 30 分钟
+//! 404 让整个插件管理器不可用；结果按 (id, 代理, spec, 版本, Git 锁定提交) 缓存 30 分钟
 //! （TTL），期间
 //! 重复调用直接命中缓存、不重复打网络。缓存缺失/未判定时 `update_available=false`，
 //! 前端由 `refresh_plugin_updates` 在挂载后补齐，因此首次展示短暂无按钮、随后自动
@@ -56,37 +56,33 @@ fn cache() -> &'static Mutex<HashMap<String, CacheEntry>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 缓存键：spec、版本或该直接依赖的 Git 锁定提交变化后，旧结果自动失效。
+/// 缓存键包含请求使用的代理，防止切换代理后复用旧失败或被旧请求回填覆盖。
 fn cache_key(
     id: &str,
     spec: &str,
     version: &str,
     locked: &HashMap<String, String>,
-    _proxy_url: &str,
+    proxy_url: &str,
 ) -> String {
     let locked_commit = extract_github_target(spec)
         .and_then(|_| locked.get(id))
         .map(String::as_str)
         .unwrap_or_default();
-    format!("{id}\u{0}{spec}\u{0}{version}\u{0}{locked_commit}")
+    format!("{id}\u{0}{proxy_url}\u{0}{spec}\u{0}{version}\u{0}{locked_commit}")
 }
 
 /// 探测缓存里该插件的「最新版本」；没探测过或缓存里没有它时返回 `None`。
 ///
 /// 升级「以 0 退出但版本没动」时需要知道本该装到哪个版本：发布时长豁免是按精确
 /// `包名@版本` 写的，没有目标版本就给不出可授权的条目。这里只读缓存、不新发请求
-/// （探测由 [`refresh`] 统一负责），缓存键以 `id` 开头（见 [`cache_key`]）。
+/// （探测由 [`refresh`] 统一负责），仅采信当前代理下的结果。
 pub(crate) fn known_latest(app_handle: &AppHandle, id: &str) -> Option<String> {
     let proxy_url = crate::config::get_store_dat_setting(app_handle).proxy_url;
     cached_latest(&cache().lock().unwrap(), id, &proxy_url)
 }
 
-fn cached_latest(
-    cache: &HashMap<String, CacheEntry>,
-    id: &str,
-    _proxy_url: &str,
-) -> Option<String> {
-    let prefix = format!("{id}\u{0}");
+fn cached_latest(cache: &HashMap<String, CacheEntry>, id: &str, proxy_url: &str) -> Option<String> {
+    let prefix = format!("{id}\u{0}{proxy_url}\u{0}");
     cache
         .iter()
         .filter(|(key, _)| key.starts_with(&prefix))
