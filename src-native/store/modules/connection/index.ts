@@ -86,6 +86,7 @@ export function parseConnectionSnapshot(value: unknown): ConnectionSnapshot {
  * 避免抽屉开合/轮询健康状态时产生大量重复写入。`setItem` 只统计最近一次成功写入。
  */
 let persistedPayload: string | null = null
+let writeQueue = Promise.resolve()
 
 /**
  * 「磁盘内容未知」标记：只有 AsyncStorage 读失败（而非负载损坏）时置位。
@@ -125,10 +126,16 @@ const connectionStorage = {
     try {
       const snapshot = parseConnectionSnapshot(typeof value === 'string' ? JSON.parse(value) : value)
       const serialized = JSON.stringify(snapshot)
-      if (serialized === persistedPayload)
-        return
-      await AsyncStorage.setItem(key, serialized)
-      persistedPayload = serialized
+      writeQueue = writeQueue.then(async () => {
+        if (serialized === persistedPayload)
+          return
+        await AsyncStorage.setItem(key, serialized)
+        persistedPayload = serialized
+      }).catch((error) => {
+        console.error('[connection] save failed:', error)
+        reportStorageFailure()
+      })
+      await writeQueue
     }
     catch (error) {
       console.error('[connection] save failed:', error)
@@ -144,6 +151,7 @@ const connectionStorage = {
 export function resetConnectionStorageCache(): void {
   persistedPayload = null
   readFailed = false
+  writeQueue = Promise.resolve()
 }
 
 /**

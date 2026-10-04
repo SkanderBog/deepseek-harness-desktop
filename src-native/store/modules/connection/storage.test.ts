@@ -122,6 +122,7 @@ describe('restoreConnections', () => {
 
   it('hydrates an empty store and persists the clean snapshot when there is no persisted snapshot', async () => {
     await restoreConnections()
+    await vi.advanceTimersByTimeAsync(0)
     expect(connection.hydrated).toBe(true)
     expect(connection.serialize()).toEqual({ version: 1, history: [], guidedHosts: [] })
     expect(connection.tokens).toEqual({})
@@ -153,6 +154,7 @@ describe('restoreConnections', () => {
   it('reports malformed persisted JSON without accepting its embedded token and replaces it with a clean snapshot', async () => {
     native.read.mockResolvedValue('{"version":1,"tokens":{"bad":"secret"}')
     await restoreConnections()
+    await vi.advanceTimersByTimeAsync(0)
     expect(connection.hydrated).toBe(true)
     expect(connection.serialize()).toEqual({ version: 1, history: [], guidedHosts: [] })
     expect(connection.tokens).toEqual({})
@@ -275,6 +277,41 @@ describe('restoreConnections', () => {
 })
 
 describe('bindConnectionPersistence security and ordering', () => {
+  it('persists restored history after an earlier different snapshot finishes saving', async () => {
+    const saved = payload([{ ...alpha, lastConnectedAt: 10 }])
+    let disk = saved
+    await hydrate({ version: 1, history: [{ ...alpha, lastConnectedAt: 10 }], guidedHosts: [] })
+    const pending = deferred<void>()
+    native.write.mockImplementationOnce(async (_key, value) => {
+      await pending.promise
+      disk = value
+    }).mockImplementation(async (_key, value) => { disk = value })
+    connection.$patch({ history: [{ ...beta, lastConnectedAt: 20 }] })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(native.write).toHaveBeenCalledTimes(1)
+    connection.$patch({ history: [{ ...alpha, lastConnectedAt: 10 }] })
+    await vi.advanceTimersByTimeAsync(0)
+    pending.resolve(undefined)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(disk).toBe(saved)
+    expect(writtenPayloads()).toEqual([payload([{ ...beta, lastConnectedAt: 20 }]), saved])
+  })
+
+  it('does not repeat pending snapshot writes for transient UI changes', async () => {
+    await hydrate()
+    const pending = deferred<void>()
+    native.write.mockReturnValueOnce(pending.promise)
+    connection.$patch({ history: [{ ...alpha, lastConnectedAt: 10 }] })
+    await vi.advanceTimersByTimeAsync(0)
+    connection.setDrawerOpen(true)
+    await vi.advanceTimersByTimeAsync(0)
+    connection.setNotice('Still saving')
+    await vi.advanceTimersByTimeAsync(0)
+    pending.resolve(undefined)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(native.write).toHaveBeenCalledExactlyOnceWith('dsh-bridge/connections', payload([{ ...alpha, lastConnectedAt: 10 }]))
+  })
+
   it('does not write any pre-hydration runtime changes', async () => {
     bind()
     connection.accept({ ...alpha, token: 'not-yet-hydrated' })
@@ -316,7 +353,7 @@ describe('bindConnectionPersistence security and ordering', () => {
     expect(native.deleteToken).not.toHaveBeenCalled()
   })
 
-  it('writes later normalized snapshots while an earlier snapshot write is still pending', async () => {
+  it('queues later normalized snapshots until an earlier snapshot write completes', async () => {
     const firstWrite = deferred<void>()
     native.write.mockReturnValueOnce(firstWrite.promise)
     await hydrate()
@@ -329,7 +366,7 @@ describe('bindConnectionPersistence security and ordering', () => {
     connection.accept({ ...beta, token: 'beta-secret' })
     connection.markLoaded(connection.viewGeneration, 20)
     await vi.advanceTimersByTimeAsync(0)
-    expect(native.write).toHaveBeenCalledTimes(2)
+    expect(native.write).toHaveBeenCalledTimes(1)
     expect(JSON.parse(native.write.mock.calls[0]![1])).toEqual({ version: 1, history: [{ ...alpha, lastConnectedAt: 10 }], guidedHosts: [] })
     expect(native.writeToken.mock.calls).toEqual([[alphaKey, 'alpha-secret'], [alphaKey, 'alpha-secret'], [betaKey, 'beta-secret']])
     firstWrite.resolve(undefined)
@@ -403,6 +440,27 @@ describe('bindConnectionPersistence security and ordering', () => {
 })
 
 describe('connection persistence failures', () => {
+  it('saves the queued latest snapshot after an earlier write rejects', async () => {
+    await hydrate()
+    const pending = deferred<void>()
+    const error = new Error('First write failed')
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let disk = emptyPayload
+    native.write.mockImplementationOnce(async () => pending.promise)
+      .mockImplementation(async (_key, value) => { disk = value })
+    connection.$patch({ history: [{ ...alpha, lastConnectedAt: 10 }] })
+    await vi.advanceTimersByTimeAsync(0)
+    connection.$patch({ history: [{ ...beta, lastConnectedAt: 20 }] })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(native.write).toHaveBeenCalledTimes(1)
+    pending.reject(error)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(disk).toBe(payload([{ ...beta, lastConnectedAt: 20 }]))
+    expect(native.write).toHaveBeenCalledTimes(2)
+    expect(connection.notice).toBe(storageFailure)
+    expect(log).toHaveBeenCalledExactlyOnceWith('[connection] save failed:', error)
+  })
+
   it('reports a public snapshot write failure and permits a subsequent successful save', async () => {
     const error = new Error('Disk full')
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
