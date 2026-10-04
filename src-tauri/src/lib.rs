@@ -5,6 +5,9 @@ mod logger;
 mod service;
 mod utils;
 
+#[cfg(target_os = "macos")]
+use tauri::Manager;
+
 /// 对显式给定的核心安装目录施加全套 dsh 补丁（`--patch-core <dir>` 的入口）。
 ///
 /// E2E 的插件 L2 直接起 `dsh web`，不经过桌面端启动路径；没有这一步，被测核心就缺少
@@ -72,6 +75,9 @@ pub fn run() -> Result<(), String> {
     }
     // 初始化日志系统
     logger::init();
+    // Unix：把持久化的 DSH_HOME 补回进程环境（issue #871）。必须在桌面端装配之前，
+    // 否则首次 get_dsh_data_path 会落到默认目录，日志、store 与 shim 全部写错位置。
+    service::data_dir::restore_process_env();
 
     desktop::builder()
         .invoke_handler(desktop::handler())
@@ -84,7 +90,9 @@ pub fn run() -> Result<(), String> {
             }
             #[cfg(target_os = "macos")]
             tauri::RunEvent::MainEventsCleared => {
-                desktop::builder::sync_macos_titlebars(app_handle);
+                desktop::builder::sync_macos_titlebars(|| {
+                    app_handle.webview_windows().into_values()
+                });
             }
             // macOS：关闭按钮只是隐藏窗口（见 builder 的 on_window_event），
             // 点击 Dock 图标时系统回调 applicationShouldHandleReopen 触发
