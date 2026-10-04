@@ -128,6 +128,7 @@ pub(super) fn run(
             source.display()
         ));
     }
+    validate_target(source, target)?;
     emit(step("migrate", "scan", 0, 0, 0, 0));
     let mut expected = TreeStats::default();
     fs_ops::scan_tree(source, &mut expected)?;
@@ -340,6 +341,10 @@ fn validate_target(source: &Path, target: &Path) -> Result<(), String> {
     if !target.is_absolute() {
         return Err(format!("DATA_DIR_TARGET_NOT_ABSOLUTE: {}", target.display()));
     }
+    let resolved_source = resolved_path(source)?;
+    let resolved_target = resolved_path(target)?;
+    let source = resolved_source.as_path();
+    let target = resolved_target.as_path();
     if same_path(source, target) {
         return Err(format!("DATA_DIR_SAME_AS_SOURCE: {}", target.display()));
     }
@@ -359,6 +364,36 @@ fn validate_target(source: &Path, target: &Path) -> Result<(), String> {
         return Err(format!("DATA_DIR_TARGET_NOT_EMPTY: {}", target.display()));
     }
     Ok(())
+}
+
+fn resolved_path(path: &Path) -> Result<PathBuf, String> {
+    let mut existing = path;
+    let mut missing = Vec::new();
+    loop {
+        match fs::canonicalize(existing) {
+            Ok(mut resolved) => {
+                for name in missing.iter().rev() {
+                    resolved.push(name);
+                }
+                return Ok(resolved);
+            }
+            Err(error) => {
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && matches!(fs::symlink_metadata(existing), Err(ref metadata_error) if metadata_error.kind() == std::io::ErrorKind::NotFound)
+                {
+                    if let (Some(name), Some(parent)) = (existing.file_name(), existing.parent()) {
+                        missing.push(name);
+                        existing = parent;
+                        continue;
+                    }
+                }
+                return Err(format!(
+                    "DATA_DIR_PATH_RESOLVE: {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
 }
 
 /// 重写 CLI shim 与 pnpm 元数据（best-effort）。
@@ -448,6 +483,116 @@ fn step(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_rejects_nested_targets_hidden_by_parent_components() {
+        let root = temp_dir("resolved-parent");
+        let source = root.join("home");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(root.join("other")).unwrap();
+        let target = root.join("other").join("..").join("home").join("copy");
+        let result = validate_target(&source, &target);
+        assert!(
+            matches!(result, Err(ref error) if error.starts_with("DATA_DIR_TARGET_INSIDE_SOURCE:")),
+            "{result:?}"
+        );
+        assert!(!source.join("copy").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_rejects_nested_targets_reached_through_symlinked_parents() {
+        let root = temp_dir("resolved-link");
+        let source = root.join("home");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("sentinel"), "preserve").unwrap();
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(&source, &alias).unwrap();
+        let result = validate_target(&source, &alias.join("copy"));
+        assert!(
+            matches!(result, Err(ref error) if error.starts_with("DATA_DIR_TARGET_INSIDE_SOURCE:")),
+            "{result:?}"
+        );
+        assert!(!source.join("copy").exists());
+        assert_eq!(
+            fs::read_to_string(source.join("sentinel")).unwrap(),
+            "preserve"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_resolves_the_source_before_comparing_target_boundaries() {
+        let root = temp_dir("resolved-source");
+        let source = root.join("home");
+        fs::create_dir_all(&source).unwrap();
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(&source, &alias).unwrap();
+        let result = validate_target(&alias, &source.join("copy"));
+        assert!(
+            matches!(result, Err(ref error) if error.starts_with("DATA_DIR_TARGET_INSIDE_SOURCE:")),
+            "{result:?}"
+        );
+        let result = validate_target(&alias, &source);
+        assert!(
+            matches!(result, Err(ref error) if error.starts_with("DATA_DIR_SAME_AS_SOURCE:")),
+            "{result:?}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_allows_separate_targets_under_symlinked_parents() {
+        let root = temp_dir("separate-link");
+        let source = root.join("home");
+        let destination = root.join("separate");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(&destination, &alias).unwrap();
+        assert_eq!(
+            validate_target(&source, &alias.join("new").join("home")),
+            Ok(())
+        );
+        assert!(!destination.join("new").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_targets_below_a_regular_file() {
+        let root = temp_dir("file-parent");
+        let source = root.join("home");
+        fs::create_dir_all(&source).unwrap();
+        let file = root.join("file");
+        fs::write(&file, "preserve").unwrap();
+        assert!(validate_target(&source, &file.join("copy")).is_err());
+        assert_eq!(fs::read_to_string(file).unwrap(), "preserve");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_rejects_dangling_and_cyclic_destination_links() {
+        let root = temp_dir("broken-link");
+        let source = root.join("home");
+        fs::create_dir_all(&source).unwrap();
+        let dangling = root.join("dangling");
+        std::os::unix::fs::symlink(root.join("missing"), &dangling).unwrap();
+        let cyclic = root.join("cyclic");
+        std::os::unix::fs::symlink(&cyclic, &cyclic).unwrap();
+        for parent in [&dangling, &cyclic] {
+            let result = validate_target(&source, &parent.join("copy"));
+            assert!(
+                matches!(result, Err(ref error) if error.starts_with("DATA_DIR_PATH_RESOLVE:")),
+                "{result:?}"
+            );
+        }
+        assert!(!root.join("missing").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
