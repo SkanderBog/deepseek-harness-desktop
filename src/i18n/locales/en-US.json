@@ -134,7 +134,7 @@
   "ui.launch_on_login": "Launch app at login",
   "ui.launch_on_login_hint": "Starts the desktop app after you sign in. Harness service startup is configured separately.",
   "ui.close_action": "Close action",
-  "ui.close_action_hint": "What happens when you close the main window. “Hide to tray” keeps the app running in the background — click the tray icon to reopen it. On macOS, while in the background it does not appear in the ⌘-Tab app switcher.",
+  "ui.close_action_hint": "Choose whether closing the main window hides the app to the tray or quits it.",
   "ui.close_action_tray": "Hide to tray",
   "ui.close_action_quit": "Quit app",
   "ui.cli_link": "CLI Integration",

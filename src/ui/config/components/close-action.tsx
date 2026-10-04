@@ -1,4 +1,4 @@
-import { Description, ListBox, Select } from '@heroui/react'
+import { ListBox, Select } from '@heroui/react'
 import { useMutation } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useStore } from 'valtio-define'
@@ -64,9 +64,7 @@ export function ConfigCloseAction() {
           </Select.Popover>
         </Select>
       </div>
-      <Description className="text-[10px] text-muted/70">
-        {t('ui.close_action_hint')}
-      </Description>
+      <p className="text-[10px] text-muted/70">{t('ui.close_action_hint')}</p>
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { Description, Switch } from '@heroui/react'
+import { Switch } from '@heroui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
@@ -39,9 +39,7 @@ export function ConfigLaunchOnLogin() {
           </Switch.Content>
         </Switch>
       </div>
-      <Description className="text-[10px] text-muted/70">
-        {t('ui.launch_on_login_hint')}
-      </Description>
+      <p className="text-[10px] text-muted/70">{t('ui.launch_on_login_hint')}</p>
     </div>
   )
 }

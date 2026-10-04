@@ -597,7 +597,7 @@ export function ConfigPlugin() {
         <div className="flex flex-col gap-4">
           {/* 安装入口：接受 npm spec（可逗号/空白分隔多个），先经管理器只读预检再入队 */}
           <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 px-1">
+            <div className="flex items-center gap-2">
               <Input
                 variant="secondary"
                 className="h-8 flex-1 font-mono text-xs"
