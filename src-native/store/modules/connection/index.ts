@@ -87,12 +87,28 @@ export function parseConnectionSnapshot(value: unknown): ConnectionSnapshot {
  */
 let persistedPayload: string | null = null
 
+/**
+ * 「磁盘内容未知」标记：只有 AsyncStorage 读失败（而非负载损坏）时置位。
+ * 读失败时拿不到任何内容，写回会以空快照覆盖真实历史，因此这次会话不再写盘；
+ * 负载损坏属于可恢复场景，正常覆盖。
+ */
+let readFailed = false
+
 const connectionStorage = {
   async getItem(key: string): Promise<ConnectionSnapshot | null> {
+    let serialized: string | null
     try {
-      const serialized = await AsyncStorage.getItem(key)
-      if (!serialized)
-        return null
+      serialized = await AsyncStorage.getItem(key)
+    }
+    catch (error) {
+      readFailed = true
+      console.error('[connection] restore failed:', error)
+      reportStorageFailure()
+      return null
+    }
+    if (!serialized)
+      return null
+    try {
       const snapshot = parseConnectionSnapshot(JSON.parse(serialized))
       persistedPayload = JSON.stringify(snapshot)
       return snapshot
@@ -104,6 +120,8 @@ const connectionStorage = {
     }
   },
   async setItem(key: string, value: unknown): Promise<void> {
+    if (readFailed)
+      return
     try {
       const snapshot = parseConnectionSnapshot(typeof value === 'string' ? JSON.parse(value) : value)
       const serialized = JSON.stringify(snapshot)
@@ -125,6 +143,7 @@ const connectionStorage = {
  */
 export function resetConnectionStorageCache(): void {
   persistedPayload = null
+  readFailed = false
 }
 
 /**
