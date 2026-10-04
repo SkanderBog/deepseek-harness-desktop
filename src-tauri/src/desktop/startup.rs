@@ -143,8 +143,31 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn real_low_integrity_process_returns_an_actionable_error_before_app_setup() {
+    fn real_low_integrity_process_shows_an_actionable_error_before_app_setup() {
         use std::os::windows::process::CommandExt;
+        use windows_sys::core::BOOL;
+        use windows_sys::Win32::Foundation::{HWND, LPARAM};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW,
+            WM_CLOSE,
+        };
+
+        unsafe extern "system" fn dismiss_error(window: HWND, parameter: LPARAM) -> BOOL {
+            let probe = &mut *(parameter as *mut (u32, bool));
+            let mut process = 0;
+            GetWindowThreadProcessId(window, &mut process);
+            if process == probe.0 && IsWindowVisible(window) != 0 {
+                let mut title = [0u16; 256];
+                let length = GetWindowTextW(window, title.as_mut_ptr(), title.len() as i32);
+                let title = String::from_utf16_lossy(&title[..length as usize]);
+                if title.contains("DeepSeek Harness Desktop") && title.contains("Startup failed") {
+                    probe.1 = PostMessageW(window, WM_CLOSE, 0, 0) != 0;
+                    return 0;
+                }
+            }
+            1
+        }
+
         let home = tempfile::tempdir().unwrap();
         let local = home.path().join("AppData/Local");
         let roaming = home.path().join("AppData/Roaming");
@@ -168,7 +191,13 @@ mod tests {
             .spawn()
             .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut probe = (child.id(), false);
         while child.try_wait().unwrap().is_none() {
+            if !probe.1 {
+                unsafe {
+                    EnumWindows(Some(dismiss_error), std::ptr::addr_of_mut!(probe) as LPARAM);
+                }
+            }
             if std::time::Instant::now() >= deadline {
                 child.kill().unwrap();
                 let _ = child.wait();
@@ -184,6 +213,10 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains("LOW_INTEGRITY_GUARD_VERIFIED"));
+        assert!(
+            probe.1,
+            "the low-integrity process did not display a native error dialog"
+        );
     }
 
     #[cfg(windows)]
@@ -239,6 +272,7 @@ mod tests {
         assert_eq!(process_integrity_level().unwrap(), 0x1000);
         let error = crate::run().unwrap_err();
         assert!(error.starts_with("STARTUP_LOW_INTEGRITY"), "{error}");
+        report(&error);
         println!("LOW_INTEGRITY_GUARD_VERIFIED");
     }
 }
