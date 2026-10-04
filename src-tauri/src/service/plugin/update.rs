@@ -557,7 +557,7 @@ pub async fn refresh(app_handle: &AppHandle) -> Result<Vec<DshPlugin>, String> {
     let mut plugins = super::watch::list(app_handle);
     let specs = read_specs(app_handle);
     let locked = read_locked_commits(&profile_dir(app_handle), &specs);
-    let client = reqwest::Client::builder()
+    let client = crate::config::proxy::http_client_builder(app_handle)?
         .user_agent("deepseek-harness-desktop")
         .timeout(Duration::from_secs(10))
         .build()
