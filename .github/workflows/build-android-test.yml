@@ -14,7 +14,7 @@ on:
 permissions:
   contents: read
 
-# 同一分支的手动构建排队执行，避免并发挤占 runner。
+# 同一分支的新手动构建会取消正在运行的旧构建，避免并发挤占 runner。
 concurrency:
   group: build-android-test-${{ github.ref }}
   cancel-in-progress: true
