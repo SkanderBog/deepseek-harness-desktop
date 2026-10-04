@@ -212,9 +212,16 @@ describe.skipIf(process.platform === 'darwin')('桌面端启动冒烟', () => {
         const bridge = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__
         await bridge.invoke('update_app_config', { proxyUrl })
       }, original)
-      const closeTrigger = await browser.$('[data-testid="dsh-config-dialog-close"]')
-      if (await closeTrigger.isClickable())
-        await closeTrigger.click()
+      // 收尾不能复用 click()：用例主体失败时对话框可能已经关掉，waitForClickable()
+      // 会再抛一次超时、把真正的失败原因盖掉。这里只按「对话框是否还开着」决定收不收，
+      // 用 Escape 关闭以避开弹窗顶层的按压拦截。
+      if (await browser.$('[data-testid="dsh-config-dialog"]').isExisting()) {
+        await browser.keys(Key.Escape)
+        await browser.waitUntil(
+          async () => !(await browser.$('[data-testid="dsh-config-dialog"]').isExisting()),
+          { timeoutMsg: '配置对话框未能关闭' },
+        )
+      }
     }
   })
 
