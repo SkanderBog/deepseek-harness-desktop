@@ -181,7 +181,25 @@ describe('restoreConnections', () => {
     expect(connection.notice).toBe(storageFailure)
     expect(log).toHaveBeenCalledExactlyOnceWith('[connection] restore failed:', error)
     expect(native.readToken).not.toHaveBeenCalled()
-    expect(native.write).toHaveBeenCalledExactlyOnceWith('dsh-bridge/connections', emptyPayload)
+    expect(native.write).not.toHaveBeenCalled()
+  })
+
+  it('stops writing history after a failed read and resumes once a read succeeds', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    native.read.mockRejectedValueOnce(new Error('History storage unavailable'))
+    await restoreConnections()
+    expect(connection.hydrated).toBe(true)
+    expect(native.write).not.toHaveBeenCalled()
+
+    connection.$patch(createConnectionState())
+    connection.$persist.meta.hydrated = false
+    connection.$persist.meta.mounted = false
+    native.read.mockResolvedValue(JSON.stringify(parseConnectionSnapshot({ version: 1, history: [{ ...alpha, lastConnectedAt: 10 }], guidedHosts: [] })))
+    await restoreConnections()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(connection.history).toEqual([{ ...alpha, lastConnectedAt: 10 }])
+    expect(writtenPayloads()).not.toContain(emptyPayload)
   })
 
   it('preserves valid history when secure-token reads fail without falling back to plaintext tokens', async () => {

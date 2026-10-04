@@ -59,7 +59,7 @@ function ConnectionDrawer() {
             className="h-auto min-h-16 justify-start gap-3 rounded-xl px-3 py-4"
             isDisabled={!state.current}
             accessibilityLabel={t('connection.reconnect')}
-            accessibilityHint={`${currentLabel}，${t(`connection.${currentStatus}`)}`}
+            accessibilityHint={t('connection.hostStatus', { host: currentLabel, status: t(`connection.${currentStatus}`) })}
             onPress={() => {
               if (connection.current)
                 connectAddress(connection.current)
@@ -95,7 +95,7 @@ function ConnectionDrawer() {
                       key={entry.id}
                       variant="ghost"
                       className="h-auto min-h-16 justify-start gap-3 rounded-xl px-3 py-4"
-                      accessibilityLabel={`${connectionLabel(entry)}，${t(`connection.${status}`)}`}
+                      accessibilityLabel={t('connection.hostStatus', { host: connectionLabel(entry), status: t(`connection.${status}`) })}
                       onPress={() => connectAddress(entry)}
                     >
                       <Dot status={status} />
