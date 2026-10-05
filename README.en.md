@@ -107,6 +107,15 @@ brew install dsh-tauri/desktop/deepseek-harness
 
 The proxy URL, including any credentials, is stored in the local desktop configuration. Prefer an HTTPS proxy when authenticating to a remote proxy: an HTTP proxy connection does not encrypt proxy credentials, even when the destination website uses HTTPS.
 
+## Mobile support
+
+The same repository also maintains the **DSH Bridge** mobile app (Expo / React Native): it discovers a DSH host on the local network and hosts the Harness web UI in a full-screen WebView. The source lives in `src-native/`.
+
+- Android APKs are downloadable from the [Releases](https://github.com/dsh-tauri/deepseek-harness-desktop/releases) page as `Deepseek.Harness.Android_x.x.x.apk`, and the version follows the desktop app.
+- **iOS is not published yet**: only the Android build and release pipeline exists.
+- The mobile app is maintained **only while no official mobile service exists**, as a stopgap.
+- Development commands (`pnpm dev:native`, `pnpm android`, `pnpm test:native`, `pnpm typecheck:native`, …) plus the discovery, connection, persistence and release conventions are documented in the [mobile specification](docs/specs/native.md).
+
 ## Runtime
 
 On Windows, `STARTUP_LOW_INTEGRITY` means the process is running below Medium integrity and cannot write normal user data. This can happen when an installation folder has an inherited Low integrity label: a replacement executable can inherit it during an update. Inspect the folder and executable with `icacls`; restore the trusted installation's labels to Medium, or reinstall into a normal folder. Running the same Low-labeled executable as administrator does not remove its integrity restriction. Keep sessions and `DSH_HOME` unchanged. Startup failures now show a native Windows dialog with the underlying error.
