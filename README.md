@@ -70,7 +70,7 @@
 
 ## 可选预设
 
-启动引导提供以下 6 个社区插件，按需安装；前 5 个标记为推荐，Billion Context 需主动选择。
+启动引导提供以下 8 个社区插件，按需安装；前 5 个标记为推荐，最后 3 个需主动选择。
 
 | 插件 | 包标识 | 用途 |
 | --- | --- | --- |
@@ -80,6 +80,8 @@
 | [DSH Bridge](https://github.com/wenbin-wb/dsh-bridge) | `@wenbin_wb/dsh-bridge` | 远程访问、隧道与机器人接入 |
 | [DSH IM](https://github.com/xmanrui/dsh-im) | `@xmanrui/dsh-im` | IM 渠道与机器人管理 |
 | [Billion Context](https://github.com/ranxianglei/billion-context) | `billion-context` | 上下文压缩与历史恢复 |
+| [DSH PDF Reader](https://github.com/SkanderBog/dsh-pdf-reader) | `dsh-pdf-reader` | 按页 PDF 阅读、本地 OCR、引用、搜索与视觉裁剪 |
+| [DSH Context Manager](https://github.com/SkanderBog/dsh-context-manager) | `dsh-context-manager` | 审阅并选择性压缩较早的完整历史组 |
 
 新增或更新预设请提交 [Issue](https://github.com/dsh-tauri/deepseek-harness-desktop/issues)；可用版本由清单中的内核兼容规则决定。
 

@@ -225,6 +225,26 @@
         "recommended": false,
         "checked": false,
         "version": "latest"
+      },
+      {
+        "id": "dsh-pdf-reader",
+        "spec": "github:SkanderBog/dsh-pdf-reader#v0.1.1",
+        "package": "dsh-pdf-reader",
+        "name": "DSH PDF Reader",
+        "description": "Page-aware PDF reading, local OCR, citations, search, and visual crops through Harness tools. · 通过 Harness 工具进行按页 PDF 阅读、本地 OCR、引用、搜索和视觉裁剪。",
+        "repo": "https://github.com/SkanderBog/dsh-pdf-reader",
+        "recommended": false,
+        "checked": false
+      },
+      {
+        "id": "dsh-context-manager",
+        "spec": "github:SkanderBog/dsh-context-manager#v0.1.4",
+        "package": "dsh-context-manager",
+        "name": "DSH Context Manager",
+        "description": "Review context and selectively keep, summarize, or omit older balanced history groups before applying. · 应用前审阅上下文，并选择保留、总结或省略较早的完整历史组。",
+        "repo": "https://github.com/SkanderBog/dsh-context-manager",
+        "recommended": false,
+        "checked": false
       }
     ]
   },

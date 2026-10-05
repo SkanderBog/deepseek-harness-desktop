@@ -621,10 +621,20 @@ mod tests {
     }
 
     #[test]
-    fn preset_manifest_specs_match_ids() {
+    fn preset_manifest_specs_match_registry_ids_or_pinned_github_releases() {
         let presets = load_presets_for_test();
         for preset in &presets {
-            assert_eq!(preset.spec, preset.id);
+            match preset.id.as_str() {
+                "dsh-pdf-reader" => {
+                    assert_eq!(preset.spec, "github:SkanderBog/dsh-pdf-reader#v0.1.1");
+                    assert_eq!(preset.package.as_deref(), Some("dsh-pdf-reader"));
+                }
+                "dsh-context-manager" => {
+                    assert_eq!(preset.spec, "github:SkanderBog/dsh-context-manager#v0.1.4");
+                    assert_eq!(preset.package.as_deref(), Some("dsh-context-manager"));
+                }
+                _ => assert_eq!(preset.spec, preset.id),
+            }
         }
     }
 

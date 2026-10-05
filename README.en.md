@@ -70,7 +70,7 @@ The 12 first-party plugins distributed with desktop resources:
 
 ## Optional presets
 
-Setup offers these 6 community plugins for installation on demand. The first 5 are recommended; Billion Context is opt-in.
+Setup offers these 8 community plugins for installation on demand. The first 5 are recommended; the final 3 are opt-in.
 
 | Plugin | Package | Purpose |
 | --- | --- | --- |
@@ -80,6 +80,8 @@ Setup offers these 6 community plugins for installation on demand. The first 5 a
 | [DSH Bridge](https://github.com/wenbin-wb/dsh-bridge) | `@wenbin_wb/dsh-bridge` | Remote access, tunnels, and bot connections |
 | [DSH IM](https://github.com/xmanrui/dsh-im) | `@xmanrui/dsh-im` | IM channels and bot management |
 | [Billion Context](https://github.com/ranxianglei/billion-context) | `billion-context` | Context compression and history restoration |
+| [DSH PDF Reader](https://github.com/SkanderBog/dsh-pdf-reader) | `dsh-pdf-reader` | Page-aware PDF reading, local OCR, citations, search, and visual crops |
+| [DSH Context Manager](https://github.com/SkanderBog/dsh-context-manager) | `dsh-context-manager` | Reviewed, selective compaction of older balanced history groups |
 
 Request new or updated presets via [Issues](https://github.com/dsh-tauri/deepseek-harness-desktop/issues). Available versions follow the manifest's core compatibility rules.
 

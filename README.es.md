@@ -70,7 +70,7 @@ Los 12 plugins propios distribuidos con los recursos del escritorio:
 
 ## Preajustes opcionales
 
-El asistente ofrece estos 6 plugins comunitarios para instalar a demanda. Los primeros 5 son recomendados; Billion Context requiere selección explícita.
+El asistente ofrece estos 8 plugins comunitarios para instalar a demanda. Los primeros 5 son recomendados; los últimos 3 requieren selección explícita.
 
 | Plugin | Paquete | Función |
 | --- | --- | --- |
@@ -80,6 +80,8 @@ El asistente ofrece estos 6 plugins comunitarios para instalar a demanda. Los pr
 | [DSH Bridge](https://github.com/wenbin-wb/dsh-bridge) | `@wenbin_wb/dsh-bridge` | Acceso remoto, túneles y conexión de bots |
 | [DSH IM](https://github.com/xmanrui/dsh-im) | `@xmanrui/dsh-im` | Canales IM y gestión de bots |
 | [Billion Context](https://github.com/ranxianglei/billion-context) | `billion-context` | Compresión de contexto y restauración del historial |
+| [DSH PDF Reader](https://github.com/SkanderBog/dsh-pdf-reader) | `dsh-pdf-reader` | Lectura de PDF por páginas, OCR local, citas, búsqueda y recortes visuales |
+| [DSH Context Manager](https://github.com/SkanderBog/dsh-context-manager) | `dsh-context-manager` | Compactación selectiva y revisada de grupos históricos completos |
 
 Pedí preajustes nuevos o actualizados mediante [Issues](https://github.com/dsh-tauri/deepseek-harness-desktop/issues). Las versiones disponibles siguen las reglas de compatibilidad del manifiesto.
 
