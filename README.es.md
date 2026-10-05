@@ -103,6 +103,10 @@ brew install dsh-tauri/desktop/deepseek-harness
 - Ejecutar localmente no significa estar totalmente sin conexión: modelos, instalación de plugins, actualizaciones y recursos de mascotas predefinidas pueden usar red.
 - Para problemas de pantalla, Wayland, AppImage y permisos en Linux, consultá la [documentación de instalación y solución de problemas](https://dshtauri.mintlify.site).
 
+- En la ventana de inicio, abrí **Configuration → Network** para configurar un proxy HTTP, HTTPS, SOCKS5 o SOCKS5H para las descargas de runtime/núcleo del escritorio, la comprobación de actualizaciones y las consultas de metadatos de plugins. Dejalo vacío para heredar la configuración de proxy del sistema/entorno. Los cambios se aplican a las solicitudes nuevas; reintentá las descargas que fallen después de guardar. SOCKS5H resuelve los nombres de destino a través del proxy, y las conexiones de loopback siguen siendo directas. Esta opción no modifica las solicitudes de modelos de Harness ni la red de los subprocesos de plugins.
+
+La URL del proxy, incluidas las credenciales, se guarda en la configuración local del escritorio. Si el proxy remoto pide usuario y contraseña, preferí un proxy HTTPS: una conexión por proxy HTTP no cifra las credenciales, aunque el sitio de destino use HTTPS.
+
 ## Soporte móvil
 
 El mismo repositorio también mantiene la app móvil **DSH Bridge** (Expo / React Native): descubre un host DSH en la red local y muestra la interfaz web de Harness en un WebView a pantalla completa. El código está en `src-native/`.
@@ -113,6 +117,8 @@ El mismo repositorio también mantiene la app móvil **DSH Bridge** (Expo / Reac
 - Los comandos de desarrollo (`pnpm dev:native`, `pnpm android`, `pnpm test:native`, `pnpm typecheck:native`, etc.) y las convenciones de descubrimiento, conexión, persistencia y publicación están en la [especificación móvil](docs/specs/native.md).
 
 ## Runtime
+
+En Windows, `STARTUP_LOW_INTEGRITY` significa que el proceso se ejecuta por debajo del nivel de integridad Medio y no puede escribir en el directorio de datos normal del usuario. Puede pasar cuando una carpeta de instalación tiene una etiqueta de integridad Baja heredada: un ejecutable de reemplazo puede heredarla durante una actualización. Revisá la carpeta y el ejecutable con `icacls`; restaurá las etiquetas de la instalación de confianza a Medio, o reinstalá en una carpeta normal. Ejecutar ese mismo ejecutable con etiqueta Baja como administrador no elimina la restricción de integridad. No borres las sesiones ni cambies `DSH_HOME`. Ahora los fallos de arranque muestran un diálogo nativo de Windows con el error subyacente.
 
 | Base actual | Versión |
 | --- | --- |
