@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { APPEARANCE_DEFAULTS, APPEARANCE_PALETTES, appearanceBackdropFilter, appearanceColors, appearanceTokens, normalizeAppearance } from './appearance'
+import { APPEARANCE_DEFAULTS, APPEARANCE_PALETTES, appearanceBackdropFilter, appearanceColors, appearanceSidebarFill, appearanceTokens, normalizeAppearance } from './appearance'
 
 describe('appearance preferences', () => {
   it('migrates old transparency settings but respects an explicit disabled switch', () => {
@@ -24,6 +24,14 @@ describe('appearance preferences', () => {
     expect(appearanceBackdropFilter(normalizeAppearance({ transparency: true, opacity: 70, blur: 18 }))).toBe('blur(18px)')
     expect(appearanceBackdropFilter(normalizeAppearance({ transparency: false, opacity: 70, blur: 18 }))).toBe('none')
     expect(appearanceBackdropFilter(normalizeAppearance({ transparency: true, opacity: 100, blur: 18 }))).toBe('none')
+  })
+
+  it.each([
+    [true, 70, 'color-mix(in srgb,#2e3440 70%,transparent)'],
+    [true, 100, 'color-mix(in srgb,#2e3440 100%,transparent)'],
+    [false, 70, '#343c4a'],
+  ])('gives the shell bar the sidebar column fill for translucent=%s at %s%%', (translucent, percent, expected) => {
+    expect(appearanceSidebarFill('#2e3440', '#343c4a', translucent, percent)).toBe(expected)
   })
 
   it.each(['github', 'github-dimmed', 'github-high-contrast'])('preserves the saved %s palette', (palette) => {

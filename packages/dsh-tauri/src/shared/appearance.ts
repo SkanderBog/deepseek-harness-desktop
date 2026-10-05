@@ -35,6 +35,10 @@ export function appearanceBackdropFilter(appearance: Appearance): string {
     : 'none'
 }
 
+export function appearanceSidebarFill(canvas: string, panel: string, translucent: boolean, percent: number): string {
+  return translucent ? `color-mix(in srgb,${canvas} ${percent}%,transparent)` : panel
+}
+
 type Palette = readonly [canvas: string, panel: string, surface: string, text: string, muted: string, accent: string, border?: string]
 
 const PALETTES: Record<Appearance['palette'], Record<'dark' | 'light', Palette>> = {

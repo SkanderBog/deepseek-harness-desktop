@@ -80,13 +80,14 @@ describe('desktop appearance bridge', () => {
     expect(document.querySelector('style')!.textContent).toContain('#eceff4 70%')
   })
 
-  it('applies the saved frosted-glass blur without blurring opaque windows', () => {
+  it('paints the translucent canvas once: a backdrop filter would composite the fill twice', () => {
     const { send } = setup()
-    send({ transparency: true, opacity: 70, blur: 18 })
-    expect(document.querySelector('style')!.textContent).toContain('backdrop-filter:blur(18px)')
-    expect(document.querySelector('style')!.textContent).toContain('-webkit-backdrop-filter:blur(18px)')
+    send({ palette: 'nord', transparency: true, opacity: 70, blur: 18 })
+    const css = document.querySelector('style')!.textContent!
+    expect(css).toContain('body{background:color-mix(in srgb,#2e3440 70%,transparent)!important}')
+    expect(css).not.toContain('backdrop-filter')
     send({ transparency: false, opacity: 70, blur: 18 })
-    expect(document.querySelector('style')!.textContent).not.toContain('backdrop-filter')
+    expect(document.querySelector('style')!.textContent).toBe('')
   })
 
   it('keeps the canvas opaque when transparency is explicitly disabled', () => {

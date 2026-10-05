@@ -54,14 +54,14 @@ describe('desktop appearance projection', () => {
     const { post, ready, hook } = setup(false)
     ready()
     expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ type: 'dsh://appearance', appearance: { opacity: 100 } })
-    expect(hook.result.current).toContain('#343c4a 100%')
+    expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:#343c4a!important')
   })
 
   it('sends the saved opacity to a transparent window and removes the bridge listener on unmount', () => {
     const { post, ready, hook } = setup(true)
     ready()
     expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { palette: 'nord', opacity: 70 } })
-    expect(hook.result.current).toContain('#343c4a 70%')
+    expect(hook.result.current).toContain('color-mix(in srgb,#2e3440 70%,transparent)')
     hook.unmount()
     post.mockClear()
     ready()
@@ -77,6 +77,19 @@ describe('desktop appearance projection', () => {
     expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { blur: 18 } })
     expect(hook.result.current).toContain('backdrop-filter:blur(18px)')
     expect(hook.result.current).toContain('-webkit-backdrop-filter:blur(18px)')
+  })
+
+  it('paints the shell bar with the fill the embedded sidebar column shows', async () => {
+    const { hook } = setup(true)
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: 18 }
+    })
+    expect(hook.result.current).toContain('--color-canvas:#2e3440')
+    expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:color-mix(in srgb,#2e3440 70%,transparent)!important')
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: false, opacity: 70 }
+    })
+    expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:#343c4a!important')
   })
 
   it('serializes native window effects on supported transparent desktops', async () => {
@@ -115,7 +128,7 @@ describe('desktop appearance projection', () => {
       mocks.setting.appearance = { palette: 'nord', terminal: false, opacity: 70, transparency: false }
     })
     expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { transparency: false, opacity: 100 } })
-    expect(hook.result.current).toContain('#343c4a 100%')
+    expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:#343c4a!important')
   })
 
   it('applies high-contrast borders to the shell and removes them when switching palettes', async () => {
