@@ -244,7 +244,10 @@
         "description": "Review context and selectively keep, summarize, or omit older balanced history groups before applying. · 应用前审阅上下文，并选择保留、总结或省略较早的完整历史组。",
         "repo": "https://github.com/SkanderBog/dsh-context-manager",
         "recommended": false,
-        "checked": false
+        "checked": false,
+        "version": [
+          { "version": "0.1.4", "dsh": ">=0.2.0-rc.2" }
+        ]
       }
     ]
   },

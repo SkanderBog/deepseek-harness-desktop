@@ -632,6 +632,10 @@ mod tests {
                 "dsh-context-manager" => {
                     assert_eq!(preset.spec, "github:SkanderBog/dsh-context-manager#v0.1.4");
                     assert_eq!(preset.package.as_deref(), Some("dsh-context-manager"));
+                    assert_eq!(
+                        preset.version,
+                        Some(matrix(&[("0.1.4", ">=0.2.0-rc.2")]))
+                    );
                 }
                 _ => assert_eq!(preset.spec, preset.id),
             }

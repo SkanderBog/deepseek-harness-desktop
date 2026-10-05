@@ -201,6 +201,7 @@ fn preset_targets(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<InstallT
         let preset = preset_map
             .get(id.as_str())
             .ok_or_else(|| format!("PREINSTALL_INVALID_ID: {id}"))?;
+        ensure_preset_supported(preset, core_version.as_deref())?;
         let raw = normalize_git_spec(&preset_spec_for_install(
             preset,
             bundled_dir_of(app_handle, preset),
@@ -213,6 +214,21 @@ fn preset_targets(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<InstallT
         });
     }
     Ok(targets)
+}
+
+/// 后端同样拦截清单已标记为不兼容的预设，避免调用方绕过界面置灰状态后仍安装。
+fn ensure_preset_supported(
+    preset: &PreinstallPluginInfo,
+    core_version: Option<&str>,
+) -> Result<(), String> {
+    if preset.unsupported_on(core_version) {
+        return Err(format!(
+            "PREINSTALL_UNSUPPORTED_CORE: {} does not support dsh {}",
+            preset.id,
+            core_version.unwrap_or("unknown")
+        ));
+    }
+    Ok(())
 }
 
 /// 原始 spec → 安装目标：本地目录 spec 规范成 `link:<绝对路径>` 并读目标包名
@@ -950,8 +966,43 @@ pub(super) fn append_command_output(all_output: &mut String, captured: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::manifest::{PluginVersion, VersionPair};
 
     // ---- 本地目录 spec 的安装目标解析 ----
+
+    fn preset_with_core_requirement(dsh: &str) -> PreinstallPluginInfo {
+        PreinstallPluginInfo {
+            id: "dsh-context-manager".into(),
+            spec: "github:SkanderBog/dsh-context-manager#v0.1.4".into(),
+            version: Some(PluginVersion::Matrix(vec![VersionPair {
+                version: "0.1.4".into(),
+                dsh: dsh.into(),
+            }])),
+            internal: false,
+            package: Some("dsh-context-manager".into()),
+            name: "DSH Context Manager".into(),
+            description: String::new(),
+            repo_url: String::new(),
+            recommended: false,
+            fix: false,
+            default_checked: false,
+            default_unchecked: true,
+            win_only: false,
+        }
+    }
+
+    #[test]
+    fn preset_support_guard_rejects_incompatible_core() {
+        let preset = preset_with_core_requirement(">=0.2.0-rc.2");
+
+        assert!(ensure_preset_supported(&preset, Some("0.2.0-rc.2")).is_ok());
+        assert!(ensure_preset_supported(&preset, Some("0.2.0")).is_ok());
+        assert!(ensure_preset_supported(&preset, None).is_ok());
+        assert_eq!(
+            ensure_preset_supported(&preset, Some("0.2.0-rc.1")).unwrap_err(),
+            "PREINSTALL_UNSUPPORTED_CORE: dsh-context-manager does not support dsh 0.2.0-rc.1"
+        );
+    }
 
     /// 造一个真实存在的本地插件目录：本地 spec 的解析会 canonicalize，只有落盘
     /// 路径才能覆盖「尾斜杠 / 混用分隔符 / 短名」这些形态。
