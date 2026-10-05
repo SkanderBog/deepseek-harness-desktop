@@ -13,17 +13,17 @@ describe('appearance preferences', () => {
   })
 
   it.each([[0, 20], [255, 100], [77.4, 77], [80, 80]])('normalizes opacity %s to %s', (input, opacity) => {
-    expect(normalizeAppearance({ palette: 'nord', terminal: true, opacity: input })).toEqual({ palette: 'nord', terminal: true, transparency: opacity < 100, opacity, blur: 0, sidebarOnly: false })
+    expect(normalizeAppearance({ palette: 'nord', terminal: true, opacity: input })).toEqual({ palette: 'nord', terminal: true, transparency: opacity < 100, opacity, blur: false, sidebarOnly: false })
   })
 
-  it.each([[-10, 0], [12.4, 12], [24, 24], [100, 40]])('normalizes blur %s to %s', (input, expected) => {
+  it.each([[false, false], [true, true], [0, false], [1, true], [40, true]])('normalizes blur %s to %s', (input, expected) => {
     expect(normalizeAppearance({ transparency: true, opacity: 70, blur: input }).blur).toBe(expected)
   })
 
   it('only enables backdrop blur for a translucent background', () => {
-    expect(appearanceBackdropFilter(normalizeAppearance({ transparency: true, opacity: 70, blur: 18 }))).toBe('blur(18px)')
-    expect(appearanceBackdropFilter(normalizeAppearance({ transparency: false, opacity: 70, blur: 18 }))).toBe('none')
-    expect(appearanceBackdropFilter(normalizeAppearance({ transparency: true, opacity: 100, blur: 18 }))).toBe('none')
+    expect(appearanceBackdropFilter(normalizeAppearance({ transparency: true, opacity: 70, blur: true }))).toBe('blur(16px)')
+    expect(appearanceBackdropFilter(normalizeAppearance({ transparency: false, opacity: 70, blur: true }))).toBe('none')
+    expect(appearanceBackdropFilter(normalizeAppearance({ transparency: true, opacity: 100, blur: true }))).toBe('none')
   })
 
   it.each([

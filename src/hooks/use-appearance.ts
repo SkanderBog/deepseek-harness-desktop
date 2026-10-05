@@ -11,7 +11,7 @@ import { useIframeMessage } from './use-iframe-message'
 import { useIframePost } from './use-iframe-post'
 
 export function useAppearance(iframeRef: RefObject<HTMLIFrameElement | null>) {
-  const { appearance } = useStore(store.setting)
+  const { appearance, hydrated } = useStore(store.setting)
   const [dshStyle] = useDshStyle()
   const post = useIframePost(iframeRef)
   const readyRef = useRef(false)
@@ -36,7 +36,9 @@ export function useAppearance(iframeRef: RefObject<HTMLIFrameElement | null>) {
     if (readyRef.current)
       sendAppearance()
   }, { immediate: true })
-  useWatch(appearance, () => {
+  useWatch([appearance, hydrated], () => {
+    if (!hydrated)
+      return
     let platform: ReturnType<typeof type>
     try {
       platform = type()
@@ -47,7 +49,8 @@ export function useAppearance(iframeRef: RefObject<HTMLIFrameElement | null>) {
     if (!transparent || (platform !== 'windows' && platform !== 'macos'))
       return
 
-    const enabled = appearanceBackdropFilter(normalizeAppearance(appearance)) !== 'none'
+    const value = normalizeAppearance(appearance)
+    const enabled = value.transparency && value.blur
     const appWindow = getCurrentWindow()
     nativeEffectQueueRef.current = nativeEffectQueueRef.current
       .then(() => enabled
@@ -62,12 +65,13 @@ export function useAppearance(iframeRef: RefObject<HTMLIFrameElement | null>) {
   const { canvas, panel, surface, text, muted, accent, border } = appearanceColors(value, dshStyle.colorScheme ?? (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'))
   const alpha = transparent && value.transparency ? value.opacity : 100
   const backdropFilter = transparent ? appearanceBackdropFilter(value) : 'none'
-  return value.palette === 'default' && alpha === 100
+  return value.palette === 'default' && alpha === 100 && !transparent
     ? ''
     : `
       ${alpha < 100 ? 'html,body{background:transparent!important}' : ''}
       html[data-theme]{--color-canvas:${canvas};--color-panel:${panel};--color-panel-2:${surface};--color-ink:${text};--color-info:${accent};--foreground:${text};--muted:${muted};--background:${canvas};--surface:${panel};--surface-secondary:${surface};--surface-tertiary:${surface};${border ? `--color-line:${border};--color-line-strong:${border};--color-btn-border:${border};--border:${border};--separator:${border};--field-border:${border}` : ''}}
       [data-testid="dsh-navbar-root"]{background:${appearanceSidebarFill(canvas, panel, alpha < 100, alpha)}!important;${backdropFilter === 'none' ? '' : `backdrop-filter:${backdropFilter};-webkit-backdrop-filter:${backdropFilter};`}}
       [data-testid="dsh-shell-root"]>main{background:transparent!important}
+      ${alpha < 100 && value.sidebarOnly ? `[data-testid="dsh-config-dialog"]{background:${panel}!important}` : ''}
     `
 }

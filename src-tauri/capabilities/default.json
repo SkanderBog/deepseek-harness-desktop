@@ -33,7 +33,6 @@
     "core:window:allow-start-dragging",
     "core:window:allow-set-position",
     "core:window:allow-set-size",
-    "core:window:allow-set-effects",
     "core:window:allow-cursor-position",
     "core:window:allow-set-ignore-cursor-events",
     "core:webview:allow-set-webview-zoom",

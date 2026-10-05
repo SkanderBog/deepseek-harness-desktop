@@ -77,10 +77,8 @@ describe('appearance settings controls', () => {
 
   it('persists blur in the same native appearance setting', async () => {
     const update = setup()
-    const slider = screen.getByRole('slider', { name: 'appearance.blur' })
-    fireEvent.keyDown(slider, { key: 'ArrowRight' })
-    fireEvent.keyUp(slider, { key: 'ArrowRight' })
-    await waitFor(() => expect(update).toHaveBeenLastCalledWith({ appearance: expect.objectContaining({ blur: 1 }) }))
+    fireEvent.click(screen.getByRole('switch', { name: 'appearance.blur' }))
+    await waitFor(() => expect(update).toHaveBeenLastCalledWith({ appearance: expect.objectContaining({ blur: true }) }))
   })
 
   it('exposes the existing device-local zoom in Appearance', async () => {
@@ -95,7 +93,7 @@ describe('appearance settings controls', () => {
     const update = setup()
     const toggle = screen.getByRole('switch', { name: 'appearance.terminal' })
     fireEvent.click(toggle)
-    await waitFor(() => expect(update).toHaveBeenCalledWith({ appearance: { palette: 'nord', terminal: true, transparency: true, opacity: 70, blur: 0, sidebarOnly: false } }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ appearance: { palette: 'nord', terminal: true, transparency: true, opacity: 70, blur: false, sidebarOnly: false } }))
     await waitFor(() => expect((toggle as HTMLInputElement).checked).toBe(true))
     expect(screen.getByTestId('dsh-appearance-restart').textContent).toBe('appearance.restart')
     const reset = screen.getByRole('button', { name: 'appearance.reset' }) as HTMLButtonElement

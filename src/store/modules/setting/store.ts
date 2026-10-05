@@ -24,6 +24,7 @@ export const setting = defineStore({
     backup_retention_count: 10,
     backup_include_credentials: false,
     language: null as string | null,
+    hydrated: false,
   }),
   actions: {
     async update(update: AppSettingUpdate): Promise<void> {
@@ -37,7 +38,7 @@ export const setting = defineStore({
           await latestRefresh
           return
         }
-        setting.$patch(value)
+        setting.$patch({ ...value, hydrated: true })
       })
       return latestRefresh
     },

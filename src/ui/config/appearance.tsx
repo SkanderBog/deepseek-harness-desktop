@@ -16,7 +16,6 @@ export function ConfigAppearance() {
   const { appearance: saved, zoom_factor: zoomFactor } = useStore(store.setting)
   const appearance = normalizeAppearance(saved)
   const [opacity, setOpacity] = useState<number>()
-  const [blur, setBlur] = useState<number>()
   const transparent = (window as Window & { __DSH_TRANSPARENT__?: boolean }).__DSH_TRANSPARENT__ === true
   const restartPending = appearance.transparency !== transparent
   const { mutate: save, isPending } = useMutation({
@@ -160,26 +159,21 @@ export function ConfigAppearance() {
               </Slider.Track>
             </Slider>
           </div>
-          <div>
-            <Slider
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <Typography type="body-sm" weight="medium">{t('appearance.blur')}</Typography>
+              <Description>{t('appearance.blur_description')}</Description>
+            </div>
+            <Switch
               aria-label={t('appearance.blur')}
-              value={blur ?? appearance.blur}
-              minValue={0}
-              maxValue={40}
-              step={1}
+              isSelected={appearance.blur}
               isDisabled={isPending}
-              onChange={value => setBlur(Number(value))}
-              onChangeEnd={value => save({ appearance: { ...appearance, blur: Number(value) } }, { onSettled: () => setBlur(undefined) })}
-              data-testid="dsh-appearance-blur"
+              onChange={blur => save({ appearance: { ...appearance, blur } })}
             >
-              <Label>{t('appearance.blur')}</Label>
-              <Slider.Output>{({ state }) => `${state.values[0]} px`}</Slider.Output>
-              <Slider.Track>
-                <Slider.Fill />
-                <Slider.Thumb />
-              </Slider.Track>
-            </Slider>
-            <Description>{t('appearance.blur_description')}</Description>
+              <Switch.Content data-testid="dsh-appearance-blur">
+                <Switch.Control><Switch.Thumb /></Switch.Control>
+              </Switch.Content>
+            </Switch>
           </div>
         </div>
         <div className="border-t border-line/30" />

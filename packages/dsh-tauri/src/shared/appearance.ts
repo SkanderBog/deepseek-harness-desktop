@@ -1,4 +1,4 @@
-export const APPEARANCE_DEFAULTS = { palette: 'default', terminal: false, transparency: false, opacity: 100, blur: 0, sidebarOnly: false } as const
+export const APPEARANCE_DEFAULTS = { palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false } as const
 export const APPEARANCE_PALETTES = ['default', 'nord', 'solarized', 'forest', 'amber', 'github', 'github-dimmed', 'github-high-contrast'] as const
 
 export interface Appearance {
@@ -6,7 +6,7 @@ export interface Appearance {
   terminal: boolean
   transparency: boolean
   opacity: number
-  blur: number
+  blur: boolean
   sidebarOnly: boolean
 }
 
@@ -17,21 +17,21 @@ function normalizeInteger(value: unknown, minimum: number, maximum: number, fall
 }
 
 export function normalizeAppearance(value: unknown): Appearance {
-  const input = value as Partial<Appearance> | null
+  const input = value as (Omit<Partial<Appearance>, 'blur'> & { blur?: unknown }) | null
   const opacity = normalizeInteger(input?.opacity, 20, 100, 100)
   return {
     palette: APPEARANCE_PALETTES.includes(input?.palette as Appearance['palette']) ? input!.palette! : 'default',
     terminal: input?.terminal === true,
     transparency: input?.transparency === undefined ? opacity < 100 : input.transparency === true,
     opacity,
-    blur: normalizeInteger(input?.blur, 0, 40, 0),
+    blur: input?.blur === true || (typeof input?.blur === 'number' && input.blur > 0),
     sidebarOnly: input?.sidebarOnly === true,
   }
 }
 
 export function appearanceBackdropFilter(appearance: Appearance): string {
-  return appearance.transparency && appearance.opacity < 100 && appearance.blur > 0
-    ? `blur(${appearance.blur}px)`
+  return appearance.transparency && appearance.opacity < 100 && appearance.blur
+    ? 'blur(16px)'
     : 'none'
 }
 

@@ -148,7 +148,7 @@ describe.skipIf(process.platform === 'darwin')('桌面端启动冒烟', () => {
     }
     async function config() {
       return browser.execute(async () => {
-        const bridge = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string) => Promise<{ zoom_factor: number, appearance: { palette: string, terminal: boolean, transparency: boolean, opacity: number, blur: number, sidebarOnly: boolean } }> } }).__TAURI_INTERNALS__
+        const bridge = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string) => Promise<{ zoom_factor: number, appearance: { palette: string, terminal: boolean, transparency: boolean, opacity: number, blur: boolean, sidebarOnly: boolean } }> } }).__TAURI_INTERNALS__
         return bridge.invoke('get_app_config')
       })
     }
@@ -174,18 +174,17 @@ describe.skipIf(process.platform === 'darwin')('桌面端启动冒烟', () => {
     await browser.execute(() => document.querySelector<HTMLInputElement>('[data-testid="dsh-appearance-opacity"] input[type="range"]')!.focus())
     await browser.keys(Key.ArrowLeft)
     await browser.waitUntil(async () => (await appearance()).opacity === 99, { timeoutMsg: '原生设置未保存滑块的 99% 不透明度' })
-    const blur = await browser.$('[data-testid="dsh-appearance-blur"] input[type="range"]')
+    const blur = await browser.$('[data-testid="dsh-appearance-blur"] input[role="switch"]')
     await blur.waitForEnabled()
-    await browser.execute(() => document.querySelector<HTMLInputElement>('[data-testid="dsh-appearance-blur"] input[type="range"]')!.focus())
-    await browser.keys(Key.ArrowRight)
-    await browser.waitUntil(async () => (await appearance()).blur === 1, { timeoutMsg: '原生设置未保存 1 px 背景模糊' })
+    await blur.click()
+    await browser.waitUntil(async () => (await appearance()).blur, { timeoutMsg: '原生设置未保存背景模糊开关' })
     await click('dsh-appearance-zoom')
     await click('dsh-appearance-zoom-1.2')
     await browser.waitUntil(async () => (await config()).zoom_factor === 1.2, { timeoutMsg: '本机界面缩放未从外观面板保存' })
-    expect(await appearance(), '原生设置与所选外观不一致').toEqual({ palette: 'nord', terminal: true, transparency: true, opacity: 99, blur: 1, sidebarOnly: false })
+    expect(await appearance(), '原生设置与所选外观不一致').toEqual({ palette: 'nord', terminal: true, transparency: true, opacity: 99, blur: true, sidebarOnly: false })
     await click('dsh-appearance-reset')
     await browser.waitUntil(async () => (await appearance()).palette === 'default', { timeoutMsg: '原生外观设置未恢复默认值' })
-    expect(await appearance(), '重置未还原完整原生外观设置').toEqual({ palette: 'default', terminal: false, transparency: false, opacity: 100, blur: 0, sidebarOnly: false })
+    expect(await appearance(), '重置未还原完整原生外观设置').toEqual({ palette: 'default', terminal: false, transparency: false, opacity: 100, blur: false, sidebarOnly: false })
     expect((await config()).zoom_factor, '重置未还原本机界面缩放').toBe(1)
     await click('dsh-config-dialog-close')
   })

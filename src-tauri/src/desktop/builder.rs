@@ -832,7 +832,8 @@ fn with_shell_chrome<'a>(
     app: &'a tauri::AppHandle<Wry>,
     builder: WebviewWindowBuilder<'a, Wry, tauri::AppHandle<Wry>>,
 ) -> tauri::Result<WebviewWindowBuilder<'a, Wry, tauri::AppHandle<Wry>>> {
-    let transparent = crate::config::get_store_dat_setting(app).appearance.transparency;
+    let appearance = crate::config::get_store_dat_setting(app).appearance;
+    let transparent = appearance.transparency;
     let builder = builder
         .transparent(transparent)
         .initialization_script(format!(
@@ -842,6 +843,22 @@ fn with_shell_chrome<'a>(
         .inner_size(1280.0, 840.0)
         .min_inner_size(860.0, 620.0)
         .resizable(true);
+
+    #[cfg(any(windows, target_os = "macos"))]
+    let builder = if appearance.native_blur_enabled() {
+        builder.effects(
+            tauri::window::EffectsBuilder::new()
+                .effects([
+                    tauri::window::Effect::Acrylic,
+                    tauri::window::Effect::Mica,
+                    tauri::window::Effect::UnderWindowBackground,
+                ])
+                .state(tauri::window::EffectState::FollowsWindowActiveState)
+                .build(),
+        )
+    } else {
+        builder
+    };
 
     #[cfg(windows)]
     let builder = builder
@@ -1353,6 +1370,13 @@ mod security_tests {
         serde_json::from_str(include_str!("../../capabilities/default.json")).unwrap()
     }
 
+    fn appearance_effects_capability() -> Value {
+        serde_json::from_str(include_str!(
+            "../../capabilities/appearance-effects.json"
+        ))
+        .unwrap()
+    }
+
     #[test]
     fn remote_capability_allows_only_loopback_harness() {
         let capability = capability();
@@ -1368,6 +1392,29 @@ mod security_tests {
                 "unexpected remote origin: {url}"
             );
         }
+    }
+
+    #[test]
+    fn native_appearance_effects_are_local_shell_only() {
+        let appearance = appearance_effects_capability();
+        assert_eq!(appearance["local"].as_bool(), Some(true));
+        assert!(appearance.get("remote").is_none());
+        assert_eq!(
+            appearance["windows"],
+            serde_json::json!(["main", "remote-*", "window-*"])
+        );
+        assert_eq!(
+            appearance["permissions"],
+            serde_json::json!(["core:window:allow-set-effects"])
+        );
+
+        let default_permissions = capability()["permissions"]
+            .as_array()
+            .expect("permissions must be an array")
+            .clone();
+        assert!(!default_permissions.iter().any(|permission| {
+            permission.as_str() == Some("core:window:allow-set-effects")
+        }));
     }
 
     #[test]

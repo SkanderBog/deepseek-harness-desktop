@@ -82,11 +82,11 @@ describe('desktop appearance bridge', () => {
 
   it('paints the translucent canvas once: a backdrop filter would composite the fill twice', () => {
     const { send } = setup()
-    send({ palette: 'nord', transparency: true, opacity: 70, blur: 18 })
+    send({ palette: 'nord', transparency: true, opacity: 70, blur: true })
     const css = document.querySelector('style')!.textContent!
     expect(css).toContain('body{background:color-mix(in srgb,#2e3440 70%,transparent)!important}')
     expect(css).not.toContain('backdrop-filter')
-    send({ transparency: false, opacity: 70, blur: 18 })
+    send({ transparency: false, opacity: 70, blur: true })
     expect(document.querySelector('style')!.textContent).toBe('')
   })
 

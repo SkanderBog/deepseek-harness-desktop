@@ -31,9 +31,9 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function setup(transparent: boolean) {
+function setup(transparent: boolean, hydrated = true) {
   ;(window as any).__DSH_TRANSPARENT__ = transparent
-  mocks.setting = defineStore({ state: () => ({ appearance: { palette: 'nord', terminal: false, opacity: 70 } }) })
+  mocks.setting = defineStore({ state: () => ({ appearance: { palette: 'nord', terminal: false, opacity: 70 }, hydrated }) })
   const iframe = document.createElement('iframe')
   iframe.src = 'http://localhost:3080'
   document.body.append(iframe)
@@ -72,17 +72,17 @@ describe('desktop appearance projection', () => {
     const { post, ready, hook } = setup(true)
     ready()
     await act(async () => {
-      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: 18 }
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: true }
     })
-    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { blur: 18 } })
-    expect(hook.result.current).toContain('backdrop-filter:blur(18px)')
-    expect(hook.result.current).toContain('-webkit-backdrop-filter:blur(18px)')
+    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { blur: true } })
+    expect(hook.result.current).toContain('backdrop-filter:blur(16px)')
+    expect(hook.result.current).toContain('-webkit-backdrop-filter:blur(16px)')
   })
 
   it('paints the shell bar with the fill the embedded sidebar column shows', async () => {
     const { hook } = setup(true)
     await act(async () => {
-      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: 18 }
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: true }
     })
     expect(hook.result.current).toContain('--color-canvas:#2e3440')
     expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:color-mix(in srgb,#2e3440 70%,transparent)!important')
@@ -96,15 +96,22 @@ describe('desktop appearance projection', () => {
     mocks.platform = 'windows'
     const { hook } = setup(true)
     await act(async () => {
-      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: 18 }
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: true }
     })
     await vi.waitFor(() => expect(mocks.setEffects).toHaveBeenLastCalledWith({
       effects: ['acrylic', 'mica', 'underWindowBackground'],
       state: 'followsWindowActiveState',
     }))
 
+    mocks.clearEffects.mockClear()
     await act(async () => {
-      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: 0 }
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 100, blur: true }
+    })
+    await vi.waitFor(() => expect(mocks.setEffects).toHaveBeenCalledTimes(2))
+    expect(mocks.clearEffects).not.toHaveBeenCalled()
+
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: false }
     })
     await vi.waitFor(() => expect(mocks.clearEffects).toHaveBeenCalled())
     expect(mocks.setEffects.mock.invocationCallOrder.at(-1)).toBeLessThan(mocks.clearEffects.mock.invocationCallOrder.at(-1)!)
@@ -115,7 +122,7 @@ describe('desktop appearance projection', () => {
     mocks.platform = 'linux'
     setup(true)
     await act(async () => {
-      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: 18 }
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: true }
     })
     expect(mocks.setEffects).not.toHaveBeenCalled()
     expect(mocks.clearEffects).not.toHaveBeenCalled()
@@ -129,6 +136,35 @@ describe('desktop appearance projection', () => {
     })
     expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { transparency: false, opacity: 100 } })
     expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:#343c4a!important')
+  })
+
+  it('keeps a transparent default palette opaque at 100 percent', async () => {
+    const { hook } = setup(true)
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'default', terminal: false, transparency: true, opacity: 100, blur: true }
+    })
+    expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:#1b1b1c!important')
+    expect(hook.result.current).not.toContain('backdrop-filter:blur')
+  })
+
+  it('keeps the settings dialog opaque with the content-area option', async () => {
+    const { hook } = setup(true)
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: true, sidebarOnly: true }
+    })
+    expect(hook.result.current).toContain('[data-testid="dsh-config-dialog"]{background:#343c4a!important}')
+  })
+
+  it('does not clear the startup effect before native settings hydrate', async () => {
+    mocks.platform = 'windows'
+    setup(true, false)
+    expect(mocks.setEffects).not.toHaveBeenCalled()
+    expect(mocks.clearEffects).not.toHaveBeenCalled()
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: true }
+      mocks.setting.hydrated = true
+    })
+    await vi.waitFor(() => expect(mocks.setEffects).toHaveBeenCalledOnce())
   })
 
   it('applies high-contrast borders to the shell and removes them when switching palettes', async () => {
@@ -150,7 +186,7 @@ describe('desktop appearance projection', () => {
     expect(post).not.toHaveBeenCalled()
   })
 
-  it('does no message work on unrelated renders and clears styling on reset', async () => {
+  it('does no message work on unrelated renders and restores opaque styling on reset', async () => {
     const { post, ready, hook } = setup(true)
     ready()
     post.mockClear()
@@ -160,6 +196,6 @@ describe('desktop appearance projection', () => {
       mocks.setting.appearance = { palette: 'default', terminal: false, opacity: 100 }
     })
     expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { palette: 'default', opacity: 100 } })
-    expect(hook.result.current).toBe('')
+    expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:#1b1b1c!important')
   })
 })
