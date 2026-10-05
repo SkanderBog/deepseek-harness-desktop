@@ -19,9 +19,9 @@ describe('menu restart backend contract', () => {
 
   it('provides menu.restart i18n key with zh/en translations', () => {
     // 断言键→值的关系，而非孤立 token：要求 "menu.restart" 同时映射到
-    // 中文 "重启" 与英文 "Restart"，避免 token 出现在无关代码中时仍能通过。
+    // 中文/英文都明确重启的是 Harness，避免 token 出现在无关代码中时仍能通过。
     expect(i18nSource).toMatch(
-      /"menu\.restart"\s*=>\s*\("重启",\s*"Restart"\)/,
+      /"menu\.restart"\s*=>\s*\("重启 Harness",\s*"Restart Harness"\)/,
     )
   })
 })
