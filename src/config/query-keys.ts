@@ -17,10 +17,16 @@ export const queryKeys = {
   cores: ['cores'] as const,
   /** 已安装 dsh 插件列表（面板 / 配置对话框角标 / 导航栏共用） */
   plugins: ['plugins'] as const,
+  /** 本地插件热重载开关与监听状态（插件面板） */
+  localPluginHmr: ['local_plugin_hmr'] as const,
   /** dsh 档案列表 */
   profiles: ['profiles'] as const,
   /** 当前档案的备份快照列表 */
   backups: ['backups'] as const,
+  /** 数据目录状态与旧目录备份（issue #871） */
+  dataDir: ['data_dir'] as const,
+  /** 数据目录下的一级子项体积（issue #871） */
+  dataDirEntries: ['data_dir_entries'] as const,
   remoteMachines: ['remote_machines'] as const,
   remoteEvents: ['remote_events'] as const,
 } as const

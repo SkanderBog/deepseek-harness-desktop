@@ -15,7 +15,7 @@ import { useOverlay } from '@overlastic/react'
 import { useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { cn } from 'tailwind-variants'
@@ -36,7 +36,7 @@ import { RemoteSwitcher } from './remote-switcher'
 /**
  * 壳层窗口顶部导航栏（44px，常驻）：
  *
- *   [侧边栏(展开/收起)] [文件][运行][帮助] [ 空白拖拽区 ] [更新可用][本地/远端] [最小化][最大化][后台化(X)]
+ *   [侧边栏(展开/收起)] [文件][运行][帮助][更新可用] [ 空白拖拽区 ] [本地/远端] [最小化][最大化][后台化(X)]
  *
  * - 侧边栏：经 postMessage 操控 iframe 内的 dsh 应用
  *   （`dsh://sidebar:toggle`，由 dsh-tauri 插件的 `client/register/sidebar.ts`
@@ -45,8 +45,8 @@ import { RemoteSwitcher } from './remote-switcher'
  *   导航桥（收回报 + 发命令）在 `iframe.tsx` / `webview.tsx`，本组件只接收状态与回调：
  *   左侧控件只在「dsh-tauri 插件已启用（已安装）」且传入 `onToggleSidebar` 时渲染，
  *   原生桥缺席时控件没有可靠接收方，避免出现点了没反应的死按钮。
- * - 本地 / 远端：`RemoteSwitcher` 固定在右侧「更新可用」旁边，SSH 功能未启用时
- *   自身不渲染（见 `remote-switcher.tsx`）。
+ * - 本地 / 远端：`RemoteSwitcher` 固定在右侧，SSH 功能未启用时
+ *   自身不渲染（见 `remote-switcher.tsx`）；macOS 上其左侧是「更新可用」chip。
  * - 文件：新建窗口（Tauri 再开一个 webview）/ 新聊天、打开文件夹（经协议调用 dsh 官方
  *   「新建会话」「添加工作区」，接收方是 dsh-tauri 的 `client/register/navigation.ts`）/
  *   关闭（隐藏到托盘）/ 退出（完整退出）。两条依赖 iframe 的项在回调缺席时禁用。
@@ -54,6 +54,8 @@ import { RemoteSwitcher } from './remote-switcher'
  *   （对话框与角标见 `ui/dialog/config.tsx`）；「应用」项右侧另挂一个快捷重启图标按钮，
  *   就地重启服务而不必先进面板。
  * - 帮助：运行日志 / 检查更新 / 关于 Desktop / 文档（系统浏览器打开官方文档站）。
+ * - 更新可用：检测到新版本即出现在「帮助」右侧（安装包此时已在静默下载），
+ *   点击打开更新对话框；macOS 的「帮助」在原生菜单栏，chip 落到右侧控件区。
  * - 空白拖拽区：Tauri 原生 `data-tauri-drag-region`（顶层文档直接生效），
  *   Windows/Linux 上双击切换最大化，macOS 上交由系统标题栏偏好。
  * - macOS：使用原生交通灯，红键后台化、黄键最小化、绿键进入原生全屏；
@@ -92,13 +94,14 @@ type FileAction = 'new-window' | 'new-chat' | 'open-folder' | 'close' | 'quit'
 type HelpAction = 'task-manager' | 'keyboard-shortcuts' | 'copy-run-logs' | 'check-update' | 'about' | keyof typeof HELP_LINKS
 
 /** 「运行」菜单项：直接打开配置对话框并定位到对应面板。 */
-const CONFIG_TABS: { id: ConfigTab, labelKey: string }[] = [
+const CONFIG_TABS = [
   { id: 'application', labelKey: 'config.application' },
   { id: 'appearance', labelKey: 'config.appearance' },
   { id: 'profiles', labelKey: 'config.profiles' },
   { id: 'plugins', labelKey: 'config.plugins' },
   { id: 'harness', labelKey: 'config.harness' },
-]
+  { id: 'dataDir', labelKey: 'config.dataDir' },
+] as const
 
 /** WKWebView 的 macOS UA 稳定包含 Macintosh，用于切换平台原生窗口 chrome。 */
 function detectMacOS() {
@@ -621,41 +624,45 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
             <Dropdown.Popover className="min-w-55" data-testid="dsh-navbar-menu-popover">
               <Dropdown.Menu>
                 {CONFIG_TABS.map(item => (
-                  <Dropdown.Item
-                    key={item.id}
-                    id={item.id}
-                    data-testid={`dsh-navbar-item-${item.id}`}
-                    textValue={t(item.labelKey)}
-                    onAction={() => handleOpenConfig(item.id)}
-                  >
-                    <div className="flex w-full items-center justify-between gap-2">
-                      <Label>{t(item.labelKey)}</Label>
-                      <If cond={item.id === 'application'}>
-                        {/* 菜单项整行是 pressable，按钮外包一层专门拦冒泡：React Aria 的
+                  <Fragment key={item.id}>
+                    <Dropdown.Item
+                      id={item.id}
+                      data-testid={`dsh-navbar-item-${item.id}`}
+                      textValue={t(item.labelKey)}
+                      onAction={() => handleOpenConfig(item.id)}
+                    >
+                      <div className="flex w-full items-center justify-between gap-2">
+                        <Label>{t(item.labelKey)}</Label>
+                        <If cond={item.id === 'application'}>
+                          {/* 菜单项整行是 pressable，按钮外包一层专门拦冒泡：React Aria 的
                             pressable 只在 pointerdown / click 上收口，pointerup 会冒泡到菜单项，
                             被菜单项当成「按在别处、松手落在我身上」而自行补一次 click，
                             顺带把菜单项动作（打开配置面板）也触发了——所以 pointerup 必须在这里拦。 */}
-                        <span
-                          className="flex shrink-0 items-center"
-                          onClick={event => event.stopPropagation()}
-                          onPointerDown={event => event.stopPropagation()}
-                          onPointerUp={event => event.stopPropagation()}
-                        >
-                          <Button
-                            className="size-6 hover:bg-background-tertiary"
-                            isIconOnly
-                            size="sm"
-                            variant="ghost"
-                            aria-label={t('app.restart')}
-                            data-testid="dsh-navbar-item-application-restart"
-                            onPress={handleQuickRestart}
+                          <span
+                            className="flex shrink-0 items-center"
+                            onClick={event => event.stopPropagation()}
+                            onPointerDown={event => event.stopPropagation()}
+                            onPointerUp={event => event.stopPropagation()}
                           >
-                            <ArrowRotateRight className="size-3.5" />
-                          </Button>
-                        </span>
-                      </If>
-                    </div>
-                  </Dropdown.Item>
+                            <Button
+                              className="size-6 hover:bg-background-tertiary"
+                              isIconOnly
+                              size="sm"
+                              variant="ghost"
+                              aria-label={t('app.restart')}
+                              data-testid="dsh-navbar-item-application-restart"
+                              onPress={handleQuickRestart}
+                            >
+                              <ArrowRotateRight className="size-3.5" />
+                            </Button>
+                          </span>
+                        </If>
+                      </div>
+                    </Dropdown.Item>
+                    <If cond={item.id === 'appearance'}>
+                      <Separator />
+                    </If>
+                  </Fragment>
                 ))}
               </Dropdown.Menu>
             </Dropdown.Popover>
@@ -750,6 +757,19 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
           </Dropdown>
         </div>
       </If>
+
+      <If cond={updateInfo != null}>
+        <Chip
+          color="success"
+          size="sm"
+          variant="soft"
+          className="ml-1 cursor-pointer text-xs mr-1"
+          onClick={handleOpenUpdateDialog}
+        >
+          {t('update.chip_available')}
+        </Chip>
+      </If>
+
       <If cond={import.meta.env.DEV}>
         <Chip size="sm" variant="primary" color="warning" className="text-xs text-background ml-1" data-testid="dsh-navbar-dev-chip">
           {t('app.dev_env')}
@@ -774,23 +794,8 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
           同参数的 `background` / `backdrop-filter` 过渡（见 `getOverlayMarkedStyle`）。 */}
       <div className="absolute" style={dshStyle.marked || {}} />
 
-      {/* 「更新可用」chip：紧跟「帮助」右侧。检测到新版本即出现（安装包此时已在静默下载），
-          点击进入更新对话框查看进度 / 打开已下载的安装包。macOS 的「帮助」在原生菜单栏，
-          这里同样显示该 chip，保证三平台都有可见的更新入口。 */}
-      <If cond={updateInfo != null}>
-        <Chip
-          color="success"
-          size="sm"
-          variant="soft"
-          className="ml-1 cursor-pointer text-xs mr-1"
-          onClick={handleOpenUpdateDialog}
-        >
-          {t('update.chip_available')}
-        </Chip>
-      </If>
-
       {/* 「本地」/ 远端机器切换器：SSH 功能启用后才出现（未启用时组件自身不渲染），
-          位置固定在「更新可用」右侧，与左侧的文件/运行/帮助菜单分列两端。 */}
+          固定在右侧，与左侧的文件/运行/帮助菜单分列两端（macOS 上左侧是「更新可用」chip）。 */}
       <RemoteSwitcher onChange={onRemoteChange} visible={onToggleSidebar != null} onManage={onOpenMachineManager} onSync={onOpenSyncToRemote} />
 
       <If cond={!IS_MACOS}>

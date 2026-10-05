@@ -9,53 +9,50 @@ import { Hint } from '@/ui/pet/hint'
 import { useWakelockRelease } from '../hooks/use-wakelock-release'
 import { PET_BASE_WIDTH, PET_DSH_ASPECT } from './constants'
 import { useBubbleTracker } from './hooks/use-bubble-tracker'
+import { usePetPhysics } from './hooks/use-pet-physics'
 import { usePetSource } from './hooks/use-pet-source'
 import { normalizeSizePercent, usePetStatus } from './hooks/use-pet-status'
 import { usePetWindowSize } from './hooks/use-pet-window'
+import { usePetWindowClamp } from './hooks/use-pet-window-clamp'
 import { reportPetIssue } from './utils/log'
 
-/**
- * 桌宠窗口的唯一组合入口。
- *
- * 三条输入各管一段，互不越界：
- * - 设置状态（`usePetStatus`）→ 选哪个宠物、多大、是否可见；
- * - 会话气泡（`useBubbleTracker`）→ 经 `pet.bubble(...)` 下发，**动作随气泡走**；
- * - 手势（`useWindowDraggable`）→ 拖动期间的方向动作。
- *
- * v0.2.0 起气泡完全由 `dsh-pet-component` 托管（叠加、原地更新、定时收起、多会话动作
- * 优先级），渲染细节（动画池解析、双视频缓冲、雪碧图、缓存、双击回应）同样如此：
- * 宿主只把 `motion` prop 留给拖动方向，会话档位随各自的气泡走。
- */
 export function App() {
   const petRef = useRef<PetRef>(null)
   const pet = useControllablePet(petRef)
   const status = usePetStatus()
-
-  // issue #469：桌宠动画是常驻播放的 <video>，Chromium 会因此持有 Video Wake Lock
-  // 让系统无法息屏；本窗口没有常亮的正当需求，唤醒锁一旦生效就立刻释放。
   const activedPet = status?.active_pet ?? ''
   const { source, error } = usePetSource(activedPet)
   const hitboxRef = useRef<HTMLDivElement>(null)
-  const draggable = useWindowDraggable()
+  // 甩动：松手后按窗口轨迹估速请求组件甩出，飞行积分与落地 Q 弹都在宿主（见 hook 文档）。
+  // 抓取信号来自命中箱 `pointerdown`（经拖拽 hook 的 `onGrab`）：`device-mouse-button`
+  // 是全屏左键流，在桌面别处的点击不能给甩出中的宠物刹车。松开由拖拽 hook 统一上报
+  // （`onRelease`，命中箱 `pointerup` 与设备流两条路只结算一次），物理层据此估速并清状态。
+  const { onFling, onGrab, onRelease } = usePetPhysics(pet, source?.kind)
+  // 跟手期间按「宠物本体 / 脚底」把窗口夹进显示器工作区（与飞行共用边界）：贴边松手
+  // 不会被整窗夹取推开，也不会跑出飞行边界而在松手瞬间被修正回来。
+  const { clampPosition, refreshWorkAreas } = usePetWindowClamp(pet, source?.kind)
+  const draggable = useWindowDraggable({ onGrab: handleGrab, onRelease, clampPosition })
+
+  /** 抓取时顺手刷新显示器工作区（插拔显示器后立刻生效），再交给物理层刹车。 */
+  function handleGrab(): void {
+    refreshWorkAreas()
+    onGrab()
+  }
 
   const visible = status === null || (status.enabled !== false && status.visible !== false)
   const width = (source?.width ?? PET_BASE_WIDTH) * normalizeSizePercent(status?.pet_size) / 100
 
   useBubbleTracker(pet, source)
   usePetWindowSize(width, source?.aspect ?? PET_DSH_ASPECT, visible)
-  useOmitIgnoreCursorEvents(hitboxRef)
+  useOmitIgnoreCursorEvents(hitboxRef, draggable.dragging)
   useEventListener('contextmenu', event => event.preventDefault())
   useWakelockRelease()
 
-  // 手势优先于会话档位：拖动期间按方向播走路动画（dsh-pet 渲染器内部强制走 drag 池，
-  // 会忽略这里的方向，由组件保证）；拖动结束即回落 `undefined`，交给气泡聚合出的档位。
   const motion: PetRenderMotion | undefined = draggable.dragging
     ? (draggable.direction === undefined ? undefined : `moving-${draggable.direction}`)
     : undefined
 
   return (
-    // 外层只负责铺满透明窗口并让宠物锚定底部居中；窗口内可交互面只有命中箱，
-    // 其余区域由 useOmitIgnoreCursorEvents 按命中箱矩形整体穿透。
     <main className={`pointer-events-none fixed inset-0 flex items-end justify-center ${visible ? '' : 'invisible'}`}>
       {source && (
         <Pet
@@ -67,24 +64,20 @@ export function App() {
           motion={source?.kind === 'codex' ? motion : undefined}
           size={width}
           dragging={draggable.dragging}
+          onFling={onFling}
           cache={true}
           hidden={!visible}
           hitboxRef={hitboxRef}
+          onHitboxPointerDown={draggable.onPointerDown}
+          onHitboxPointerUp={draggable.onPointerUp}
           onError={reportPetAssetError}
         />
       )}
-      {/* 选中了宠物但资源解析不出来（导入的宠物被删除、清单里没有该 id）：必须给出
-          可见提示 —— 透明窗口里「空」与「在加载」观感相同，静默留空等于让用户以为坏了。 */}
       <If cond={error !== null} then={<Hint petId={activedPet} />} />
     </main>
   )
 }
 
-/**
- * 资源加载/播放失败的出口：组件内部抓取失败会静默降级为「直接播远端地址」
- * （`useCachedMediaUrl` 的 catch 只调 `onError`），而桌宠窗口的 console 要手动
- * F12 才看得见 —— 不接这个回调，「IndexedDB 一次都没写进去」就无从察觉。
- */
 function reportPetAssetError(error: unknown): void {
   reportPetIssue('asset', error)
 }

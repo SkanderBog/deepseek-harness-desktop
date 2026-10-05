@@ -23,6 +23,9 @@ export interface DesktopUpdateDialogProps extends PropsWithOverlays {}
  *
  * 对话框在下载中同样可关闭：下载由 store 驱动、与对话框生命周期无关，锁住弹窗
  * 只会让「打开看进度」的用户无法退出（更新入口 chip 常驻，随时能再打开）。
+ *
+ * 下载中隐藏底部按钮（「稍后」/「立即更新」）：此阶段主按钮只会阻塞等待同一次下载，
+ * 点击无意义；关闭仍可用右上角 X。
  */
 export function DesktopUpdateDialog(props: DesktopUpdateDialogProps) {
   const disclosure = useDisclosure({ props })
@@ -85,23 +88,25 @@ export function DesktopUpdateDialog(props: DesktopUpdateDialogProps) {
                 </div>
               </If>
             </AlertDialog.Body>
-            <AlertDialog.Footer>
-              <Button
-                variant="tertiary"
-                onPress={disclosure.cancel}
-              >
-                {t('update.later')}
-              </Button>
-              <Button
-                variant="primary"
-                isDisabled={updateInfo == null}
-                onPress={handlePrimary}
-              >
-                {updateInfo?.downloaded
-                  ? t('update.open_installer')
-                  : t('update.now')}
-              </Button>
-            </AlertDialog.Footer>
+            <If cond={!downloading}>
+              <AlertDialog.Footer>
+                <Button
+                  variant="tertiary"
+                  onPress={disclosure.cancel}
+                >
+                  {t('update.later')}
+                </Button>
+                <Button
+                  variant="primary"
+                  isDisabled={updateInfo == null}
+                  onPress={handlePrimary}
+                >
+                  {updateInfo?.downloaded
+                    ? t('update.open_installer')
+                    : t('update.now')}
+                </Button>
+              </AlertDialog.Footer>
+            </If>
           </AlertDialog.Dialog>
         </AlertDialog.Container>
       </AlertDialog.Backdrop>

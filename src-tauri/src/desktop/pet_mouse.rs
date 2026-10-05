@@ -17,6 +17,12 @@
 //! （覆盖不积压，回调不阻塞钩子）；节流线程每 16ms 读取一次，坐标有变化才
 //! emit（鼠标静止时零事件）。
 //!
+//! 同一路监听顺带上报**左键按下/松开**（`device-mouse-button`）：原生窗口拖拽
+//! （`startDragging`）跑在系统模态循环里，按钮事件被它吞掉，webview 在拖拽期间
+//! 与松手瞬间都收不到 pointerup，前端只能靠「`Moved` 事件停歇」的超时兜底判结束
+//! ——松手后拖拽态要多挂 1.5s，宠物动画慢半拍。设备流是纯 OS 侧观察者，能看到
+//! 真正的松开时刻，前端据此立刻收尾（见 `src/hooks/use-window-draggable.ts`）。
+//!
 //! 生命周期：鼠标流由前端 `start_pet_mouse_stream` 命令幂等启动，线程随进程
 //! 常驻（各平台监听线程都是常驻阻塞循环，无停止 API）；桌宠隐藏时前端不再
 //! 检查命中，线程开销可忽略。
@@ -59,6 +65,9 @@ use tauri::{Emitter, State, WebviewWindow};
 
 /// 全局鼠标事件名（与前端 `@tauri-apps/api/event` 的 listen 保持一致）。
 pub const PET_MOUSE_MOVE_EVENT: &str = "device-mouse-move";
+/// 全局鼠标左键状态事件名（载荷 `MouseButtonState`）：原生拖拽期间 webview
+/// 收不到 pointerup，松手时刻只能由设备流告诉前端。
+pub const PET_MOUSE_BUTTON_EVENT: &str = "device-mouse-button";
 /// 节流间隔（16ms ≈ 60FPS）：光标自身刷新率远超此频率，超出部分无意义。
 const THROTTLE_INTERVAL: Duration = Duration::from_millis(16);
 /// 缩放系数刷新周期（16ms × 32 ≈ 500ms）：桌宠被拖到另一块缩放不同的显示器后，
@@ -73,6 +82,9 @@ const CURSOR_POLL_INTERVAL: Duration = Duration::from_millis(8);
 /// FlagsChanged，彻底切断 rdev 0.5.3 触发 `TSMGetInputSourceProperty`
 /// （HIToolbox，必须 main queue）导致的 `dispatch_assert_queue` SIGTRAP
 /// 崩溃链（issue #397）。
+///
+/// `LeftMouseDown` / `LeftMouseUp` 是左键状态的来源（见 `PET_MOUSE_BUTTON_EVENT`）：
+/// HID 位置的 tap 在任何窗口拖拽会话之上都能看到物理按键，而 webview 看不到。
 #[cfg(target_os = "macos")]
 const MACOS_MOUSE_EVENTS: &[core_graphics::event::CGEventType] = &[
     core_graphics::event::CGEventType::MouseMoved,
@@ -80,6 +92,8 @@ const MACOS_MOUSE_EVENTS: &[core_graphics::event::CGEventType] = &[
     core_graphics::event::CGEventType::RightMouseDragged,
     core_graphics::event::CGEventType::ScrollWheel,
     core_graphics::event::CGEventType::OtherMouseDragged,
+    core_graphics::event::CGEventType::LeftMouseDown,
+    core_graphics::event::CGEventType::LeftMouseUp,
 ];
 
 /// 全局鼠标流的进程级状态：幂等启动标记 + 当前事件的接收窗口。
@@ -168,6 +182,56 @@ struct MouseCursorPos {
     y: f64,
 }
 
+/// 全局鼠标左键状态（`device-mouse-button` 事件载荷）。
+///
+/// 原生拖拽结束时 webview 收不到 pointerup，前端靠「窗口 Moved 停歇 1.5s」兜底
+/// 会把拖拽态多挂一拍；这条事件给的是 OS 看到的真实松开时刻。
+#[derive(Serialize, Clone, Copy, PartialEq, Debug)]
+struct MouseButtonState {
+    pressed: bool,
+}
+
+/// 监听线程与节流线程之间的共享槽：两个字段都只保留**最新值**（覆盖不积压，
+/// 回调不阻塞钩子），`None` 表示自上次读取以来没有新值。
+///
+/// 坐标与按键分开存放：各平台能观测到的东西不同（macOS 按事件类型分别给坐标或
+/// 按键），分开后每个平台只写自己知道的那一项，不必先把另一项读出来再回写。
+#[derive(Default)]
+struct MouseStateStore {
+    position: Mutex<Option<MouseCursorPos>>,
+    pressed: Mutex<Option<bool>>,
+}
+
+impl MouseStateStore {
+    fn write_position(&self, position: MouseCursorPos) {
+        *self.position.lock().expect("pet mouse store poisoned") = Some(position);
+    }
+
+    fn write_pressed(&self, pressed: bool) {
+        *self.pressed.lock().expect("pet mouse store poisoned") = Some(pressed);
+    }
+
+    fn take_position(&self) -> Option<MouseCursorPos> {
+        self.position
+            .lock()
+            .expect("pet mouse store poisoned")
+            .take()
+    }
+
+    fn take_pressed(&self) -> Option<bool> {
+        self.pressed
+            .lock()
+            .expect("pet mouse store poisoned")
+            .take()
+    }
+}
+
+/// 是否把当前值发给前端：接收窗口换代（`rebound`）时必须**强制**补发一次，
+/// 否则新页面收不到任何状态（光标静止 = 事件流静止）。
+fn should_emit<T: PartialEq>(last: Option<&T>, current: &T, rebound: bool) -> bool {
+    rebound || last != Some(current)
+}
+
 /// 启动全局鼠标位置流（幂等：已启动时只刷新接收窗口，不重复起线程）。
 ///
 /// 命令参数带 `WebviewWindow`，Tauri 保证在主线程执行；`bind_pet_mouse_emitter`
@@ -183,10 +247,10 @@ pub fn start_pet_mouse_stream(window: WebviewWindow, state: State<'_, PetMouseSt
     }
     // 监听线程失败时复位标记，允许前端重试（如钩子安装被系统拒绝）。
     let started_on_error = state.started.clone();
-    let latest: Arc<Mutex<Option<MouseCursorPos>>> = Arc::default();
+    let shared: Arc<MouseStateStore> = Arc::default();
 
-    // 监听线程：只把最新坐标写入共享槽，不做任何 IO。
-    let store = latest.clone();
+    // 监听线程：只把最新坐标与按键状态写入共享槽，不做任何 IO。
+    let store = shared.clone();
     let listener_scale = state.scale_factor.clone();
     thread::spawn(move || {
         if let Err(error) = listen_mouse(store.clone(), listener_scale) {
@@ -195,14 +259,16 @@ pub fn start_pet_mouse_stream(window: WebviewWindow, state: State<'_, PetMouseSt
         }
     });
 
-    // 节流线程：16ms 轮询最新坐标，变化才 emit（鼠标静止零事件）；每轮重新读取
-    // 接收窗口，保证窗口重建后事件仍然投递到桌宠。接收窗口换代（revision 变化）
-    // 时忽略去重，强制补发一次当前坐标——新页面需要一次事件才能算出穿透态。
+    // 节流线程：16ms 轮询最新状态，值有变化才 emit（鼠标静止、按键不变时零事件）；
+    // 每轮重新读取接收窗口，保证窗口重建后事件仍然投递到桌宠。接收窗口换代
+    // （revision 变化）时忽略去重，强制补发一次当前位置与按键——新页面需要一次
+    // 事件才能算出穿透态，也需要知道按键此刻按着没有。
     let emitter = state.emitter.clone();
     let revision = state.revision.clone();
     let throttle_scale = state.scale_factor.clone();
     thread::spawn(move || {
         let mut last_sent: Option<MouseCursorPos> = None;
+        let mut last_button: Option<bool> = None;
         let mut bound_revision = revision.load(Ordering::SeqCst);
         let mut ticks: u64 = 0;
         loop {
@@ -215,16 +281,29 @@ pub fn start_pet_mouse_stream(window: WebviewWindow, state: State<'_, PetMouseSt
             let current_revision = revision.load(Ordering::SeqCst);
             let rebound = current_revision != bound_revision;
             bound_revision = current_revision;
-            let current = latest.lock().expect("pet mouse store poisoned").take();
-            if let Some(pos) = current {
-                if rebound || last_sent != Some(pos) {
-                    last_sent = Some(pos);
-                    let target = emitter
-                        .lock()
-                        .unwrap_or_else(|error| error.into_inner())
-                        .clone();
-                    if let Some(target) = target {
+            let position = shared
+                .take_position()
+                .filter(|pos| should_emit(last_sent.as_ref(), pos, rebound));
+            let button = shared
+                .take_pressed()
+                .filter(|pressed| should_emit(last_button.as_ref(), pressed, rebound));
+            if let Some(pos) = position {
+                last_sent = Some(pos);
+            }
+            if let Some(pressed) = button {
+                last_button = Some(pressed);
+            }
+            if position.is_some() || button.is_some() {
+                let target = emitter
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .clone();
+                if let Some(target) = target {
+                    if let Some(pos) = position {
                         let _ = target.emit(PET_MOUSE_MOVE_EVENT, pos);
+                    }
+                    if let Some(pressed) = button {
+                        let _ = target.emit(PET_MOUSE_BUTTON_EVENT, MouseButtonState { pressed });
                     }
                 }
             }
@@ -252,7 +331,7 @@ fn bind_pet_mouse_emitter(
 /// `scale_factor` 只有 macOS 需要（`CGEvent` 给的是逻辑点，必须换算成物理像素）；
 /// Windows 的 `GetCursorPos` 与 Linux 的 rdev 本身就是物理像素。
 fn listen_mouse(
-    store: Arc<Mutex<Option<MouseCursorPos>>>,
+    store: Arc<MouseStateStore>,
     scale_factor: SharedScaleFactor,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -277,12 +356,18 @@ fn listen_mouse(
 /// 调用，8ms 轮询与 rdev 事件流的实际收敛效果相当（最终 emit 都经 16ms 节流），
 /// 却完全避开 rdev 键盘钩子对前台应用 IME 状态的干扰（见模块文档「平台差异」）。
 /// 调用失败（UAC/锁屏切换瞬间）时保留上一次坐标，下一轮重试。
+///
+/// 同一轮询里顺带用 `GetAsyncKeyState` 读左键**当前是否按下**：拖拽跑在系统模态
+/// 循环里，webview 收不到 pointerup，只有这里能看到松手时刻（`PET_MOUSE_BUTTON_EVENT`）。
+/// 用最高位（`0x8000`，此刻按着）而不是最低位（"自上次查询以来按过"，与查询频率
+/// 耦合且冷启动时残留），松手后下一轮（8ms）就会翻转。
 #[cfg(target_os = "windows")]
-fn listen_mouse_windows(store: Arc<Mutex<Option<MouseCursorPos>>>) -> Result<(), String> {
+fn listen_mouse_windows(store: Arc<MouseStateStore>) -> Result<(), String> {
     loop {
         if let Some(pos) = read_cursor_pos() {
-            *store.lock().expect("pet mouse store poisoned") = Some(pos);
+            store.write_position(pos);
         }
+        store.write_pressed(read_left_button_pressed());
         thread::sleep(CURSOR_POLL_INTERVAL);
     }
 }
@@ -304,13 +389,28 @@ fn read_cursor_pos() -> Option<MouseCursorPos> {
     }
 }
 
+/// 单次读取左键是否按下（`GetAsyncKeyState` 的 `0x8000` 位）。
+#[cfg(target_os = "windows")]
+fn read_left_button_pressed() -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+
+    unsafe { GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000 != 0 }
+}
+
 /// rdev 监听（Linux；X11 XRecord 只捕获不注入，见模块文档「平台差异」）。
+///
+/// 除鼠标移动外还上报左键按下/松开：拖拽期间 webview 收不到 pointerup，前端需要
+/// 一个 OS 侧的松开时刻来立刻结束拖拽态（`PET_MOUSE_BUTTON_EVENT`）。只认左键，
+/// 与前端 `handlePointerDown` 的 `event.button !== 0` 判定一致。
 #[cfg(all(unix, not(target_os = "macos")))]
-fn listen_mouse_rdev(store: Arc<Mutex<Option<MouseCursorPos>>>) -> Result<(), String> {
-    let callback = move |event: rdev::Event| {
-        if let rdev::EventType::MouseMove { x, y } = event.event_type {
-            *store.lock().expect("pet mouse store poisoned") = Some(MouseCursorPos { x, y });
-        }
+fn listen_mouse_rdev(store: Arc<MouseStateStore>) -> Result<(), String> {
+    use rdev::{Button, EventType};
+
+    let callback = move |event: rdev::Event| match event.event_type {
+        EventType::MouseMove { x, y } => store.write_position(MouseCursorPos { x, y }),
+        EventType::ButtonPress(Button::Left) => store.write_pressed(true),
+        EventType::ButtonRelease(Button::Left) => store.write_pressed(false),
+        _ => {}
     };
     rdev::listen(callback).map_err(|e| format!("rdev::listen: {e:?}"))
 }
@@ -333,6 +433,9 @@ fn tap_disabled_notice(event_type: core_graphics::event::CGEventType) -> bool {
 /// `CGEventGetLocation` 返回全局显示坐标（**逻辑点**），而前端命中判定用的是物理
 /// 像素，因此这里必须乘桌宠窗口的缩放系数后再写共享槽（issue #523）。
 ///
+/// `LeftMouseDown` / `LeftMouseUp` 另外上报左键状态：窗口拖拽期间 webview 收不到
+/// pointerup，前端只有靠这条路径才能立刻结束拖拽态。
+///
 /// # 为什么自己持有 tap（issue #559）
 ///
 /// `CGEventTap::with_enabled` 只在创建时 `enable` 一次，回调收到
@@ -343,7 +446,7 @@ fn tap_disabled_notice(event_type: core_graphics::event::CGEventType) -> bool {
 /// 线程的槽里，收到禁用通知立即重新启用并留一行日志（此前这条路径完全无声）。
 #[cfg(target_os = "macos")]
 fn listen_mouse_macos(
-    store: Arc<Mutex<Option<MouseCursorPos>>>,
+    store: Arc<MouseStateStore>,
     scale_factor: SharedScaleFactor,
 ) -> Result<(), String> {
     use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
@@ -377,6 +480,13 @@ fn listen_mouse_macos(
                     }
                     return CallbackResult::Keep;
                 }
+                // 左键按下/松开：拖拽期间 webview 收不到 pointerup，前端靠这条
+                // 事件立刻结束拖拽态（`PET_MOUSE_BUTTON_EVENT`）。
+                match event_type {
+                    CGEventType::LeftMouseDown => store.write_pressed(true),
+                    CGEventType::LeftMouseUp => store.write_pressed(false),
+                    _ => {}
+                }
                 // 所有 MACOS_MOUSE_EVENTS 中带位置语义的类型都要更新光标位置。
                 // ScrollWheel 是滚轮 delta 没有位置，跳过。
                 if matches!(
@@ -385,13 +495,15 @@ fn listen_mouse_macos(
                         | CGEventType::LeftMouseDragged
                         | CGEventType::RightMouseDragged
                         | CGEventType::OtherMouseDragged
+                        | CGEventType::LeftMouseDown
+                        | CGEventType::LeftMouseUp
                 ) {
                     let point = event.location();
                     // CGEvent 是逻辑点，前端命中箱是物理像素（innerPosition + DOMRect×dpr）：
                     // 不换算会让判定区整体偏移 scale 倍，Retina 上宠物永远判否、窗口一直
                     // 点击穿透，pointerdown 到不了 WebView，startDragging 永不执行（issue #523）。
                     let scale = load_scale_factor(&scale_factor);
-                    *store.lock().expect("pet mouse store poisoned") = Some(MouseCursorPos {
+                    store.write_position(MouseCursorPos {
                         x: point.x * scale,
                         y: point.y * scale,
                     });
@@ -564,5 +676,59 @@ mod scale_tests {
                 "非法缩放系数 {invalid} 必须回退到 1.0"
             );
         }
+    }
+}
+
+/// 左键状态事件（`device-mouse-button`）与共享槽的回归测试。
+///
+/// 原生窗口拖拽跑在系统模态循环里，webview 在拖拽期间与松手瞬间都收不到
+/// pointerup；这条事件是前端立刻结束拖拽态的唯一依据，因此「松开必须发出去」
+/// 和「值没变不重发」都要有据可查。
+#[cfg(test)]
+mod button_tests {
+    use super::*;
+
+    /// 值没变就不重发（节流线程 16ms 轮询的基础，鼠标静止时零事件）；接收窗口
+    /// 换代（`rebound`）时必须强制补发一次，否则重建后的桌宠不知道按键当前状态。
+    #[test]
+    fn should_emit_only_on_change_or_rebound() {
+        let pressed = MouseButtonState { pressed: true };
+        let released = MouseButtonState { pressed: false };
+        assert!(should_emit(None, &pressed, false));
+        assert!(!should_emit(Some(&pressed), &pressed, false));
+        assert!(should_emit(Some(&pressed), &released, false));
+        assert!(should_emit(Some(&pressed), &pressed, true));
+
+        let pos = MouseCursorPos { x: 1.0, y: 2.0 };
+        assert!(should_emit(None, &pos, false));
+        assert!(!should_emit(Some(&pos), &pos, false));
+        assert!(should_emit(
+            Some(&pos),
+            &MouseCursorPos { x: 1.0, y: 3.0 },
+            false
+        ));
+    }
+
+    /// 坐标与按键分开存放：各平台能观测到的项不同，只写其中一项不能抹掉另一项，
+    /// 且读取即取走（`None` 表示自上次读取以来没有新值）。
+    #[test]
+    fn store_keeps_position_and_button_independent() {
+        let store = MouseStateStore::default();
+        let pos = MouseCursorPos { x: 3.0, y: 4.0 };
+
+        store.write_position(pos);
+        assert_eq!(store.take_pressed(), None);
+        assert_eq!(store.take_position(), Some(pos));
+        assert_eq!(store.take_position(), None);
+
+        store.write_pressed(false);
+        assert_eq!(store.take_position(), None);
+        assert_eq!(store.take_pressed(), Some(false));
+        assert_eq!(store.take_pressed(), None);
+
+        store.write_pressed(true);
+        store.write_position(pos);
+        assert_eq!(store.take_position(), Some(pos));
+        assert_eq!(store.take_pressed(), Some(true));
     }
 }

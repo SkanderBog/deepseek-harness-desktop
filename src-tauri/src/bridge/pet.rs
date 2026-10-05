@@ -544,6 +544,15 @@ pub fn move_pet_window(app: AppHandle, delta_x: i32, delta_y: i32) -> Result<(),
     pet_window::move_pet_window(&app, delta_x, delta_y)
 }
 
+/// 拖拽收尾：把桌宠窗口当前位置落盘，不做显示器夹取。
+///
+/// 位置由前端按宠物本体边界夹好（贴边也算合法），整窗夹取会在松手瞬间把宠物从
+/// 屏幕边缘推开；见 `desktop::pet::persist_pet_window_position` 的文档。
+#[tauri::command]
+pub fn persist_pet_window_position(app: AppHandle) -> Result<(), String> {
+    pet_window::persist_pet_window_position(&app)
+}
+
 /// 串行化桌宠窗口的可见性操作，保证「关闭 → 再启用」按调用顺序执行。
 fn pet_window_op_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

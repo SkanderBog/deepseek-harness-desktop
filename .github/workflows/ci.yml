@@ -266,3 +266,22 @@ jobs:
       - name: Run tests
         run: cargo test --all-features --locked
         working-directory: src-tauri
+
+      # 与下面的「Check startup regression stability」同形：`for` 必须以 `done` 收尾，
+      # 且必须显式声明 working-directory —— 否则 cargo 会在仓库根目录执行、
+      # 找不到 workspace（Cargo.toml 在 src-tauri/ 下）。
+      - name: Check plugin update cache stability
+        shell: bash
+        run: |
+          for iteration in 1 2 3 4 5; do
+            cargo test --all-features --locked service::plugin::update::tests:: -- --test-threads=1 || exit 1
+          done
+        working-directory: src-tauri
+
+      - name: Check startup regression stability
+        shell: bash
+        run: |
+          for iteration in 1 2 3 4 5; do
+            cargo test --all-features --locked desktop::startup::tests:: -- --test-threads=1 || exit 1
+          done
+        working-directory: src-tauri

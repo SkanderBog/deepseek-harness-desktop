@@ -281,6 +281,35 @@ pub fn move_pet_window<R: Runtime>(
     Ok(())
 }
 
+/// 只把桌宠窗口当前位置落盘，不做任何显示器夹取。
+///
+/// # 为什么不复用 `move_pet_window(app, 0, 0)`
+///
+/// `move_pet_window` 夹的是**整个窗口**，而宠物只是窗口底部居中的一小块，四周是
+/// 透明留白（`PET_WINDOW_PAD_X` / `PET_WINDOW_TOP_PAD` / 窗口最小宽度
+/// `PET_WINDOW_MIN_WIDTH`）。前端跟手时按「宠物本体 / 脚底」边界把窗口夹进显示器
+/// 工作区（与飞行共用边界），整窗夹取会把这些留白也算进去，于是贴边松手的瞬间把
+/// 宠物从边缘推开一段（100% 大小时左侧约 `(420 - 220) / 2 = 100` 物理像素）。
+///
+/// 因此拖拽收尾只负责持久化：位置由前端保证在可见工作区内（见
+/// `src/pet/hooks/use-pet-window-clamp.ts` 与 `src/hooks/use-window-draggable.ts`）。
+pub fn persist_pet_window_position<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let window = app
+        .get_webview_window(PET_WINDOW_LABEL)
+        .ok_or_else(|| "PET_WINDOW_NOT_FOUND: pet window has not been created".to_string())?;
+    let current = window.outer_position().map_err(|error| {
+        format!("PET_WINDOW_POSITION_FAILED: failed to read pet window position: {error}")
+    })?;
+    save_pet_window_position(
+        app,
+        &PetWindowPosition {
+            x: Some(current.x),
+            y: Some(current.y),
+        },
+    );
+    Ok(())
+}
+
 /// 确保桌宠窗口存在并恢复位置。
 ///
 /// 幂等：已注册时直接复用返回；不存在（首次启用，或上次收起时已被销毁）时
