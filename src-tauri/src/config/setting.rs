@@ -720,6 +720,7 @@ mod tests {
                 palette: "nord".into(),
                 terminal: true,
                 opacity: 70,
+                blur: 18,
                 transparency: true,
                 sidebar_only: true,
             },
