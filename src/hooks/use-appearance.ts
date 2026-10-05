@@ -1,5 +1,7 @@
 import type { RefObject } from 'react'
 import { useWatch } from '@reause/core'
+import { Effect, EffectState, getCurrentWindow } from '@tauri-apps/api/window'
+import { type } from '@tauri-apps/plugin-os'
 import { useRef } from 'react'
 import { useStore } from 'valtio-define'
 import { store } from '@/store'
@@ -13,6 +15,7 @@ export function useAppearance(iframeRef: RefObject<HTMLIFrameElement | null>) {
   const [dshStyle] = useDshStyle()
   const post = useIframePost(iframeRef)
   const readyRef = useRef(false)
+  const nativeEffectQueueRef = useRef(Promise.resolve())
   const transparent = (window as Window & { __DSH_TRANSPARENT__?: boolean }).__DSH_TRANSPARENT__ === true
 
   function sendAppearance() {
@@ -32,6 +35,28 @@ export function useAppearance(iframeRef: RefObject<HTMLIFrameElement | null>) {
   useWatch([appearance, dshStyle.colorScheme], () => {
     if (readyRef.current)
       sendAppearance()
+  }, { immediate: true })
+  useWatch(appearance, () => {
+    let platform: ReturnType<typeof type>
+    try {
+      platform = type()
+    }
+    catch {
+      return
+    }
+    if (!transparent || (platform !== 'windows' && platform !== 'macos'))
+      return
+
+    const enabled = appearanceBackdropFilter(normalizeAppearance(appearance)) !== 'none'
+    const appWindow = getCurrentWindow()
+    nativeEffectQueueRef.current = nativeEffectQueueRef.current
+      .then(() => enabled
+        ? appWindow.setEffects({
+            effects: [Effect.Acrylic, Effect.Mica, Effect.UnderWindowBackground],
+            state: EffectState.FollowsWindowActiveState,
+          })
+        : appWindow.clearEffects())
+      .catch(error => console.warn('[useAppearance] native backdrop effect failed:', error))
   }, { immediate: true })
   const value = normalizeAppearance(appearance)
   const { canvas, panel, surface, text, muted, accent, border } = appearanceColors(value, dshStyle.colorScheme ?? (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'))

@@ -577,7 +577,7 @@
   "appearance.opacity": "Background opacity",
   "appearance.opacity_description": "Text and menus stay opaque. Desktop transparency depends on your window system.",
   "appearance.blur": "Background blur",
-  "appearance.blur_description": "Blur the desktop behind translucent areas. Higher values use a stronger frosted-glass effect.",
+  "appearance.blur_description": "Use native backdrop effects on Windows and macOS, with stronger in-app blur at higher values. Linux support depends on the compositor.",
   "appearance.restart": "Quit Harness completely and reopen it to change the native transparency mode. Closing to the tray does not restart the app.",
   "appearance.reset": "Restore defaults",
   "appearance.save_failed": "Could not save appearance settings.",

@@ -4,10 +4,21 @@ import { defineStore } from 'valtio-define'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAppearance } from './use-appearance'
 
-const mocks = vi.hoisted(() => ({ setting: {} as any }))
+const mocks = vi.hoisted(() => ({
+  setting: {} as any,
+  platform: 'linux',
+  setEffects: vi.fn(() => Promise.resolve()),
+  clearEffects: vi.fn(() => Promise.resolve()),
+}))
 vi.mock('@/store', () => ({ store: { get setting() {
   return mocks.setting
 } } }))
+vi.mock('@tauri-apps/api/window', () => ({
+  Effect: { Acrylic: 'acrylic', Mica: 'mica', UnderWindowBackground: 'underWindowBackground' },
+  EffectState: { FollowsWindowActiveState: 'followsWindowActiveState' },
+  getCurrentWindow: () => ({ setEffects: mocks.setEffects, clearEffects: mocks.clearEffects }),
+}))
+vi.mock('@tauri-apps/plugin-os', () => ({ type: () => mocks.platform }))
 vi.mock('./use-dsh-style', () => ({ useDshStyle: () => [{ colorScheme: 'dark' }] }))
 
 afterEach(() => {
@@ -15,6 +26,8 @@ afterEach(() => {
   document.body.replaceChildren()
   document.head.replaceChildren()
   delete (window as any).__DSH_TRANSPARENT__
+  mocks.platform = 'linux'
+  vi.clearAllMocks()
   vi.restoreAllMocks()
 })
 
@@ -64,6 +77,35 @@ describe('desktop appearance projection', () => {
     expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { blur: 18 } })
     expect(hook.result.current).toContain('backdrop-filter:blur(18px)')
     expect(hook.result.current).toContain('-webkit-backdrop-filter:blur(18px)')
+  })
+
+  it('serializes native window effects on supported transparent desktops', async () => {
+    mocks.platform = 'windows'
+    const { hook } = setup(true)
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: 18 }
+    })
+    await vi.waitFor(() => expect(mocks.setEffects).toHaveBeenLastCalledWith({
+      effects: ['acrylic', 'mica', 'underWindowBackground'],
+      state: 'followsWindowActiveState',
+    }))
+
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: 0 }
+    })
+    await vi.waitFor(() => expect(mocks.clearEffects).toHaveBeenCalled())
+    expect(mocks.setEffects.mock.invocationCallOrder.at(-1)).toBeLessThan(mocks.clearEffects.mock.invocationCallOrder.at(-1)!)
+    hook.unmount()
+  })
+
+  it('does not request unsupported Linux window effects', async () => {
+    mocks.platform = 'linux'
+    setup(true)
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: 18 }
+    })
+    expect(mocks.setEffects).not.toHaveBeenCalled()
+    expect(mocks.clearEffects).not.toHaveBeenCalled()
   })
 
   it('immediately restores an opaque canvas when native transparency is disabled', async () => {

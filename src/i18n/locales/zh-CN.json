@@ -577,7 +577,7 @@
   "appearance.opacity": "背景不透明度",
   "appearance.opacity_description": "文字和菜单保持不透明。桌面透明效果取决于窗口系统。",
   "appearance.blur": "背景模糊",
-  "appearance.blur_description": "模糊半透明区域后的桌面，数值越大磨砂效果越强。",
+  "appearance.blur_description": "在 Windows 和 macOS 使用原生背景效果；数值越大，应用内磨砂越强。Linux 效果取决于合成器。",
   "appearance.restart": "请完全退出 Harness 后重新打开，以切换原生窗口透明模式。关闭到托盘不会重启应用。",
   "appearance.reset": "恢复默认设置",
   "appearance.save_failed": "无法保存外观设置。",
