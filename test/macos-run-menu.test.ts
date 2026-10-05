@@ -6,7 +6,7 @@ const navbarSource = readFileSync(new URL('../src/layout/components/navbar.tsx',
 const i18nSource = readFileSync(new URL('../src-tauri/src/config/i18n.rs', import.meta.url), 'utf8')
 
 function submenuItems(id: string) {
-  const match = builderSource.match(new RegExp(`"${id}",\\s*[\\s\\S]*?,\\s*true,\\s*&\\[([\\s\\S]*?)\\],?\\s*\\)`))
+  const match = builderSource.match(new RegExp(`"${id}",\\s*crate::config::i18n::t\\("[^"]+"\\),\\s*true,\\s*&\\[([\\s\\S]*?)\\],?\\s*\\)`))
   expect(match, `${id} must be installed with native menu items`).not.toBeNull()
   return match![1].match(/&\w+(?:\[\d+\])?/g)
 }
@@ -42,33 +42,18 @@ describe('macOS native menu', () => {
     expect(i18nSource).toContain('"menu.bring_all_to_front" => ("全部置于顶层", "Bring All to Front")')
   })
 
-  it('keeps only task-oriented menus in the top bar and nests system utilities in the application menu', () => {
+  it('keeps the accepted native system menus at the top level', () => {
     const nativeMenuSource = builderSource.slice(builderSource.indexOf('pub fn install_macos_menu('))
     const menu = nativeMenuSource.match(/let menu = Menu::with_items\(\s*app,\s*&\[([^\]]+)\]/)
     expect(menu).not.toBeNull()
     expect(menu![1].match(/&\w+/g)).toEqual([
       '&system_application_menu',
       '&file_menu',
-      '&run_menu',
-      '&help_menu',
-    ])
-    expect(submenuItems('desktop-system-application-menu')).toEqual([
-      '&about',
-      '&about_separator',
-      '&config',
-      '&check_update',
-      '&settings_separator',
-      '&services',
-      '&services_separator',
       '&edit_menu',
       '&view_menu',
+      '&run_menu',
       '&window_menu',
-      '&utilities_separator',
-      '&hide',
-      '&hide_others',
-      '&show_all',
-      '&quit_separator',
-      '&quit',
+      '&help_menu',
     ])
     expect(builderSource).not.toContain('"desktop-application-menu"')
     expect(nativeMenuSource).toContain('window_menu.set_as_windows_menu_for_nsapp()?')
