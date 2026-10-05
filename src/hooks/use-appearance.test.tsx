@@ -55,6 +55,17 @@ describe('desktop appearance projection', () => {
     expect(post).not.toHaveBeenCalled()
   })
 
+  it('projects the same blur into the shell and embedded appearance message', async () => {
+    const { post, ready, hook } = setup(true)
+    ready()
+    await act(async () => {
+      mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: 18 }
+    })
+    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { blur: 18 } })
+    expect(hook.result.current).toContain('backdrop-filter:blur(18px)')
+    expect(hook.result.current).toContain('-webkit-backdrop-filter:blur(18px)')
+  })
+
   it('immediately restores an opaque canvas when native transparency is disabled', async () => {
     const { post, ready, hook } = setup(true)
     ready()

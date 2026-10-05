@@ -1,7 +1,7 @@
 import type { ThemeRuntime } from '@deepseek-ai/dsh-client-ui-theme/client'
 import type { Appearance } from '../../shared/appearance'
 import type { ClientContext } from '../types'
-import { appearanceColors, appearanceTokens, normalizeAppearance } from '../../shared/appearance'
+import { appearanceBackdropFilter, appearanceColors, appearanceTokens, normalizeAppearance } from '../../shared/appearance'
 import { PLUGIN_ID } from '../../shared/constants'
 import { invokeParent } from '../service/invoke-parent'
 import { listenParent } from '../service/listen-parent'
@@ -30,8 +30,9 @@ export const registerAppearance = defineRegister<ClientContext>((controller, ctx
       return
     const { canvas } = appearanceColors(current, theme!.getTheme().active.colorScheme)
     const translucent = current.transparency && current.opacity < 100
+    const backdropFilter = appearanceBackdropFilter(current)
     style.textContent = [
-      translucent ? `html{background:transparent!important}body{background:color-mix(in srgb,${canvas} ${current.opacity}%,transparent)!important}` : '',
+      translucent ? `html{background:transparent!important}body{background:color-mix(in srgb,${canvas} ${current.opacity}%,transparent)!important${backdropFilter === 'none' ? '' : `;backdrop-filter:${backdropFilter};-webkit-backdrop-filter:${backdropFilter}`}}` : '',
       translucent && current.sidebarOnly ? `body :has(>[data-slot="main"]),body [data-rightbar-col]{--dsw-alias-bg-base:${canvas};background:${canvas}!important}` : '',
       current.terminal ? 'body [data-sidebar-collapsed]:has(>[data-shell-overlay]){grid-template-columns:var(--dsh-appearance-columns)!important}body [data-sidebar-collapsed] [data-slot="sidebar"]{visibility:hidden}' : '',
     ].filter(Boolean).join('\n')

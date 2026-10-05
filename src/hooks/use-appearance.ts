@@ -3,7 +3,7 @@ import { useWatch } from '@reause/core'
 import { useRef } from 'react'
 import { useStore } from 'valtio-define'
 import { store } from '@/store'
-import { appearanceColors, normalizeAppearance } from '../../packages/dsh-tauri/src/shared/appearance'
+import { appearanceBackdropFilter, appearanceColors, normalizeAppearance } from '../../packages/dsh-tauri/src/shared/appearance'
 import { useDshStyle } from './use-dsh-style'
 import { useIframeMessage } from './use-iframe-message'
 import { useIframePost } from './use-iframe-post'
@@ -36,12 +36,13 @@ export function useAppearance(iframeRef: RefObject<HTMLIFrameElement | null>) {
   const value = normalizeAppearance(appearance)
   const { canvas, panel, surface, text, muted, accent, border } = appearanceColors(value, dshStyle.colorScheme ?? (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'))
   const alpha = transparent && value.transparency ? value.opacity : 100
+  const backdropFilter = transparent ? appearanceBackdropFilter(value) : 'none'
   return value.palette === 'default' && alpha === 100
     ? ''
     : `
       ${alpha < 100 ? 'html,body{background:transparent!important}' : ''}
       html[data-theme]{--color-canvas:${canvas};--color-panel:${panel};--color-panel-2:${surface};--color-ink:${text};--color-info:${accent};--foreground:${text};--muted:${muted};--background:${canvas};--surface:${panel};--surface-secondary:${surface};--surface-tertiary:${surface};${border ? `--color-line:${border};--color-line-strong:${border};--color-btn-border:${border};--border:${border};--separator:${border};--field-border:${border}` : ''}}
-      [data-testid="dsh-navbar-root"]{background:color-mix(in srgb,${panel} ${alpha}%,transparent)!important}
+      [data-testid="dsh-navbar-root"]{background:color-mix(in srgb,${panel} ${alpha}%,transparent)!important;${backdropFilter === 'none' ? '' : `backdrop-filter:${backdropFilter};-webkit-backdrop-filter:${backdropFilter};`}}
       [data-testid="dsh-shell-root"]>main{background:transparent!important}
     `
 }

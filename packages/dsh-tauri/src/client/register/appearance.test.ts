@@ -80,6 +80,15 @@ describe('desktop appearance bridge', () => {
     expect(document.querySelector('style')!.textContent).toContain('#eceff4 70%')
   })
 
+  it('applies the saved frosted-glass blur without blurring opaque windows', () => {
+    const { send } = setup()
+    send({ transparency: true, opacity: 70, blur: 18 })
+    expect(document.querySelector('style')!.textContent).toContain('backdrop-filter:blur(18px)')
+    expect(document.querySelector('style')!.textContent).toContain('-webkit-backdrop-filter:blur(18px)')
+    send({ transparency: false, opacity: 70, blur: 18 })
+    expect(document.querySelector('style')!.textContent).not.toContain('backdrop-filter')
+  })
+
   it('keeps the canvas opaque when transparency is explicitly disabled', () => {
     const { send, theme } = setup()
     send({ transparency: false, opacity: 70 })

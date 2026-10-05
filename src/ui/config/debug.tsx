@@ -20,8 +20,6 @@ import { useCoreProfileSwitch } from '@/ui/config/hooks/use-core-profile-switch'
 import { writeClipboardText } from '@/utils/clipboard'
 import { toast } from '@/utils/toast'
 
-const ZOOM_OPTIONS = Array.from({ length: 16 }, (_, index) => Number((0.5 + index * 0.1).toFixed(1)))
-
 export interface CliLinkStatus {
   enabled: boolean
   shim_exists: boolean
@@ -54,7 +52,7 @@ export function ConfigDebug() {
     void refreshInfo()
   })
 
-  const { port: savedPort, proxy_url: savedProxy, zoom_factor: zoomFactor, harness_max_heap_mb: savedHeapMb } = useStore(store.setting)
+  const { port: savedPort, proxy_url: savedProxy, harness_max_heap_mb: savedHeapMb } = useStore(store.setting)
   const port = portInput ?? savedPort
   const proxy = proxyInput ?? savedProxy
   const heapValue = heapInput ?? String(savedHeapMb ?? '')
@@ -96,11 +94,6 @@ export function ConfigDebug() {
       console.error('[ConfigDebug] toggle cli link failed:', err)
       toast(t('messages.cli_link_failed'), { variant: 'danger' })
     },
-  })
-
-  const { mutate: onSetZoom } = useMutation({
-    mutationFn: (zoomFactor: number) => store.setting.update({ zoomFactor }),
-    onError: () => toast(t('messages.zoom_save_failed'), { variant: 'danger' }),
   })
 
   const { mutate: onCopyServiceUrl } = useMutation({
@@ -356,36 +349,6 @@ export function ConfigDebug() {
             </Select.Popover>
           </Select>
         </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-ink">{t('ui.zoom')}</span>
-          <Select
-            variant="secondary"
-            selectedKey={String(zoomFactor)}
-            onSelectionChange={key => onSetZoom(Number(key))}
-            className="w-[80px]"
-            aria-label={t('ui.zoom')}
-          >
-            <Select.Trigger className="min-h-8! h-8 py-0 items-center">
-              <Select.Value />
-              <Select.Indicator />
-            </Select.Trigger>
-            <Select.Popover>
-              <ListBox>
-                {ZOOM_OPTIONS.map(zoomFactor => (
-                  <ListBox.Item
-                    className="min-h-8!"
-                    id={String(zoomFactor)}
-                    key={zoomFactor}
-                    textValue={`${Math.round(zoomFactor * 100)}%`}
-                  >
-                    {`${Math.round(zoomFactor * 100)}%`}
-                  </ListBox.Item>
-                ))}
-              </ListBox>
-            </Select.Popover>
-          </Select>
-        </div>
-
         <div className="border-t border-line/30" />
 
         <div className="flex items-center justify-between gap-2">

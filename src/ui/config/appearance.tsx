@@ -1,3 +1,4 @@
+import type { AppSettingUpdate } from '@/store/modules/setting/types'
 import { Alert, Button, Description, Label, ListBox, Select, Slider, Switch, Typography } from '@heroui/react'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -6,18 +7,20 @@ import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { Panel } from '@/components/panel'
 import { store } from '@/store'
+import { ZOOM_FACTOR_DEFAULT, ZOOM_FACTOR_OPTIONS } from '@/store/modules/setting'
 import { toast } from '@/utils/toast'
 import { APPEARANCE_DEFAULTS, APPEARANCE_PALETTES, normalizeAppearance } from '../../../packages/dsh-tauri/src/shared/appearance'
 
 export function ConfigAppearance() {
   const { t } = useTranslation()
-  const { appearance: saved } = useStore(store.setting)
+  const { appearance: saved, zoom_factor: zoomFactor } = useStore(store.setting)
   const appearance = normalizeAppearance(saved)
   const [opacity, setOpacity] = useState<number>()
+  const [blur, setBlur] = useState<number>()
   const transparent = (window as Window & { __DSH_TRANSPARENT__?: boolean }).__DSH_TRANSPARENT__ === true
   const restartPending = appearance.transparency !== transparent
   const { mutate: save, isPending } = useMutation({
-    mutationFn: (value: typeof appearance) => store.setting.update({ appearance: normalizeAppearance(value) }),
+    mutationFn: (update: AppSettingUpdate) => store.setting.update(update),
     onError: () => toast(t('appearance.save_failed'), { variant: 'danger' }),
   })
 
@@ -32,7 +35,7 @@ export function ConfigAppearance() {
             variant="secondary"
             aria-label={t('appearance.palette')}
             selectedKey={appearance.palette}
-            onSelectionChange={key => save(normalizeAppearance({ ...appearance, palette: key }))}
+            onSelectionChange={key => save({ appearance: normalizeAppearance({ ...appearance, palette: key }) })}
             isDisabled={isPending}
             className="w-[180px]"
           >
@@ -54,6 +57,35 @@ export function ConfigAppearance() {
 
         <div className="flex items-center justify-between gap-2">
           <div>
+            <Typography type="body-sm" weight="medium">{t('appearance.zoom')}</Typography>
+            <Description>{t('appearance.zoom_description')}</Description>
+          </div>
+          <Select
+            variant="secondary"
+            aria-label={t('appearance.zoom')}
+            selectedKey={String(zoomFactor)}
+            onSelectionChange={key => save({ zoomFactor: Number(key) })}
+            isDisabled={isPending}
+            className="w-[80px]"
+          >
+            <Select.Trigger data-testid="dsh-appearance-zoom" className="min-h-8! h-8 py-0 items-center">
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox>
+                {ZOOM_FACTOR_OPTIONS.map(factor => (
+                  <ListBox.Item className="min-h-8!" id={String(factor)} key={factor} textValue={`${Math.round(factor * 100)}%`} data-testid={`dsh-appearance-zoom-${factor}`}>
+                    {`${Math.round(factor * 100)}%`}
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+            </Select.Popover>
+          </Select>
+        </div>
+
+        <div className="flex items-center justify-between gap-2">
+          <div>
             <Typography type="body-sm" weight="medium">{t('appearance.terminal')}</Typography>
             <Description>{t('appearance.terminal_description')}</Description>
           </div>
@@ -61,7 +93,7 @@ export function ConfigAppearance() {
             aria-label={t('appearance.terminal')}
             isSelected={appearance.terminal}
             isDisabled={isPending}
-            onChange={terminal => save({ ...appearance, terminal })}
+            onChange={terminal => save({ appearance: { ...appearance, terminal } })}
           >
             <Switch.Content data-testid="dsh-appearance-terminal">
               <Switch.Control><Switch.Thumb /></Switch.Control>
@@ -82,7 +114,7 @@ export function ConfigAppearance() {
             aria-label={t('appearance.transparency')}
             isSelected={appearance.transparency}
             isDisabled={isPending}
-            onChange={transparency => save({ ...appearance, transparency })}
+            onChange={transparency => save({ appearance: { ...appearance, transparency } })}
           >
             <Switch.Content data-testid="dsh-appearance-transparency">
               <Switch.Control><Switch.Thumb /></Switch.Control>
@@ -101,7 +133,7 @@ export function ConfigAppearance() {
               aria-label={t('appearance.sidebar_only')}
               isSelected={appearance.sidebarOnly}
               isDisabled={isPending}
-              onChange={sidebarOnly => save({ ...appearance, sidebarOnly })}
+              onChange={sidebarOnly => save({ appearance: { ...appearance, sidebarOnly } })}
             >
               <Switch.Content data-testid="dsh-appearance-sidebar-only">
                 <Switch.Control><Switch.Thumb /></Switch.Control>
@@ -117,7 +149,7 @@ export function ConfigAppearance() {
               step={1}
               isDisabled={isPending}
               onChange={value => setOpacity(Number(value))}
-              onChangeEnd={value => save({ ...appearance, opacity: Number(value) }, { onSettled: () => setOpacity(undefined) })}
+              onChangeEnd={value => save({ appearance: { ...appearance, opacity: Number(value) } }, { onSettled: () => setOpacity(undefined) })}
               data-testid="dsh-appearance-opacity"
             >
               <Label>{t('appearance.opacity')}</Label>
@@ -127,6 +159,27 @@ export function ConfigAppearance() {
                 <Slider.Thumb />
               </Slider.Track>
             </Slider>
+          </div>
+          <div>
+            <Slider
+              aria-label={t('appearance.blur')}
+              value={blur ?? appearance.blur}
+              minValue={0}
+              maxValue={40}
+              step={1}
+              isDisabled={isPending}
+              onChange={value => setBlur(Number(value))}
+              onChangeEnd={value => save({ appearance: { ...appearance, blur: Number(value) } }, { onSettled: () => setBlur(undefined) })}
+              data-testid="dsh-appearance-blur"
+            >
+              <Label>{t('appearance.blur')}</Label>
+              <Slider.Output>{({ state }) => `${state.values[0]} px`}</Slider.Output>
+              <Slider.Track>
+                <Slider.Fill />
+                <Slider.Thumb />
+              </Slider.Track>
+            </Slider>
+            <Description>{t('appearance.blur_description')}</Description>
           </div>
         </div>
         <div className="border-t border-line/30" />
@@ -141,7 +194,7 @@ export function ConfigAppearance() {
         </Alert>
       </If>
 
-      <Button variant="secondary" isDisabled={isPending} onPress={() => save(normalizeAppearance(APPEARANCE_DEFAULTS))} data-testid="dsh-appearance-reset">
+      <Button variant="secondary" isDisabled={isPending} onPress={() => save({ appearance: normalizeAppearance(APPEARANCE_DEFAULTS), zoomFactor: ZOOM_FACTOR_DEFAULT })} data-testid="dsh-appearance-reset">
         {t('appearance.reset')}
       </Button>
     </div>

@@ -7,6 +7,7 @@ pub struct Appearance {
     pub terminal: bool,
     pub transparency: bool,
     pub opacity: u8,
+    pub blur: u8,
     pub sidebar_only: bool,
 }
 
@@ -17,18 +18,33 @@ impl Default for Appearance {
             terminal: false,
             transparency: false,
             opacity: 100,
+            blur: 0,
             sidebar_only: false,
         }
     }
 }
 
+fn decode_clamped_u8(
+    value: &serde_json::Value,
+    field: &str,
+    minimum: u8,
+    maximum: u8,
+    fallback: u8,
+) -> u8 {
+    value[field]
+        .as_f64()
+        .filter(|value| value.is_finite())
+        .map(|value| {
+            value
+                .round()
+                .clamp(f64::from(minimum), f64::from(maximum)) as u8
+        })
+        .unwrap_or(fallback)
+}
+
 impl From<serde_json::Value> for Appearance {
     fn from(value: serde_json::Value) -> Self {
-        let opacity = value["opacity"]
-            .as_f64()
-            .filter(|value| value.is_finite())
-            .map(|value| value.round().clamp(20.0, 100.0) as u8)
-            .unwrap_or(100);
+        let opacity = decode_clamped_u8(&value, "opacity", 20, 100, 100);
         let mut appearance = Self {
             palette: value["palette"].as_str().unwrap_or("default").to_owned(),
             terminal: value["terminal"].as_bool().unwrap_or(false),
@@ -36,6 +52,7 @@ impl From<serde_json::Value> for Appearance {
                 .get("transparency")
                 .map_or(opacity < 100, |value| value.as_bool().unwrap_or(false)),
             opacity,
+            blur: decode_clamped_u8(&value, "blur", 0, 40, 0),
             sidebar_only: value["sidebarOnly"].as_bool().unwrap_or(false),
         };
         appearance.normalize();
@@ -59,6 +76,7 @@ impl Appearance {
             self.palette = "default".into();
         }
         self.opacity = self.opacity.clamp(20, 100);
+        self.blur = self.blur.clamp(0, 40);
     }
 }
 
@@ -129,6 +147,23 @@ mod tests {
     }
 
     #[test]
+    fn blur_decoding_rounds_and_clamps_numeric_values() {
+        for (value, expected) in [
+            (serde_json::json!(-300), 0),
+            (serde_json::json!(12.4), 12),
+            (serde_json::json!(12.5), 13),
+            (serde_json::json!(40), 40),
+            (serde_json::json!(300), 40),
+        ] {
+            let appearance: Appearance = serde_json::from_value(serde_json::json!({
+                "blur": value
+            }))
+            .unwrap();
+            assert_eq!(appearance.blur, expected, "{value}");
+        }
+    }
+
+    #[test]
     fn invalid_opacity_preserves_the_other_appearance_fields() {
         for value in [
             serde_json::json!(null),
@@ -159,7 +194,7 @@ mod tests {
         for palette in ["github", "github-dimmed", "github-high-contrast"] {
             let appearance: Appearance = serde_json::from_value(serde_json::json!({
                 "palette": palette, "terminal": true, "transparency": true,
-                "opacity": 78, "sidebarOnly": true
+                "opacity": 78, "blur": 18, "sidebarOnly": true
             }))
             .unwrap();
             assert_eq!(appearance.palette, palette);
@@ -182,9 +217,12 @@ mod tests {
         appearance.normalize();
         assert_eq!(appearance.palette, "default");
         assert_eq!(appearance.opacity, 20);
+        assert_eq!(appearance.blur, 0);
         assert!(appearance.terminal);
         appearance.opacity = 255;
+        appearance.blur = 255;
         appearance.normalize();
         assert_eq!(appearance.opacity, 100);
+        assert_eq!(appearance.blur, 40);
     }
 }
