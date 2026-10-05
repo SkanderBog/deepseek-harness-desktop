@@ -395,27 +395,6 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
     let quit_separator = PredefinedMenuItem::separator(app)?;
     let quit_label = format!("{} {}", crate::config::i18n::t("menu.quit"), app_name);
     let quit = PredefinedMenuItem::quit(app, Some(&quit_label))?;
-    let system_application_menu = Submenu::with_id_and_items(
-        app,
-        "desktop-system-application-menu",
-        app.package_info().name.clone(),
-        true,
-        &[
-            &about,
-            &about_separator,
-            &config,
-            &check_update,
-            &settings_separator,
-            &services,
-            &services_separator,
-            &hide,
-            &hide_others,
-            &show_all,
-            &quit_separator,
-            &quit,
-        ],
-    )?;
-
     let run_logs = MenuItem::with_id(
         app,
         "desktop-copy-run-logs",
@@ -554,15 +533,40 @@ pub fn install_macos_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<()> {
         &[&minimize, &zoom, &window_separator, &bring_all_to_front],
     )?;
 
+    // Edit/View/Window keep their native selectors and AppKit roles, but live under the
+    // mandatory application menu so the top bar only exposes task-oriented app menus.
+    let utilities_separator = PredefinedMenuItem::separator(app)?;
+    let system_application_menu = Submenu::with_id_and_items(
+        app,
+        "desktop-system-application-menu",
+        app.package_info().name.clone(),
+        true,
+        &[
+            &about,
+            &about_separator,
+            &config,
+            &check_update,
+            &settings_separator,
+            &services,
+            &services_separator,
+            &edit_menu,
+            &view_menu,
+            &window_menu,
+            &utilities_separator,
+            &hide,
+            &hide_others,
+            &show_all,
+            &quit_separator,
+            &quit,
+        ],
+    )?;
+
     let menu = Menu::with_items(
         app,
         &[
             &system_application_menu,
             &file_menu,
-            &edit_menu,
-            &view_menu,
             &run_menu,
-            &window_menu,
             &help_menu,
         ],
     )?;

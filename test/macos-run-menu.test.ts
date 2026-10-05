@@ -6,7 +6,7 @@ const navbarSource = readFileSync(new URL('../src/layout/components/navbar.tsx',
 const i18nSource = readFileSync(new URL('../src-tauri/src/config/i18n.rs', import.meta.url), 'utf8')
 
 function submenuItems(id: string) {
-  const match = builderSource.match(new RegExp(`"${id}",\\s*crate::config::i18n::t\\("[^"]+"\\),\\s*true,\\s*&\\[([\\s\\S]*?)\\],?\\s*\\)`))
+  const match = builderSource.match(new RegExp(`"${id}",\\s*[\\s\\S]*?,\\s*true,\\s*&\\[([\\s\\S]*?)\\],?\\s*\\)`))
   expect(match, `${id} must be installed with native menu items`).not.toBeNull()
   return match![1].match(/&\w+(?:\[\d+\])?/g)
 }
@@ -42,18 +42,33 @@ describe('macOS native menu', () => {
     expect(i18nSource).toContain('"menu.bring_all_to_front" => ("全部置于顶层", "Bring All to Front")')
   })
 
-  it('orders File, Edit, View, Run, Window and Help after the macOS application menu', () => {
+  it('keeps only task-oriented menus in the top bar and nests system utilities in the application menu', () => {
     const nativeMenuSource = builderSource.slice(builderSource.indexOf('pub fn install_macos_menu('))
     const menu = nativeMenuSource.match(/let menu = Menu::with_items\(\s*app,\s*&\[([^\]]+)\]/)
     expect(menu).not.toBeNull()
     expect(menu![1].match(/&\w+/g)).toEqual([
       '&system_application_menu',
       '&file_menu',
+      '&run_menu',
+      '&help_menu',
+    ])
+    expect(submenuItems('desktop-system-application-menu')).toEqual([
+      '&about',
+      '&about_separator',
+      '&config',
+      '&check_update',
+      '&settings_separator',
+      '&services',
+      '&services_separator',
       '&edit_menu',
       '&view_menu',
-      '&run_menu',
       '&window_menu',
-      '&help_menu',
+      '&utilities_separator',
+      '&hide',
+      '&hide_others',
+      '&show_all',
+      '&quit_separator',
+      '&quit',
     ])
     expect(builderSource).not.toContain('"desktop-application-menu"')
     expect(nativeMenuSource).toContain('window_menu.set_as_windows_menu_for_nsapp()?')
@@ -87,9 +102,9 @@ describe('macOS native menu', () => {
 
   it.each([
     ['desktop-config', 'application', 'menu.settings', '设置…', 'Settings…'],
-    ['desktop-profiles', 'profiles', 'menu.profiles', '档案', 'Profiles'],
-    ['desktop-plugins', 'plugins', 'menu.plugins', '插件', 'Plugins'],
-    ['desktop-harness', 'harness', 'menu.harness', '核心', 'Core'],
+    ['desktop-profiles', 'profiles', 'menu.profiles', '档案管理…', 'Manage Profiles…'],
+    ['desktop-plugins', 'plugins', 'menu.plugins', '插件管理…', 'Manage Plugins…'],
+    ['desktop-harness', 'harness', 'menu.harness', '核心管理…', 'Manage Core…'],
   ])('routes %s from its native item to the %s configuration tab', (action, tab, key, zh, en) => {
     expect(builderSource).toMatch(new RegExp(`MenuItem::with_id\\(\\s*app,\\s*"${action}",\\s*crate::config::i18n::t\\("${key}"\\)`))
     const eventHandler = builderSource.slice(builderSource.indexOf('.on_menu_event(|app, event|'))
@@ -113,7 +128,8 @@ describe('macOS native menu', () => {
   })
 
   it('provides the native Run title in both languages', () => {
-    expect(i18nSource).toContain('"menu.run" => ("运行", "Run")')
+    expect(i18nSource).toContain('"menu.run" => ("运行与管理", "Run & Manage")')
+    expect(i18nSource).toContain('"menu.restart" => ("重启 Harness", "Restart Harness")')
   })
 
   it('toggles the focused shell window from View without suppressing AppKit fullscreen in Window', () => {
