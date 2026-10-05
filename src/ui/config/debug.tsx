@@ -1,6 +1,6 @@
 import type { RuntimeInfo } from '@/types'
-import { ArrowRotateRight, ArrowUpRightFromSquare, ChevronRight, Copy, Folder, Power } from '@gravity-ui/icons'
-import { Button, Chip, Description, Input, Link, ListBox, Select, Spinner, Switch } from '@heroui/react'
+import { ArrowRotateRight, ArrowUpRightFromSquare, ChevronRight, CircleInfo, Copy, Power } from '@gravity-ui/icons'
+import { Button, Chip, Description, Input, Link, ListBox, Select, Spinner, Switch, Tooltip } from '@heroui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
@@ -17,6 +17,7 @@ import { ConfigCloseAction } from '@/ui/config/components/close-action'
 import { ConfigLaunchOnLogin } from '@/ui/config/components/launch-on-login'
 import { useCoreBreakingConfirm } from '@/ui/config/hooks/use-core-breaking-confirm'
 import { useCoreProfileSwitch } from '@/ui/config/hooks/use-core-profile-switch'
+import { writeClipboardText } from '@/utils/clipboard'
 import { toast } from '@/utils/toast'
 
 const ZOOM_OPTIONS = Array.from({ length: 16 }, (_, index) => Number((0.5 + index * 0.1).toFixed(1)))
@@ -40,6 +41,7 @@ export function ConfigDebug() {
   // 端口编辑态：用户尚未输入时为 undefined，展示值始终以 store 中已保存的端口为准。
   // 初值不写入 state（避免渲染期副作用），用户一旦输入即以输入值为准。
   const [portInput, setPortInput] = useState<number>()
+  const [proxyInput, setProxyInput] = useState<string>()
   const [heapInput, setHeapInput] = useState<string>()
 
   const { data: info, refetch: refreshInfo } = useQuery({
@@ -52,8 +54,9 @@ export function ConfigDebug() {
     void refreshInfo()
   })
 
-  const { port: savedPort, zoom_factor: zoomFactor, harness_max_heap_mb: savedHeapMb } = useStore(store.setting)
+  const { port: savedPort, proxy_url: savedProxy, zoom_factor: zoomFactor, harness_max_heap_mb: savedHeapMb } = useStore(store.setting)
   const port = portInput ?? savedPort
+  const proxy = proxyInput ?? savedProxy
   const heapValue = heapInput ?? String(savedHeapMb ?? '')
   /** 空输入代表自动值（null），其余按数字解析，非法值交给保存前的整数校验拦下 */
   const parsedHeap = heapValue.trim() === '' ? null : Number(heapValue)
@@ -111,6 +114,22 @@ export function ConfigDebug() {
     },
   })
 
+  const { mutate: onCopyEnvironment, isPending: copyingEnvironment } = useMutation({
+    mutationFn: async () => {
+      if (!info)
+        return
+      await writeClipboardText([
+        `${t('ui.current_version')}: ${info.app_version}`,
+        `${t('ui.dsh_version')}: ${info.dsh_version ?? '-'}`,
+        `${t('ui.node_version')}: ${info.node_version ? `v${info.node_version}` : '-'}`,
+        `${t('ui.platform')}: ${info.platform} / ${info.arch}`,
+      ].join('\n'), t('messages.environment_copied'))
+    },
+    onError: (err: unknown) => {
+      console.error('[ConfigDebug] copy environment info failed:', err)
+    },
+  })
+
   const { mutate: onSavePort } = useMutation({
     mutationFn: async (port: number) => {
       // 保存前校验：必须是 1–65535 的整数（输入框可能被清空成 0 / 浮点 / NaN）
@@ -143,6 +162,38 @@ export function ConfigDebug() {
     },
   })
 
+  const { mutate: onSaveProxy } = useMutation({
+    mutationFn: async (value: string) => {
+      const proxyUrl = value.trim()
+      if (proxyUrl) {
+        let url: URL
+        try {
+          url = new URL(proxyUrl)
+        }
+        catch {
+          throw new Error('PROXY_INVALID')
+        }
+        if (!proxyUrl.includes('://') || /\s/.test(proxyUrl)
+          || !['http:', 'https:', 'socks5:', 'socks5h:'].includes(url.protocol)
+          || !url.hostname || url.port === '0' || !['', '/'].includes(url.pathname)
+          || url.search || url.hash) {
+          throw new Error('PROXY_INVALID')
+        }
+      }
+      await store.setting.update({ proxyUrl })
+      return proxyUrl
+    },
+    onSuccess: (submitted) => {
+      // 保存期间用户可能又改了输入：只在输入仍等于本次提交值时才收拢编辑态，
+      // 否则会把在途的新输入抹掉。
+      setProxyInput(current => (current !== undefined && current.trim() !== submitted ? current : undefined))
+      toast(t('network.saved'))
+    },
+    onError: (error: unknown) => {
+      toast(t(String(error).includes('PROXY_INVALID') ? 'network.invalid' : 'network.save_failed'), { variant: 'danger' })
+    },
+  })
+
   const { mutate: onSaveHeap } = useMutation({
     mutationFn: async (mb: number | null) => {
       // 空输入 = 交回自动值；Rust 侧把 0 归一化为 None（物理内存一半，见 workflow/heap.rs）
@@ -171,14 +222,6 @@ export function ConfigDebug() {
       else {
         toast(t('messages.heap_save_failed'), { variant: 'danger' })
       }
-    },
-  })
-
-  const { mutate: onRevealDataDir } = useMutation({
-    mutationFn: () => invoke('reveal_data_dir'),
-    onError: (err: unknown) => {
-      console.error('[ConfigDebug] reveal data dir failed:', err)
-      toast(t('messages.reveal_dir_failed'), { variant: 'danger' })
     },
   })
 
@@ -274,107 +317,24 @@ export function ConfigDebug() {
           <Info term={t('ui.platform')}>
             {info ? `${info.platform} / ${info.arch}` : '-'}
           </Info>
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <span className="shrink-0 min-w-[30%] text-muted font-medium">{t('ui.data_dir')}</span>
-            <span className="min-w-0 flex items-center gap-1">
-              <span className="truncate font-mono text-[11px] text-muted/80" title={info?.data_dir ?? '-'}>
-                {info?.data_dir ?? '-'}
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                isIconOnly
-                className="size-6 min-w-6"
-                aria-label={t('app.reveal_dir')}
-                onPress={() => onRevealDataDir()}
-              >
-                <Folder className="size-3.5" />
-              </Button>
-            </span>
-          </div>
+        </div>
+        <div className="mt-2 flex justify-end">
+          <Button
+            size="sm"
+            variant="secondary"
+            isDisabled={!info || copyingEnvironment}
+            onPress={() => onCopyEnvironment()}
+          >
+            <If cond={copyingEnvironment} then={<Spinner size="sm" color="current" />} else={<Copy className="size-3.5" />} />
+            {t('buttons.copy_environment')}
+          </Button>
         </div>
       </div>
       <div className="border-t border-line/30" />
       <div className="space-y-1.5">
         <ConfigLaunchOnLogin />
         <ConfigCloseAction />
-        <div>
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-ink">{t('ui.cli_link_enabled')}</span>
-            <Switch
-              isSelected={cliStatus?.enabled ?? false}
-              onChange={onToggleCliLink}
-              aria-label={t('ui.cli_link_enabled')}
-            >
-              <Switch.Content>
-                <Switch.Control>
-                  <Switch.Thumb />
-                </Switch.Control>
-              </Switch.Content>
-            </Switch>
-          </div>
-          <If cond={cliStatus != null}>
-            <div className="flex flex-col">
-              <If
-                cond={!cliStatus?.user_dsh_preserved}
-                else={(
-                  <Description className="text-[10px] text-muted/70">
-                    {t('ui.cli_link_user_dsh_preserved')}
-                  </Description>
-                )}
-              >
-                <Description className="text-[10px] text-muted/70">{cliStatus?.bin_dir}</Description>
-                <Description className="text-[10px] text-muted/70">
-                  {t('ui.cli_link_hint')}
-                </Description>
-              </If>
-            </div>
-          </If>
-        </div>
 
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-medium text-ink">{t('ui.port')}</span>
-          <div className="flex items-center gap-1.5">
-            <Input
-              type="number"
-              variant="secondary"
-              value={String(port)}
-              onChange={e => setPortInput(Number(e.target.value))}
-              className="w-24 h-8 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              aria-label={t('ui.port')}
-            />
-            <Button
-              size="sm"
-              variant="primary"
-              className="h-8"
-              onPress={() => onSavePort(port)}
-            >
-              {t('buttons.save')}
-            </Button>
-          </div>
-        </div>
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-medium text-ink">{t('ui.heap_limit')}</span>
-          <div className="flex items-center gap-1.5">
-            <Input
-              type="number"
-              variant="secondary"
-              value={heapValue}
-              placeholder={t('ui.heap_limit_auto')}
-              onChange={e => setHeapInput(e.target.value)}
-              className="w-24 h-8 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              aria-label={t('ui.heap_limit')}
-            />
-            <Button
-              size="sm"
-              variant="primary"
-              className="h-8"
-              onPress={() => onSaveHeap(parsedHeap)}
-            >
-              {t('buttons.save')}
-            </Button>
-          </div>
-        </div>
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-ink">{t('ui.language')}</span>
           <Select
@@ -424,6 +384,124 @@ export function ConfigDebug() {
               </ListBox>
             </Select.Popover>
           </Select>
+        </div>
+
+        <div className="border-t border-line/30" />
+
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1 text-xs font-medium text-ink">
+            {t('network.proxy_url')}
+            <Tooltip delay={0}>
+              <Button isIconOnly size="sm" variant="ghost" className="size-5 text-muted" aria-label={t('network.description')}>
+                <CircleInfo className="size-3.5" />
+              </Button>
+              <Tooltip.Content className="max-w-[320px]">{`${t('network.description')} ${t('network.formats')}`}</Tooltip.Content>
+            </Tooltip>
+          </span>
+          <div className="flex items-center gap-1.5">
+            <Input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              variant="secondary"
+              value={proxy}
+              placeholder="http://127.0.0.1:7897"
+              onChange={e => setProxyInput(e.target.value)}
+              className="w-52 h-8"
+              aria-label={t('network.proxy_url')}
+              data-testid="dsh-proxy-url"
+            />
+            <Button
+              size="sm"
+              variant="primary"
+              className="h-8"
+              onPress={() => onSaveProxy(proxy)}
+              isDisabled={proxy === savedProxy}
+              data-testid="dsh-proxy-save"
+            >
+              {t('buttons.save')}
+            </Button>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-ink">{t('ui.port')}</span>
+          <div className="flex items-center gap-1.5">
+            <Input
+              type="number"
+              variant="secondary"
+              value={String(port)}
+              onChange={e => setPortInput(Number(e.target.value))}
+              className="w-24 h-8 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              aria-label={t('ui.port')}
+            />
+            <Button
+              size="sm"
+              variant="primary"
+              className="h-8"
+              onPress={() => onSavePort(port)}
+            >
+              {t('buttons.save')}
+            </Button>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-ink">{t('ui.heap_limit')}</span>
+          <div className="flex items-center gap-1.5">
+            <Input
+              type="number"
+              variant="secondary"
+              value={heapValue}
+              placeholder={t('ui.heap_limit_auto')}
+              onChange={e => setHeapInput(e.target.value)}
+              className="w-24 h-8 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              aria-label={t('ui.heap_limit')}
+            />
+            <Button
+              size="sm"
+              variant="primary"
+              className="h-8"
+              onPress={() => onSaveHeap(parsedHeap)}
+            >
+              {t('buttons.save')}
+            </Button>
+          </div>
+        </div>
+
+        <div className="border-t border-line/30" />
+
+        <div>
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1 text-xs font-medium text-ink">
+              {t('ui.cli_link_enabled')}
+              <Tooltip delay={0}>
+                <Button isIconOnly size="sm" variant="ghost" className="size-5 text-muted" aria-label={t('ui.cli_link_hint')}>
+                  <CircleInfo className="size-3.5" />
+                </Button>
+                <Tooltip.Content>{t('ui.cli_link_hint')}</Tooltip.Content>
+              </Tooltip>
+            </span>
+            <Switch
+              isSelected={cliStatus?.enabled ?? false}
+              onChange={onToggleCliLink}
+              aria-label={t('ui.cli_link_enabled')}
+            >
+              <Switch.Content>
+                <Switch.Control>
+                  <Switch.Thumb />
+                </Switch.Control>
+              </Switch.Content>
+            </Switch>
+          </div>
+          <If cond={cliStatus != null}>
+            <div className="flex flex-col">
+              <If
+                cond={!cliStatus?.user_dsh_preserved}
+                else={<Description className="text-[10px] text-muted/70">{t('ui.cli_link_user_dsh_preserved')}</Description>}
+              >
+                <Description className="text-[10px] text-muted/70">{cliStatus?.bin_dir}</Description>
+              </If>
+            </div>
+          </If>
         </div>
       </div>
 

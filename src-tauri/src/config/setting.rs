@@ -8,6 +8,8 @@ use tauri_plugin_store::StoreExt;
 #[serde(rename_all = "snake_case")]
 pub struct Setting {
     #[serde(default)]
+    pub proxy_url: String,
+    #[serde(default)]
     pub appearance: super::Appearance,
     pub installed: bool,
     pub port: u16,
@@ -86,6 +88,10 @@ pub struct Setting {
     /// 代价是主窗口也一并经 XWayland 渲染。默认关闭，由用户显式开启。
     #[serde(default)]
     pub force_xwayland: bool,
+    /// 本地插件热重载：把已挂载的本地路径插件源码目录交给核心 HMR 监听，
+    /// 源码改动即时生效（无需重启服务）。没有本地插件时不产生任何补丁层。
+    #[serde(default = "default_local_plugin_hmr")]
+    pub local_plugin_hmr: bool,
 }
 
 pub const ZOOM_FACTOR_MIN: f64 = 0.5;
@@ -125,6 +131,12 @@ pub fn default_backup_retention_count() -> u32 {
     10
 }
 
+/// 本地插件热重载默认开启：只有确实装了本地路径插件时才会产生监听目录，
+/// 未使用该能力的用户完全不受影响。
+pub fn default_local_plugin_hmr() -> bool {
+    true
+}
+
 /// 把外部或旧存储中的关闭行为收敛到白名单，未知值一律回落到默认行为。
 ///
 /// 只做精确匹配：不做 `trim()`、不做大小写折叠——store 可被手工编辑、旧版本或其它
@@ -156,6 +168,7 @@ pub fn normalize_backup_retention(retention_count: u32) -> u32 {
 }
 
 fn normalize_setting(setting: &mut Setting) {
+    setting.proxy_url = super::proxy::normalize_proxy_url(&setting.proxy_url).unwrap_or_default();
     setting.appearance.normalize();
     setting.zoom_factor = normalize_zoom_factor(setting.zoom_factor);
     setting.harness_max_heap_mb = normalize_harness_max_heap_mb(setting.harness_max_heap_mb);
@@ -175,6 +188,7 @@ pub fn default_port() -> u16 {
 impl Default for Setting {
     fn default() -> Self {
         Self {
+            proxy_url: String::new(),
             appearance: super::Appearance::default(),
             installed: false,
             port: default_port(),
@@ -198,6 +212,7 @@ impl Default for Setting {
             active_pet: None,
             pet_size: None,
             force_xwayland: false,
+            local_plugin_hmr: default_local_plugin_hmr(),
         }
     }
 }
@@ -309,7 +324,7 @@ fn setting_from_value(value: Option<&serde_json::Value>) -> Setting {
     setting
 }
 
-fn read_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>) -> Setting {
+pub(crate) fn read_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>) -> Setting {
     let store = app_handle
         .store(store_dat_file_name())
         .expect("Failed to load store");
@@ -334,6 +349,7 @@ fn emit_setting(app_handle: &AppHandle, value: &serde_json::Value) {
 }
 
 fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Setting {
+    replacement.proxy_url.clone_from(&current.proxy_url);
     replacement.appearance.clone_from(&current.appearance);
     replacement.zoom_factor = normalize_zoom_factor(current.zoom_factor);
     replacement.harness_max_heap_mb = normalize_harness_max_heap_mb(current.harness_max_heap_mb);
@@ -342,11 +358,12 @@ fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Set
     replacement.active_pet.clone_from(&current.active_pet);
     replacement.pet_size = current.pet_size;
     replacement.force_xwayland = current.force_xwayland;
+    replacement.local_plugin_hmr = current.local_plugin_hmr;
     replacement
 }
 
-/// 兼容旧调用方的整对象写入，但始终保留锁内读到的最新缩放、关窗动作与桌宠
-/// 持久字段，避免长流程用陈旧 `Setting` 覆盖精确更新路径刚写入的值（丢更新）。
+/// 兼容旧调用方的整对象写入，但始终保留锁内读到的最新缩放、关窗动作、桌宠与本地
+/// 插件热重载等持久字段，避免长流程用陈旧 `Setting` 覆盖精确更新路径刚写入的值（丢更新）。
 pub fn set_store_dat_setting(app_handle: &AppHandle, mut setting: Setting) {
     let value = {
         let _guard = setting_write_lock()
@@ -693,10 +710,12 @@ mod tests {
             active_pet: Some("chat:stale".to_string()),
             pet_size: Some(80.0),
             force_xwayland: false,
+            local_plugin_hmr: false,
             ..Default::default()
         };
 
         let current = Setting {
+            proxy_url: "socks5h://127.0.0.1:1080".to_string(),
             appearance: super::super::Appearance {
                 palette: "nord".into(),
                 terminal: true,
@@ -711,11 +730,13 @@ mod tests {
             active_pet: Some("codex:latest".to_string()),
             pet_size: Some(140.0),
             force_xwayland: true,
+            local_plugin_hmr: true,
             ..Default::default()
         };
 
         let merged = preserve_persisted_fields(stale, &current);
 
+        assert_eq!(merged.proxy_url, current.proxy_url);
         assert!(merged.installed);
         assert_eq!(merged.language, "en-US");
         assert_eq!(merged.port, 4099);
@@ -737,6 +758,24 @@ mod tests {
             merged.force_xwayland,
             "整对象写入不得覆盖最新的 XWayland 开关"
         );
+        assert!(
+            merged.local_plugin_hmr,
+            "整对象写入不得覆盖最新的本地插件热重载开关"
+        );
+    }
+
+    #[test]
+    fn proxy_setting_survives_serialization_and_defaults_for_legacy_settings() {
+        let setting = Setting {
+            proxy_url: "socks5h://127.0.0.1:1080".to_string(),
+            ..Default::default()
+        };
+        let mut value = serde_json::to_value(&setting).unwrap();
+        let restored: Setting = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(restored.proxy_url, "socks5h://127.0.0.1:1080");
+        value.as_object_mut().unwrap().remove("proxy_url");
+        let legacy: Setting = serde_json::from_value(value).unwrap();
+        assert_eq!(legacy.proxy_url, "");
     }
 
     #[test]

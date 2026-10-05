@@ -1,6 +1,6 @@
 [package]
 name = "deepseek-harness-desktop"
-version = "0.21.2"
+version = "0.22.1"
 description = "Desktop application for DeepSeek Harness (dsh)"
 authors = [ "deepseek-harness-desktop contributors" ]
 edition = "2021"
@@ -54,7 +54,13 @@ tauri-plugin-autostart = "2"
 # 桌宠素材直连远端：插件版 HTTP 从 Rust 发起请求，绕开 githubusercontent 的 CORS。
 # 版本须与 package.json 的 @tauri-apps/plugin-http（catalog:tauri，^2.6.0）保持同一 minor：
 # tauri CLI 会在构建前校验 NPM 包与 Rust crate 的 major/minor 是否一致，不一致直接退出。
-tauri-plugin-http = "2.6"
+# 公开桌宠素材不需要 cookie；禁用持久化，避免缓存不可写时阻断整个应用启动。
+tauri-plugin-http = { version = "2.6", default-features = false, features = [
+  "rustls-tls",
+  "http2",
+  "charset",
+  "system-proxy"
+] }
 # 前端读取系统版本（`@tauri-apps/plugin-os` 的 `type()` / `version()`）用于缩放的平台判定。
 # 版本须与 package.json 的 @tauri-apps/plugin-os（catalog:tauri，^2.3.2）保持同一 minor：
 # tauri CLI 会在构建前校验 NPM 包与 Rust crate 的 major/minor 是否一致，不一致直接退出。
@@ -79,7 +85,8 @@ tracing-log = "0.2"
 time = { version = "0.3", features = [ "formatting" ] }
 reqwest = { version = "0.12", features = [
   "json",
-  "stream"
+  "stream",
+  "socks"
 ] }
 rdev = "0.5.3"
 zip = "0.6"
@@ -96,6 +103,21 @@ sysinfo = { version = "0.39.6", default-features = false, features = [ "system" 
 
 [dev-dependencies]
 auto-launch = "0.5"
+tauri = { version = "2", features = [ "test" ] }
+tempfile = "3"
+
+# 选择数据存放目录（issue #871）：Windows 走原生 IFileDialog、macOS 走 NSOpenPanel、
+# Linux 走 xdg-desktop-portal（无 portal 时 rfd 自己回退到 zenity）。
+# 上游的默认特性是 Linux 专用的（xdg-portal + wayland + async-std），因此这里显式列
+# 出特性并关掉默认值：Windows / macOS 只需要 common-controls-v6；Linux 的 ashpd 传输
+# 后端用本仓库已有的 tokio，不为一次选目录再引入 async-std 这整套运行时。
+[target.'cfg(any(windows, target_os = "macos", target_os = "linux"))'.dependencies]
+rfd = { version = "0.16", default-features = false, features = [
+  "common-controls-v6",
+  "xdg-portal",
+  "wayland",
+  "tokio",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
@@ -157,7 +179,6 @@ tauri-plugin-notifications = { path = "vendor/tauri-plugin-notifications" }
 debug = 1
 
 [target.'cfg(windows)'.dependencies]
-rfd = "0.16"
 webview2-com = "0.38"
 windows-core = "0.61"
 winreg = "0.55"
@@ -175,6 +196,8 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_SystemInformation",
   "Win32_System_Threading",
   "Win32_System_Time",
+  # GetAsyncKeyState / VK_LBUTTON：原生拖拽期间上报左键松开（desktop/pet_mouse.rs）
+  "Win32_UI_Input_KeyboardAndMouse",
   # ExtractIconExW：任务栏大图标从 exe 内嵌图标资源提取（desktop/builder.rs，issue #744）
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",

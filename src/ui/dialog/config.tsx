@@ -1,6 +1,6 @@
 import type { PropsWithOverlays } from '@overlastic/react'
 import type { DshPlugin } from '@/types'
-import { Brush, Cpu, LogoWindows, PersonPencil, Puzzle } from '@gravity-ui/icons'
+import { Brush, Cpu, HardDrive, LogoWindows, PersonPencil, Puzzle } from '@gravity-ui/icons'
 import { cn, Modal } from '@heroui/react'
 import { useDisclosure } from '@overlastic/react'
 import { useListener } from '@reause/core'
@@ -13,12 +13,13 @@ import { hooks } from '@/config/hooks'
 import { queryKeys } from '@/config/query-keys'
 import { ConfigAppearance } from '@/ui/config/appearance'
 import { ConfigCore } from '@/ui/config/core'
+import { ConfigDataDir } from '@/ui/config/data-dir'
 import { ConfigDebug } from '@/ui/config/debug'
 import { ConfigPlugin } from '@/ui/config/plugin'
 import { ConfigProfile } from '@/ui/config/profile'
 
 /** 配置面板标识（左侧导航与顶部「配置」菜单共用同一组值） */
-export type ConfigTab = 'appearance' | 'application' | 'profiles' | 'plugins' | 'harness'
+export type ConfigTab = 'appearance' | 'application' | 'profiles' | 'plugins' | 'harness' | 'dataDir'
 
 export interface ConfigDialogProps extends PropsWithOverlays {
   /** 打开时定位到的面板；缺省为「应用」 */
@@ -42,6 +43,7 @@ export function ConfigDialog(props: ConfigDialogProps) {
     { label: t('config.profiles'), value: 'profiles', icon: PersonPencil },
     { label: t('config.plugins'), value: 'plugins', icon: Puzzle },
     { label: t('config.harness'), value: 'harness', icon: Cpu },
+    { label: t('config.dataDir'), value: 'dataDir', icon: HardDrive },
   ]
 
   const [activeTab, setActiveTab] = useState<ConfigTab>(props.tab ?? 'application')
@@ -53,7 +55,7 @@ export function ConfigDialog(props: ConfigDialogProps) {
     <Modal isOpen={disclosure.visible} onOpenChange={disclosure.cancel}>
       <Modal.Backdrop>
         <Modal.Container size="lg">
-          <Modal.Dialog data-testid="dsh-config-dialog" className="w-[800px] max-w-[calc(100vw-48px)] h-[min(720px,calc(100vh-96px))] pr-2.5">
+          <Modal.Dialog data-testid="dsh-config-dialog" className="w-[840px] max-w-[calc(100vw-48px)] h-[min(720px,calc(100vh-96px))] pr-2.5">
             <Modal.CloseTrigger data-testid="dsh-config-dialog-close" />
             <Modal.Header className="mb-3">
               <Modal.Heading>
@@ -88,7 +90,7 @@ export function ConfigDialog(props: ConfigDialogProps) {
                   })}
                 </nav>
               </aside>
-              <div data-testid="dsh-config-panel-body" className="flex flex-col flex-1 overflow-auto min-h-0 pr-2.5">
+              <div data-testid="dsh-config-panel-body" className="flex flex-col flex-1 overflow-auto min-h-0 pr-2.5 px-1">
                 <Switch value={activeTab} as="div">
                   <Case cond="application">
                     <ConfigDebug />
@@ -104,6 +106,9 @@ export function ConfigDialog(props: ConfigDialogProps) {
                   </Case>
                   <Case cond="harness">
                     <ConfigCore />
+                  </Case>
+                  <Case cond="dataDir">
+                    <ConfigDataDir />
                   </Case>
                 </Switch>
               </div>

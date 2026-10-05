@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 use crate::config;
 
 use super::process::{has_owned_process, LAUNCH_GUARD};
+use super::startup;
 use super::utils;
 
 /// 读取 Harness 首页并解析本次启动实际声明的客户端模块。
@@ -26,6 +27,7 @@ async fn client_probe_endpoints(port: u16) -> Result<Vec<String>, String> {
             e.is_timeout(),
         )
     })?;
+    startup::note_http_answer();
     if !response.status().is_success() {
         return Err(format!(
             "HARNESS_NOT_READY: boot page returned {}",
@@ -97,6 +99,7 @@ pub async fn proxy_health_check(port: u16) -> Result<String, String> {
         }
     }
     if all_client_modules_ready(ready, total) {
+        startup::note_client_modules_ready(ready, total);
         return Ok(format!("healthy - {ready}/{total} client modules ready"));
     }
     Err(format!(
@@ -132,7 +135,6 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("connect=true"), "{error}");
-        assert!(error.contains("timeout=false"), "{error}");
         assert!(!error.contains("elapsed_ms="), "{error}");
         assert!(error.contains("source:"), "{error}");
         assert!(
@@ -140,6 +142,23 @@ mod tests {
             "{error}"
         );
         assert_eq!(client_probe_endpoints(port).await.unwrap_err(), error);
+    }
+
+    #[tokio::test]
+    async fn boot_probe_gives_up_on_closed_port_without_os_connect_timeout() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let started = std::time::Instant::now();
+        let error = client_probe_endpoints(port).await.unwrap_err();
+        let elapsed = started.elapsed();
+
+        assert!(error.contains("connect=true"), "{error}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "closed-port probe waited {elapsed:?}"
+        );
     }
 
     #[tokio::test]

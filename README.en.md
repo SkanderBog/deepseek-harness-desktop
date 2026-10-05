@@ -42,6 +42,7 @@
 - 🔄 **Runtime management** — Install dependencies, select core versions, and access desktop/core updates.
 - 🧩 **Plugin management** — 11 built-in plugins, plus community plugin installation, upgrades, removal, and error details.
 - 🗂️ **Profile configuration** — Separate plugin/settings configurations; profiles are not an OS security sandbox.
+- 💽 **Data directory** — Pick where data lives during installation (Windows installer); migrate or roll it back later in Settings on Windows, macOS, and Linux.
 - ⌨️ **CLI integration** — Managed `dsh` / `pnpm` shims, not a global npm core installation.
 - 🐾 **Desktop pets** — Pets / Codex resources, pack imports, and conversation activity; preset media comes from remote hosts.
 - 🎨 **Personalization** — 8 palettes, terminal mode, and native transparency, with one-click restore to defaults.
@@ -102,7 +103,22 @@ brew install dsh-tauri/desktop/deepseek-harness
 - Local execution is not fully offline: model services, plugin installation, updates, and preset pet media can still use network.
 - For Linux display, Wayland, AppImage, and permission workarounds, see the [installation and troubleshooting docs](https://dshtauri.mintlify.site).
 
+- In the startup window, open **Configuration → Network** to set an HTTP, HTTPS, SOCKS5 or SOCKS5H proxy for desktop runtime/core downloads, update checks and plugin metadata queries. Leave it empty to inherit system/environment proxy settings. Changes apply to new requests; retry failed downloads after saving. SOCKS5H resolves destination names through the proxy, and loopback connections stay direct. This setting does not change Harness model requests or plugin subprocess networking.
+
+The proxy URL, including any credentials, is stored in the local desktop configuration. Prefer an HTTPS proxy when authenticating to a remote proxy: an HTTP proxy connection does not encrypt proxy credentials, even when the destination website uses HTTPS.
+
+## Mobile support
+
+The same repository also maintains the **DSH Bridge** mobile app (Expo / React Native): it discovers a DSH host on the local network and hosts the Harness web UI in a full-screen WebView. The source lives in `src-native/`.
+
+- Android APKs are downloadable from the [Releases](https://github.com/dsh-tauri/deepseek-harness-desktop/releases) page as `Deepseek.Harness.Android_x.x.x.apk`, and the version follows the desktop app.
+- **iOS is not published yet**: only the Android build and release pipeline exists.
+- The mobile app is maintained **only while no official mobile service exists**, as a stopgap.
+- Development commands (`pnpm dev:native`, `pnpm android`, `pnpm test:native`, `pnpm typecheck:native`, …) plus the discovery, connection, persistence and release conventions are documented in the [mobile specification](docs/specs/native.md).
+
 ## Runtime
+
+On Windows, `STARTUP_LOW_INTEGRITY` means the process is running below Medium integrity and cannot write normal user data. This can happen when an installation folder has an inherited Low integrity label: a replacement executable can inherit it during an update. Inspect the folder and executable with `icacls`; restore the trusted installation's labels to Medium, or reinstall into a normal folder. Running the same Low-labeled executable as administrator does not remove its integrity restriction. Keep sessions and `DSH_HOME` unchanged. Startup failures now show a native Windows dialog with the underlying error.
 
 | Current baseline | Version |
 | --- | --- |

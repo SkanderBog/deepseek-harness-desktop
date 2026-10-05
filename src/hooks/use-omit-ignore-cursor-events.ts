@@ -2,7 +2,7 @@ import type { RefObject } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 interface DeviceMousePosition {
   x: number
@@ -36,8 +36,32 @@ interface RustPetStatus {
  *
  * issue #394 的「延后到首个 device-mouse-move 再应用」仍然保留：避免挂载时
  * 立刻与事件循环竞争，但真正防止 panic 的是上面的两层可见性保护。
+ *
+ * # 拖拽期间必须可交互（`dragging`）
+ *
+ * 命中判定只看「光标是否在命中区内」：拖拽跟手有弹簧延迟，快速甩动时窗口会落在指针
+ * 后面，光标一出框就会被判成穿透 —— 那次拖拽的松手会落到桌面（别的窗口）上，指针
+ * 事件也随之中断。因此拖拽期间固定 `ignore = false`，并在 `dragging` 翻回 false 时
+ * 立刻按最近一次光标样本重算，不用等下一个样本。
+ *
+ * # 命中判定跟着窗口自己动
+ *
+ * 宠物甩出时是窗口在动、光标不动（`device-mouse-move` 只在光标真的移动时才来），
+ * 因此窗口 `Moved` 之后也要按最近光标样本重算一次：宠物飞离指针就切回穿透，飞到
+ * 指针下方就恢复可交互，点击落在「宠物现在的位置」上。
  */
-export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | null>): void {
+export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | null>, dragging = false): void {
+  /** 拖拽态最新值：主 effect 只挂一次，事件回调与重算入口都按 ref 读取。 */
+  const draggingRef = useRef(dragging)
+  draggingRef.current = dragging
+  /** 主 effect 暴露的「按当前状态重算并应用穿透」入口，供拖拽开始/结束时立即生效。 */
+  const refreshRef = useRef<() => void>(() => {})
+
+  // 拖拽开始/结束立即应用：拖拽中固定可交互，结束后按最近光标重算。
+  useEffect(() => {
+    refreshRef.current()
+  }, [dragging])
+
   useEffect(() => {
     const appWindow = getCurrentWindow()
     let disposed = false
@@ -51,6 +75,8 @@ export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | nu
     let ignoreRequestRevision = 0
     let windowPosition: { x: number, y: number } | undefined
     let geometryRevision = 0
+    // 最近一次光标样本：拖拽结束时按它立即重算穿透态，不用等下一个样本。
+    let lastCursor: DeviceMousePosition | undefined
     let unlistenMouseMove: (() => void) | undefined
     let unlistenMoved: (() => void) | undefined
     let unlistenResized: (() => void) | undefined
@@ -109,6 +135,22 @@ export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | nu
       return x >= left && x <= left + width && y >= top && y <= top + height
     }
 
+    // 按「当前」状态应用穿透：拖拽期间恒为可交互，其余情况按最近光标命中判定
+    // （见函数上方的拖拽说明）。挂载时没有光标样本则什么都不做，保持 #394 的
+    // 「延后到首个 device-mouse-move 再应用」。
+    function refreshFromState(): void {
+      if (draggingRef.current) {
+        setIgnoreCursorEvents(false)
+        return
+      }
+      if (lastCursor === undefined)
+        return
+      const inElement = isCursorInElement(lastCursor.x, lastCursor.y)
+      if (inElement !== undefined)
+        setIgnoreCursorEvents(!inElement)
+    }
+    refreshRef.current = refreshFromState
+
     // 初始整窗穿透延后应用（见上方 #394 说明）：这里只启动鼠标流、可见性与窗口
     // 几何追踪，首个 device-mouse-move 事件到来后再按命中区决定穿透态。
     void invoke('start_pet_mouse_stream').catch(() => {})
@@ -119,7 +161,10 @@ export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | nu
     }).catch(() => {})
 
     const movedPromise = appWindow.onMoved(() => {
-      void refreshWindowPosition()
+      // 命中判定同时依赖「窗口在哪」与「最近光标样本」，而甩出时是窗口在动、光标不动
+      // （`device-mouse-move` 不会再来）：位置读回来后立刻按最近样本重算，宠物飞离指针
+      // 就切回穿透、飞到指针下方就恢复可交互，点击落在「宠物现在在哪」上。
+      void refreshWindowPosition().then(refreshFromState).catch(() => {})
     })
     const resizedPromise = appWindow.onResized(() => {
       void refreshWindowPosition()
@@ -130,13 +175,12 @@ export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | nu
       handleVisibility(payload.enabled !== false && payload.visible !== false)
     })
     const mouseMovePromise = listen<DeviceMousePosition>('device-mouse-move', ({ payload }) => {
+      lastCursor = payload
       // 挂载时的位置刷新是异步的，首个事件到来时可能还没拿到窗口坐标；补拉一次，
       // 让初始命中判定尽快给出明确结果，由此把初始穿透态一次应用到位。
       if (windowPosition === undefined)
         void refreshWindowPosition()
-      const inElement = isCursorInElement(payload.x, payload.y)
-      if (inElement !== undefined)
-        setIgnoreCursorEvents(!inElement)
+      refreshFromState()
     })
 
     void Promise.all([movedPromise, resizedPromise, mouseMovePromise, statusPromise]).then(([moved, resized, mouseMove, status]) => {
@@ -156,6 +200,7 @@ export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | nu
 
     return () => {
       disposed = true
+      refreshRef.current = () => {}
       geometryRevision++
       unlistenMoved?.()
       unlistenResized?.()

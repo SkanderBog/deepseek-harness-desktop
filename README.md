@@ -42,6 +42,7 @@
 - 🔄 **运行时管理** — 安装依赖、选择内核版本，并提供桌面端与内核更新入口。
 - 🧩 **插件管理** — 11 个内置插件；支持社区插件安装、升级、卸载与错误查看。
 - 🗂️ **档案配置** — 分别管理插件与设置；档案不是操作系统安全沙箱。
+- 💽 **数据目录** — 安装时（Windows 安装包）可选择数据存放位置；Windows / macOS / Linux 都能在设置里整体迁移与回滚。
 - ⌨️ **命令行集成** — 通过托管 shim 提供 `dsh` / `pnpm`，不是全局 npm 内核安装。
 - 🐾 **桌宠** — Pets / Codex 资源管理、资源包导入与会话状态展示；预设素材来自远端。
 - 🎨 **个性化** — 8 种配色、终端模式与原生透明，可一键恢复默认。
@@ -102,6 +103,10 @@ brew install dsh-tauri/desktop/deepseek-harness
 - 本地运行不等于完全离线：模型服务、插件安装、更新与桌宠预设素材仍可能联网。
 - Linux 显示、Wayland、AppImage 与权限问题的处理见[安装与故障排查文档](https://dshtauri.mintlify.site)。
 
+- 启动界面的「配置 → 网络」可设置 HTTP、HTTPS、SOCKS5 或 SOCKS5H 代理，用于桌面端依赖/核心下载、更新检查及插件元数据查询。留空沿用系统/环境代理；保存后对新请求生效，下载失败后可重试。SOCKS5H 通过代理解析目标域名，本机回环连接始终直连。此设置不修改 Harness 模型请求或插件子进程的网络配置。
+
+代理 URL（包括填入的账号密码）保存在本机桌面配置中。远程代理需要账号密码时，建议使用 HTTPS 代理；HTTP 代理连接不会加密代理认证信息，即使请求的目标网站使用 HTTPS。
+
 ## 移动端支持
 
 同一仓库内维护移动端 **DSH Bridge**（Expo / React Native）：在局域网发现 DSH 主机，并以全屏 WebView 承载 Harness 网页，源码位于 `src-native/`。
@@ -112,6 +117,8 @@ brew install dsh-tauri/desktop/deepseek-harness
 - 开发命令（`pnpm dev:native`、`pnpm android`、`pnpm test:native`、`pnpm typecheck:native` 等）与发现、连接、持久化、发版约定见[移动端规范](docs/specs/native.md)。
 
 ## 运行方式
+
+Windows 上出现 `STARTUP_LOW_INTEGRITY` 表示进程以低于 Medium 的完整性级别运行，无法写入正常用户的数据目录。安装目录若带有可继承的 Low 标签，更新替换的可执行文件可能继承该标签。可用 `icacls` 检查安装目录及可执行文件，将可信安装的标签恢复为 Medium，或重新安装到正常目录。以管理员身份运行同一个 Low 标签程序不会移除其完整性限制。无需删除会话或修改 `DSH_HOME`；启动失败时会通过原生 Windows 对话框显示具体错误。
 
 | 当前基线 | 版本 |
 | --- | --- |
