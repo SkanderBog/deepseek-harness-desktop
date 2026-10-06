@@ -32,7 +32,10 @@ export const registerAppearance = defineRegister<ClientContext>((controller, ctx
     const translucent = current.transparency && current.opacity < 100
     style.textContent = [
       translucent ? `html{background:transparent!important}body{background:${appearanceSidebarFill(canvas, panel, translucent, current.opacity)}!important}` : '',
-      translucent && current.sidebarOnly ? `body :has(>[data-slot="main"]),body [data-rightbar-col]{--dsw-alias-bg-base:${canvas};background:${canvas}!important}` : '',
+      translucent && current.sidebarOnly
+        ? `body :has(>[data-slot="main"]),body [data-rightbar-col]{--dsw-alias-bg-base:${canvas};background:${canvas}!important} `
+        + `[data-slot="settings.content"]{--dsw-alias-bg-base:${canvas};background:${canvas}!important}`
+        : '',
       current.terminal ? 'body [data-sidebar-collapsed]:has(>[data-shell-overlay]){grid-template-columns:var(--dsh-appearance-columns)!important}body [data-sidebar-collapsed] [data-slot="sidebar"]{visibility:hidden}' : '',
     ].filter(Boolean).join('\n')
   }
