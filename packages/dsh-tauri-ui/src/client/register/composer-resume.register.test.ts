@@ -6,6 +6,7 @@ const ARROW_PATH = 'M8.3125 0.980183C8.66767 1.0531'
 const PLAY_FILL_PATH = 'M14.642 6.285c1.294.777 1.294 2.653 0 3.43l-9.113 5.468c-1.333.8-3.028-.16-3.029-1.715V2.532C2.5.978 4.196.018 5.53.818z'
 
 const RESUME_LABEL = 'resumeTask'
+const CONTENT_RISK_RECOVERY_LABEL = 'recoverContentRisk'
 
 interface ControllerStub {
   triggerObserve: () => void
@@ -15,11 +16,17 @@ interface ControllerStub {
 
 const mocks = vi.hoisted(() => ({
   resumeComposer: vi.fn(async () => ({ ok: true })),
+  openContentRiskRecoveryConfirmation: vi.fn(() => ({ result: Promise.resolve(true), close: vi.fn() })),
+  openContentRiskRecoveryUnavailable: vi.fn(() => ({ result: Promise.resolve(false), close: vi.fn() })),
   adapter: {} as Record<string, unknown>,
   controller: undefined as unknown,
 }))
 
 vi.mock('../service/composer-resume', () => ({ resumeComposer: mocks.resumeComposer }))
+vi.mock('../components/content-risk-recovery-dialog', () => ({
+  openContentRiskRecoveryConfirmation: mocks.openContentRiskRecoveryConfirmation,
+  openContentRiskRecoveryUnavailable: mocks.openContentRiskRecoveryUnavailable,
+}))
 
 vi.mock('dsh-tauri/client', () => {
   const defineLocale = (namespace: string) => ({
@@ -34,6 +41,7 @@ vi.mock('dsh-tauri/client', () => {
     const disposers: Array<() => void> = []
     let clickHandler: ((event: unknown) => void) | undefined
     let observerCallback: (() => void) | undefined
+    let disposed = false
     return {
       add: (disposer: () => void) => {
         disposers.push(disposer)
@@ -46,8 +54,9 @@ vi.mock('dsh-tauri/client', () => {
         observerCallback = callback
         return { disconnect: () => {} }
       },
-      isDisposed: () => false,
+      isDisposed: () => disposed,
       dispose: () => {
+        disposed = true
         for (const disposer of [...disposers])
           disposer()
         disposers.length = 0
@@ -210,6 +219,7 @@ interface HarnessOptions {
   buttonDisabled?: boolean
   fork?: (options: { sessionId: string, atSeq: number, increaseTitle: boolean }) => Promise<string>
   olderEntries?: ComposerSessionEventEntry[]
+  disposeDuringLoadOlder?: boolean
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -237,7 +247,14 @@ function harness(options: HarnessOptions = {}) {
   const olderEntries = options.olderEntries
   const loadOlder = olderEntries === undefined
     ? undefined
-    : vi.fn(async () => events.publish({ entries: olderEntries, hasMore: false }))
+    : vi.fn(async () => {
+        if (options.disposeDuringLoadOlder === true) {
+          const controller = mocks.controller as ControllerStub
+          controller.dispose()
+          return
+        }
+        events.publish({ entries: olderEntries, hasMore: false })
+      })
 
   mocks.adapter.sessions = {
     list,
@@ -267,6 +284,7 @@ function harness(options: HarnessOptions = {}) {
     button: primary.button,
     icon: primary.icon,
     label: primary.label,
+    title: () => primary.button.getAttribute('title'),
     disabled: () => primary.button.disabled,
     setIcon: (d: string | null) => {
       ;(primary.button.querySelector('svg path') as FakeIconElement).setAttribute('d', d ?? '')
@@ -284,6 +302,10 @@ function harness(options: HarnessOptions = {}) {
 beforeEach(() => {
   mocks.resumeComposer.mockClear()
   mocks.resumeComposer.mockResolvedValue({ ok: true })
+  mocks.openContentRiskRecoveryConfirmation.mockClear()
+  mocks.openContentRiskRecoveryConfirmation.mockReturnValue({ result: Promise.resolve(true), close: vi.fn() })
+  mocks.openContentRiskRecoveryUnavailable.mockClear()
+  mocks.openContentRiskRecoveryUnavailable.mockReturnValue({ result: Promise.resolve(false), close: vi.fn() })
   delete mocks.adapter.sessions
   delete mocks.adapter.openSession
 })
@@ -374,6 +396,12 @@ describe('composerResumeFeature', () => {
     h.click({ target, preventDefault: vi.fn(), stopPropagation: vi.fn() })
 
     await vi.waitFor(() => expect(mocks.resumeComposer).toHaveBeenCalledTimes(1))
+    expect(h.label()).toBe(CONTENT_RISK_RECOVERY_LABEL)
+    expect(h.title()).toBe(CONTENT_RISK_RECOVERY_LABEL)
+    expect(mocks.openContentRiskRecoveryConfirmation).toHaveBeenCalledWith({
+      safeSeq: 0,
+      excludedEventCount: 4,
+    })
     expect(mocks.resumeComposer).toHaveBeenCalledWith({
       sessionId: 's-1',
       recovery: expect.objectContaining({ atSeq: 0 }),
@@ -390,6 +418,7 @@ describe('composerResumeFeature', () => {
     h.click({ target, preventDefault: vi.fn(), stopPropagation: vi.fn() })
 
     await vi.waitFor(() => expect(warning).toHaveBeenCalledWith(expect.stringContaining('拒绝在原会话重放')))
+    expect(mocks.openContentRiskRecoveryUnavailable).toHaveBeenCalledTimes(1)
     expect(mocks.resumeComposer).not.toHaveBeenCalled()
     h.cleanup()
     warning.mockRestore()
@@ -411,5 +440,68 @@ describe('composerResumeFeature', () => {
       recovery: expect.objectContaining({ atSeq: 0 }),
     })
     h.cleanup()
+  })
+
+  it('加载更早事件期间插件被卸载时停止恢复', async () => {
+    const fork = vi.fn(async () => 'child')
+    const fullEntries = repeatedContentRiskEntries()
+    const h = harness({
+      entries: fullEntries.slice(4),
+      olderEntries: fullEntries,
+      fork,
+      disposeDuringLoadOlder: true,
+    })
+    const target = new FakeElement()
+    target.closest = () => h.button
+
+    h.click({ target, preventDefault: vi.fn(), stopPropagation: vi.fn() })
+
+    await vi.waitFor(() => expect(h.loadOlder).toHaveBeenCalledTimes(1))
+    expect(mocks.resumeComposer).not.toHaveBeenCalled()
+    expect(fork).not.toHaveBeenCalled()
+    expect(mocks.openContentRiskRecoveryUnavailable).not.toHaveBeenCalled()
+    h.cleanup()
+  })
+
+  it('用户取消安全分支确认时不创建分支', async () => {
+    mocks.openContentRiskRecoveryConfirmation.mockReturnValueOnce({
+      result: Promise.resolve(false),
+      close: vi.fn(),
+    })
+    const fork = vi.fn(async () => 'child')
+    const h = harness({ entries: contentRiskEntries(), fork })
+    const target = new FakeElement()
+    target.closest = () => h.button
+
+    h.click({ target, preventDefault: vi.fn(), stopPropagation: vi.fn() })
+
+    await vi.waitFor(() => expect(mocks.openContentRiskRecoveryConfirmation).toHaveBeenCalledTimes(1))
+    expect(mocks.resumeComposer).not.toHaveBeenCalled()
+    expect(fork).not.toHaveBeenCalled()
+    h.cleanup()
+  })
+
+  it('确认对话框打开期间插件被卸载时停止恢复', async () => {
+    let resolveConfirmation: (accepted: boolean) => void = () => {}
+    const confirmation = new Promise<boolean>((resolve) => {
+      resolveConfirmation = resolve
+    })
+    mocks.openContentRiskRecoveryConfirmation.mockReturnValueOnce({
+      result: confirmation,
+      close: vi.fn(),
+    })
+    const fork = vi.fn(async () => 'child')
+    const h = harness({ entries: contentRiskEntries(), fork })
+    const target = new FakeElement()
+    target.closest = () => h.button
+
+    h.click({ target, preventDefault: vi.fn(), stopPropagation: vi.fn() })
+    await vi.waitFor(() => expect(mocks.openContentRiskRecoveryConfirmation).toHaveBeenCalledTimes(1))
+    h.cleanup()
+    resolveConfirmation(true)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(mocks.resumeComposer).not.toHaveBeenCalled()
+    expect(fork).not.toHaveBeenCalled()
   })
 })

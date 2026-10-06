@@ -61,6 +61,8 @@ export function paintResumeIcon(button: HTMLButtonElement, label: string): void 
     button.disabled = false
   if (button.getAttribute('aria-label') !== label)
     button.setAttribute('aria-label', label)
+  if (button.getAttribute('title') !== label)
+    button.setAttribute('title', label)
 
   if (svg)
     svg.style.width = '14px'
@@ -80,6 +82,12 @@ export function restorePrimaryIcon(
       button.removeAttribute('aria-label')
     else
       button.setAttribute('aria-label', state.ariaLabel)
+  }
+  if (button.getAttribute('title') === options.label) {
+    if (state.title === null)
+      button.removeAttribute('title')
+    else
+      button.setAttribute('title', state.title)
   }
   if (options.disabled)
     button.disabled = true

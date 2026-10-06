@@ -199,16 +199,18 @@ describe('paintResumeIcon / restorePrimaryIcon', () => {
     expect(stub.iconPath()).toBe(PLAY_FILL_PATH)
     expect(stub.button.disabled).toBe(false)
     expect(stub.attributes.get('aria-label')).toBe('Resume task')
+    expect(stub.attributes.get('title')).toBe('Resume task')
 
-    restorePrimaryIcon(stub.button, { path: ARROW_PATH, ariaLabel: 'Send message' }, { label: 'Resume task', disabled: true })
+    restorePrimaryIcon(stub.button, { path: ARROW_PATH, ariaLabel: 'Send message', title: null }, { label: 'Resume task', disabled: true })
     expect(stub.iconPath()).toBe(ARROW_PATH)
     expect(stub.attributes.get('aria-label')).toBe('Send message')
+    expect(stub.attributes.has('title')).toBe(false)
     expect(stub.button.disabled).toBe(true)
   })
 
   it('leaves a kernel re-rendered icon and label alone', () => {
     const stub = stubButton({ ariaLabel: 'Steer the running turn', path: 'M8 0.75 0 0 1', disabled: false })
-    restorePrimaryIcon(stub.button, { path: ARROW_PATH, ariaLabel: 'Send message' }, { label: 'Resume task', disabled: false })
+    restorePrimaryIcon(stub.button, { path: ARROW_PATH, ariaLabel: 'Send message', title: null }, { label: 'Resume task', disabled: false })
     expect(stub.iconPath()).toBe('M8 0.75 0 0 1')
     expect(stub.attributes.get('aria-label')).toBe('Steer the running turn')
     expect(stub.button.disabled).toBe(false)
@@ -217,14 +219,14 @@ describe('paintResumeIcon / restorePrimaryIcon', () => {
   it('keeps the button enabled when the draft is no longer empty', () => {
     const stub = stubButton({ ariaLabel: 'Send message', path: ARROW_PATH, disabled: false })
     paintResumeIcon(stub.button, 'Resume task')
-    restorePrimaryIcon(stub.button, { path: ARROW_PATH, ariaLabel: 'Send message' }, { label: 'Resume task', disabled: false })
+    restorePrimaryIcon(stub.button, { path: ARROW_PATH, ariaLabel: 'Send message', title: null }, { label: 'Resume task', disabled: false })
     expect(stub.button.disabled).toBe(false)
   })
 
   it('drops an aria-label the kernel never set', () => {
     const stub = stubButton({ path: ARROW_PATH })
     paintResumeIcon(stub.button, 'Resume task')
-    restorePrimaryIcon(stub.button, { path: ARROW_PATH, ariaLabel: null }, { label: 'Resume task', disabled: false })
+    restorePrimaryIcon(stub.button, { path: ARROW_PATH, ariaLabel: null, title: null }, { label: 'Resume task', disabled: false })
     expect(stub.attributes.has('aria-label')).toBe(false)
   })
 

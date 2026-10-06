@@ -59,4 +59,5 @@ export interface ComposerSessionsRuntime {
 export interface ComposerIconState {
   path: string | null
   ariaLabel: string | null
+  title: string | null
 }
