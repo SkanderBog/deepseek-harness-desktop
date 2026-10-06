@@ -6,6 +6,7 @@ import { type } from '@tauri-apps/plugin-os'
 import { useRef, useState } from 'react'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
+import { useAppearance } from '@/hooks/use-appearance'
 import { DSH_VIEW_COMMANDS, shortcutHint, useDshShortcuts } from '@/hooks/use-dsh-shortcuts'
 import { useDshStyle } from '@/hooks/use-dsh-style'
 import { useIframeMessage } from '@/hooks/use-iframe-message'
@@ -27,6 +28,7 @@ interface NavBridgeMessage {
 export function Webview() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const appearanceCss = useAppearance(iframeRef)
   const post = useIframePost(iframeRef)
 
   const [dshStyle] = useDshStyle()
@@ -108,6 +110,9 @@ export function Webview() {
 
   return (
     <main className="relative flex flex-col min-h-0 flex-1" style={dshStyle.frame || {}}>
+      {/* 外观投影必须挂在不随启动阶段卸载的位置：启动页、预装引导、恢复页都在
+          Iframe 之前渲染，挂在 Iframe 里会让这些界面拿不到透明/调色板 token。 */}
+      <style>{appearanceCss}</style>
       <Navbar onRemoteChange={handleRemoteChange} sidebarCollapsed={sidebarCollapsed} {...bridge} />
       <div className="flex min-h-0 flex-1">
         {renderContent()}

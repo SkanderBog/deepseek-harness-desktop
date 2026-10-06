@@ -1,7 +1,7 @@
 import type { ThemeRuntime } from '@deepseek-ai/dsh-client-ui-theme/client'
 import type { Appearance } from '../../shared/appearance'
 import type { ClientContext } from '../types'
-import { appearanceColors, appearanceSidebarFill, appearanceTokens, normalizeAppearance } from '../../shared/appearance'
+import { appearanceBootCss, appearanceColors, appearanceSidebarFill, appearanceTokens, normalizeAppearance } from '../../shared/appearance'
 import { PLUGIN_ID } from '../../shared/constants'
 import { invokeParent } from '../service/invoke-parent'
 import { listenParent } from '../service/listen-parent'
@@ -37,6 +37,7 @@ export const registerAppearance = defineRegister<ClientContext>((controller, ctx
         + `[data-slot="settings.content"]{--dsw-alias-bg-base:${canvas};background:${canvas}!important}`
         : '',
       current.terminal ? 'body [data-sidebar-collapsed]:has(>[data-shell-overlay]){grid-template-columns:var(--dsh-appearance-columns)!important}body [data-sidebar-collapsed] [data-slot="sidebar"]{visibility:hidden}' : '',
+      appearanceBootCss(current, true),
     ].filter(Boolean).join('\n')
   }
 
@@ -88,6 +89,7 @@ export const registerAppearance = defineRegister<ClientContext>((controller, ctx
     }
     removeTokens = Object.keys(tokens).length ? theme.overrideTokens('dsh-tauri:appearance', tokens) : undefined
     updateStyles()
+    invokeParent({ type: 'dsh://appearance:applied' })
     if (terminalChanged) {
       stopTerminal()
       if (next.terminal && !attachFrame()) {

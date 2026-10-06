@@ -59,7 +59,7 @@ export function Loadable({
   const showPanel = hasLogs || percentage != null
 
   return (
-    <div className="flex h-full items-center justify-center bg-load-bg w-full" data-testid={testId}>
+    <div className="flex h-full items-center justify-center bg-startup w-full" data-testid={testId}>
       <div className="flex w-[min(460px,88vw)] flex-col items-center gap-4 text-center -mt-[1px]">
         {/* 加载态显示 spinner 时隐藏图标（官方 boot 页即无图标），避免与 spinner 重复突兀；仅失败态显示 */}
         {/* 加载态显示 spinner 时隐藏图标（官方 boot 页即无图标），避免与 spinner 重复突兀；仅失败态显示 */}

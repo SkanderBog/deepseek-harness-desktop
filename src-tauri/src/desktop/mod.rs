@@ -1,4 +1,5 @@
 pub mod activation;
+pub mod appearance;
 pub mod autostart;
 pub mod builder;
 pub mod compat;

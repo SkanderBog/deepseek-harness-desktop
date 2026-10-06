@@ -840,6 +840,12 @@ fn with_shell_chrome<'a>(
             "window.__DSH_TRANSPARENT__ = {transparent}; window.__DSH_STORE_FILE__ = {};",
             serde_json::json!(crate::config::store_dat_file_name())
         ))
+        // 启动期外观引导必须落在 document-start 且覆盖所有 frame：内嵌 dsh 的 boot 页
+        // （HARNESS + Loading plugins…）由内核在插件加载之前绘出，只有这一时刻下发的
+        // 样式才能让它与 navbar 一起透明；Windows 侧现有帧桥走 ContentLoading，
+        // 时机晚于首绘，故这里统一用 Tauri 的全 frame document-start 注入（脚本自带
+        // 幂等守卫与「仅宿主直接内嵌层」判定，顶层文档会立即返回）。
+        .initialization_script_for_all_frames(crate::desktop::appearance::APPEARANCE_BOOTSTRAP_JS)
         .inner_size(1280.0, 840.0)
         .min_inner_size(860.0, 620.0)
         .resizable(true);
@@ -1082,7 +1088,8 @@ pub fn build_main_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::We
 
     // 非 Windows（macOS/Linux）没有 WebView2 的 FrameCreated/ContentLoading 流程，
     // 直接用 Tauri 的 initialization_script_for_all_frames 把兼容桥、通知桥、
-    // 剪贴板图片桥、帧内日志桥与 boot 探测桥注入所有 frame（脚本均带幂等守卫，重复注入安全）。
+    // 剪贴板图片桥、帧内日志桥、启动期外观引导与 boot 探测桥注入所有 frame
+    // （脚本均带幂等守卫，重复注入安全）。
     // 导航桥（侧边栏）、缩放快捷键与 iframe 全局样式已分别由 dsh-tauri /
     // dsh-tauri-ui 插件在 iframe 内实现，不再注入对应脚本。
     #[cfg(not(windows))]

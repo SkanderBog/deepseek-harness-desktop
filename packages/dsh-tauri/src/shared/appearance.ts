@@ -39,6 +39,42 @@ export function appearanceSidebarFill(canvas: string, panel: string, translucent
   return translucent ? `color-mix(in srgb,${canvas} ${percent}%,transparent)` : panel
 }
 
+/** 启动页填充色：与 navbar / 侧边栏同源同 alpha，100% 或不透明时回到实心 canvas。 */
+export function appearanceStartupFill(appearance: Appearance, canvas: string): string {
+  return appearanceSidebarFill(canvas, canvas, appearance.transparency && appearance.opacity < 100, appearance.opacity)
+}
+
+/**
+ * 官方 web shell boot 页（`[data-dsh-boot]`）的透明投影。
+ *
+ * 该页由内核在**插件加载之前**绘出，此刻外观插件还没激活，所以只能用与宿主同源的
+ * CSS 表达：`html`/`body`/`#root` 全透明，由 boot 节点自身承载与 navbar 一致的 alpha。
+ * 只绘制一层 alpha——boot 节点铺底后 `body` 再叠加会得到 0.7×0.7≈0.91 的错误浓度。
+ *
+ * 背景必须落在与 boot 页同优先级的规则上：官方 `.boot` 的背景表达式是
+ * `var(--dsw-alias-bg-base, var(--dsh-boot-bg, Canvas))`，只要 theme 的
+ * `--dsw-alias-bg-base` 存在，仅设 `--dsh-boot-bg` 就会被它压掉。选择器保持结构性
+ * 且 boot-only，boot 一被 React 交接替换，整套规则自动失效（不污染正常页面，也不需要
+ * 给 `[data-dsh-boot]` 注入 inline style，避免 BootHandoff hydration 额外属性告警）。
+ *
+ * `bodyOnly` 供「自己已经画了 body alpha」的调用方（外观插件）使用：此时只取 boot
+ * 节点本体的填充规则，避免与它后写的 `body{background:…}` 争同一层 alpha。
+ */
+export function appearanceBootCss(appearance: Appearance, bodyOnly = false): string {
+  if (!appearance.transparency || appearance.opacity >= 100)
+    return ''
+  const blocks = (['dark', 'light'] as const).map((scheme) => {
+    const { canvas } = appearanceColors(appearance, scheme)
+    const selector = scheme === 'dark' ? 'body[data-ds-dark-theme]' : 'body:not([data-ds-dark-theme])'
+    const fill = appearanceStartupFill(appearance, canvas)
+    return `html:has(${selector} > #root > [data-dsh-boot]),${selector} > #root > [data-dsh-boot]{background:${fill}!important}`
+  })
+  return [
+    ...bodyOnly ? [] : ['html,body,#root{background:transparent!important}'],
+    ...blocks,
+  ].join('\n')
+}
+
 type Palette = readonly [canvas: string, panel: string, surface: string, text: string, muted: string, accent: string, border?: string]
 
 const PALETTES: Record<Appearance['palette'], Record<'dark' | 'light', Palette>> = {

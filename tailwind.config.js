@@ -29,6 +29,9 @@ export default {
         'load-ink': 'var(--color-load-ink)',
         'load-muted': 'var(--color-load-muted)',
         'load-ring': 'var(--color-load-ring)',
+        // 启动页底色：默认等于画布色，开启透明度时由外观投影换成与 navbar 同 alpha 的
+        // 启动填充（见 src/hooks/use-appearance.ts 的 --color-startup）
+        'startup': 'var(--color-startup)',
         // 按钮 token：官方 dsw alias 中性色（非蓝色），同样需注册才能生成工具类
         'btn-fill': 'var(--color-btn-fill)',
         'btn-fill-hover': 'var(--color-btn-fill-hover)',

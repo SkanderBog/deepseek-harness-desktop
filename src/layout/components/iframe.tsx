@@ -9,7 +9,7 @@ import {
   sendNotification,
 } from '@choochmeque/tauri-plugin-notifications-api'
 import { CircleExclamation } from '@gravity-ui/icons'
-import { useEventListener } from '@reause/core'
+import { useEventListener, useTimeoutFn, useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useRef, useState } from 'react'
@@ -18,7 +18,7 @@ import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { queryClient } from '@/config/client'
 import { queryKeys } from '@/config/query-keys'
-import { useAppearance } from '@/hooks/use-appearance'
+import { createAppearanceBootCss, resetBootAppearance } from '@/hooks/use-appearance'
 import { useDshStyle } from '@/hooks/use-dsh-style'
 import { useIframeMessage } from '@/hooks/use-iframe-message'
 import { useIframePost } from '@/hooks/use-iframe-post'
@@ -29,7 +29,12 @@ import { useSyncVisibility } from '@/hooks/use-sync-visibility'
 import { useZoomFactor } from '@/hooks/use-zoom-factor'
 import { store } from '@/store'
 import { zoomActionFromBridgeMessage, zoomActionFromShortcut } from '@/utils/zoom'
+import { appearanceBootCss, normalizeAppearance } from '../../../packages/dsh-tauri/src/shared/appearance'
 import { Loadable } from './loadable'
+
+/** 启动期外观握手兜底：帧内接收器异常时也不让 iframe 永久藏住（远超正常握手耗时）。 */
+const APPEARANCE_HANDSHAKE_TIMEOUT = 4000
+
 /** 可见性兜底轮询间隔：主路径是窗口 focus/resize 事件，5s 足以覆盖任务栏切换等场景 */
 
 /**
@@ -209,9 +214,41 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   const remoteMode = srcOverride !== null && srcOverride !== ''
   const [loadedUrl, setLoadedUrl] = useState('')
   const remoteLoading = remoteMode && loadedUrl !== srcOverride
-
-  const appearanceCss = useAppearance(iframeRef)
+  // 换帧（本地重挂 / 换远端隧道 / 重载）即视为新一代文档：旧文档的外观确认不能替它背书。
+  const frameKey = `${remoteMode ? srcOverride : 'local'}#${harness.iframeKey}`
+  const [bootFrame, setBootFrame] = useState<string | null>(null)
+  const appearance = normalizeAppearance(setting.appearance)
+  const translucent = (window as Window & { __DSH_TRANSPARENT__?: boolean }).__DSH_TRANSPARENT__ === true
+    && appearance.transparency && appearance.opacity < 100
+  const bootCss = translucent ? appearanceBootCss(appearance) : ''
   const post = useIframePost(iframeRef)
+  // 握手兜底：帧内接收器异常时不能让 iframe 永久藏住，超时后按「未确认」直接揭开。
+  const appearancePending = translucent && bootFrame !== frameKey
+  const { start: armAppearanceFallback, stop: stopAppearanceFallback } = useTimeoutFn(
+    () => setBootFrame(frameKey),
+    APPEARANCE_HANDSHAKE_TIMEOUT,
+    { immediate: false },
+  )
+  useWatch([frameKey, remoteMode || harness.serviceHealthy], ([, mounted]) => {
+    resetBootAppearance()
+    setBootFrame(null)
+    if (mounted)
+      armAppearanceFallback()
+    else
+      stopAppearanceFallback()
+  }, { immediate: true })
+  // iframe 与外观投影同一次提交挂载：src 落定后立刻把启动期 CSS 交给帧内接收器
+  // （帧内自己也会 document-start 主动请求一次，两条通路互为兜底）。
+  useWatch(
+    [remoteMode ? srcOverride : harness.iframeSrc, bootCss],
+    ([src, css]) => {
+      if (!src)
+        return
+      createAppearanceBootCss(css)
+      post({ type: 'dsh://appearance', bootCss: css })
+    },
+    { immediate: true },
+  )
 
   /** 待合并的按钮动作，按「tag + actionId」索引（见 `handleNotificationAction`）。 */
   const pendingActionsRef = useRef(new Map<string, { payload: NotificationClickedPayload, timer: ReturnType<typeof setTimeout> }>())
@@ -242,6 +279,12 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     // 帧内文档离开（帧内导航）：旧确认立刻作废，等新文档自己重新自报（issue #705）
     if (data.type === 'dsh://plugin-boot:leaving') {
       store.harness.markIframeLeaving()
+      return
+    }
+    // 帧内确认启动期外观已落盘：此刻可以安全揭开 iframe，不会闪出不透明 boot 页。
+    // （确认本身已由 `useAppearance` 记录，这里只负责把这一代标记为已确认。）
+    if (data.type === 'dsh://appearance:applied') {
+      setBootFrame(frameKey)
       return
     }
     // 能走到这里说明帧内确实跑着 dsh 页面（来源与 origin 已由 hook 校验过），
@@ -525,7 +568,6 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
 
   return (
     <div className="relative min-h-0 flex-1">
-      <style>{appearanceCss}</style>
       <If
         cond={remoteMode || harness.serviceHealthy}
         else={<Loadable subtitle={t(harness.startupStatusKey)} />}
@@ -535,6 +577,10 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
           ref={iframeRef}
           data-testid="dsh-shell-iframe"
           className="h-full w-full"
+          // 未确认收到启动期外观前先藏起来：帧内 boot 页（HARNESS + Loading plugins…）
+          // 会先按不透明画一帧，露出那一下比等待更刺眼。上面的 Loadable 与之逐项同构，
+          // 揭开时视觉无跳变，且有 4s 兜底不会永久藏住。
+          style={{ visibility: appearancePending || remoteLoading || harness.showIframeError ? 'hidden' : 'visible' }}
           src={remoteMode ? srcOverride : harness.iframeSrc}
           allow="accelerometer; ambient-light-sensor; autoplay; battery; camera; clipboard-read; clipboard-write; display-capture; document-domain; encrypted-media; fullscreen; gamepad; geolocation; gyroscope; hid; idle-detection; keyboard-map; magnetometer; microphone; midi; payment; picture-in-picture; publickey-credentials-get; screen-wake-lock; serial; speaker-selection; usb; web-share; xr-spatial-tracking"
           sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads allow-storage-access-by-user-activation"

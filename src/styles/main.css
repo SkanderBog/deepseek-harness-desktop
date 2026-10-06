@@ -72,6 +72,7 @@
   --backdrop: rgba(0, 0, 0, 0.5);
   /* === 壳层自有 token === */
   --color-canvas: #151517;             /* bg-base (bluish-950) */
+  --color-startup: #151517;            /* 启动页底色：默认与画布同色，开启透明度时由外观投影接管 */
   --color-panel: #1b1b1c;              /* specific-sidebar-fill (bluish-900) */
   --color-panel-2: #2c2c2e;            /* bg-layer-2 (bluish-850) */
   --color-panel-hover: #2c2c2e;        /* sidebar-nav-item-hover (bluish-850) */
@@ -112,6 +113,7 @@
 html[data-theme="light"] {
   --backdrop: rgba(0, 0, 0, 0.24);
   --color-canvas: #ffffff;             /* bg-base (bluish-00) */
+  --color-startup: #ffffff;            /* 启动页底色：默认与画布同色 */
   --color-panel: #f9fafb;              /* specific-sidebar-fill (bluish-50) */
   --color-panel-2: #f5f6f7;            /* bg-module-platform / selector (bluish-60) */
   --color-panel-hover: #f1f3f5;        /* sidebar-nav-item-hover (bluish-75) */

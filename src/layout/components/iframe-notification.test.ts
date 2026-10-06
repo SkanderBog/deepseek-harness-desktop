@@ -13,7 +13,11 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@choochmeque/tauri-plugin-notifications-api', () => mocks)
-vi.mock('@reause/core', () => ({ useEventListener: vi.fn() }))
+vi.mock('@reause/core', () => ({
+  useEventListener: vi.fn(),
+  useWatch: vi.fn(),
+  useTimeoutFn: () => ({ start: vi.fn(), stop: vi.fn() }),
+}))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
 vi.mock('@/config/client', () => ({ queryClient: {} }))
