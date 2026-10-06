@@ -54,6 +54,16 @@ describe('appearance settings controls', () => {
     expect(screen.queryByRole('switch', { name: 'appearance.sidebar_only' })).toBeNull()
   })
 
+  it('applies the transparent-mode defaults when native transparency is switched on', async () => {
+    const update = setup()
+    const toggle = screen.getByRole('switch', { name: 'appearance.transparency' })
+    fireEvent.click(toggle)
+    await waitFor(() => expect((toggle as HTMLInputElement).checked).toBe(false))
+    fireEvent.click(toggle)
+    await waitFor(() => expect(update).toHaveBeenLastCalledWith({ appearance: expect.objectContaining({ transparency: true, opacity: 80, blur: true, sidebarOnly: true }) }))
+    await waitFor(() => expect((screen.getByRole('switch', { name: 'appearance.sidebar_only' }) as HTMLInputElement).checked).toBe(true))
+  })
+
   it('restores the saved slider value when persistence fails', async () => {
     setup(true)
     const slider = screen.getByRole('slider', { name: 'appearance.opacity' })
