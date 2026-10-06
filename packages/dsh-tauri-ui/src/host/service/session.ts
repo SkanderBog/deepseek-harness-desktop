@@ -2,22 +2,27 @@ import type { Inbox } from '@deepseek-ai/dsh-agent'
 import type { PlatformModuleLoader, SessionResumeOutcome } from '../types'
 import type { CreateUserMessage, PlanSession } from './session.types'
 import { defineService } from 'dsh-tauri'
+import { contentRiskRecoveryBoundary } from '../../shared/content-risk'
 import { getCurrentHostInstance } from '../config/runtime'
 
 const CONTINUE_INSTRUCTION = 'Continue the interrupted task from where it stopped. Do not repeat work that is already complete.'
 
+const CONTENT_RISK_CONTINUE_INSTRUCTION = 'The rejected turn was excluded from this recovery branch. Continue from the retained safe context without recreating or quoting the rejected content. If the missing task cannot be inferred safely, ask the user to restate it.'
+
 // dsh ≥0.1.7 的 v4 准入拒绝 `kind: 'plugin'` 包装（format v4 message requires a producer-owned
 // source kind），且上下文行标签直接取 `kind`；两代内核的默认分支都渲染 `kind`。
 const CONTINUE_SOURCE = { kind: 'continue' } as const
+
+const CONTENT_RISK_CONTINUE_SOURCE = { kind: 'continue', recovery: 'content-risk' } as const
 
 const SETTLED_TURN_END_KINDS = ['completed', 'blocked', 'max-tokens']
 
 const DSH_LLM_MODULE = '@deepseek-ai/dsh-llm'
 
 export const session = defineService({
-  async resume(sessionId: string): Promise<SessionResumeOutcome> {
+  async resume(sessionId: string, recoverFromSessionId?: string): Promise<SessionResumeOutcome> {
     try {
-      return await resumeStoppedTurn(sessionId)
+      return await resumeStoppedTurn(sessionId, recoverFromSessionId)
     }
     catch (error) {
       return { ok: false, code: 500, error: renderThrown(error) }
@@ -26,8 +31,11 @@ export const session = defineService({
   restorePlan(value: PlanSession, messages: readonly unknown[], step: number): void {
     if (step !== 1)
       return
-    const kinds = messages.map(message => (message as { source?: { kind?: string } } | null)?.source?.kind)
+    const sources = messages.map(message => (message as { source?: { kind?: string, recovery?: string } } | null)?.source)
+    const kinds = sources.map(source => source?.kind)
     if (!kinds.includes(CONTINUE_SOURCE.kind) || kinds.includes('user'))
+      return
+    if (sources.some(source => source?.recovery === CONTENT_RISK_CONTINUE_SOURCE.recovery))
       return
     const events = sessionEvents(value)
     if (events === undefined || typeof value.append !== 'function')
@@ -53,15 +61,21 @@ export const session = defineService({
 
 // --- internal ---
 
-async function resumeStoppedTurn(sessionId: string): Promise<SessionResumeOutcome> {
+async function resumeStoppedTurn(sessionId: string, recoverFromSessionId?: string): Promise<SessionResumeOutcome> {
   const ctx = getCurrentHostInstance()
   const agent = ctx?.agents?.get?.(sessionId)
   if (agent === undefined || agent === null)
     return { ok: false, code: 404, error: '会话不存在或尚未运行' }
   if (agent.status !== 'idle')
     return { ok: false, code: 409, error: '会话仍在运行，无需继续' }
-  const kind = lastTurnEndKind(agent.session)
-  if (kind !== undefined && SETTLED_TURN_END_KINDS.includes(kind))
+  const reason = lastTurnEndReason(agent.session)
+  const kind = reason?.kind
+  const contentRiskRecovery = recoverFromSessionId === undefined
+    ? false
+    : isVerifiedContentRiskRecovery(ctx, agent.session, recoverFromSessionId)
+  if (recoverFromSessionId !== undefined && !contentRiskRecovery)
+    return { ok: false, code: 409, error: '内容审核恢复分支无效或来源会话不匹配' }
+  if (kind !== undefined && SETTLED_TURN_END_KINDS.includes(kind) && !contentRiskRecovery)
     return { ok: false, code: 409, error: `上一轮已正常结束（${kind}），无需继续` }
   if (kind === undefined)
     ctx?.logger?.warn?.(`dsh-tauri-ui: 无法从会话日志判定上一轮结束原因（session ${sessionId}），按可继续处理`)
@@ -69,8 +83,8 @@ async function resumeStoppedTurn(sessionId: string): Promise<SessionResumeOutcom
   if (ctx.agents.get(sessionId) !== agent || agent.status !== 'idle')
     return { ok: false, code: 409, error: '会话状态已变化，请重新尝试继续' }
   const message = createUserMessage({
-    content: [{ type: 'text', text: CONTINUE_INSTRUCTION }],
-    source: CONTINUE_SOURCE,
+    content: [{ type: 'text', text: contentRiskRecovery ? CONTENT_RISK_CONTINUE_INSTRUCTION : CONTINUE_INSTRUCTION }],
+    source: contentRiskRecovery ? CONTENT_RISK_CONTINUE_SOURCE : CONTINUE_SOURCE,
   })
   const inbox = agent.inbox
   if (!Array.isArray(inbox?.nextTurn) || typeof agent.followup !== 'function')
@@ -124,18 +138,62 @@ async function resumeStoppedTurn(sessionId: string): Promise<SessionResumeOutcom
   return { ok: true }
 }
 
-function lastTurnEndKind(value: unknown): string | undefined {
+function lastTurnEndReason(value: unknown): { kind?: string, error?: unknown } | undefined {
   const events = sessionEvents(value)
   if (events === undefined)
     return undefined
   for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index] as { type?: string, data?: { reason?: { kind?: unknown } } }
+    const event = events[index] as { type?: string, data?: { reason?: { kind?: unknown, error?: unknown } } }
     if (event?.type !== 'turn/end')
       continue
-    const kind = event.data?.reason?.kind
-    return typeof kind === 'string' ? kind : undefined
+    const reason = event.data?.reason
+    return typeof reason?.kind === 'string' ? { kind: reason.kind, error: reason.error } : undefined
   }
   return undefined
+}
+
+function isVerifiedContentRiskRecovery(
+  ctx: { agents?: { get?: (sessionId: string) => { session?: unknown, status?: unknown } | undefined | null } } | undefined,
+  childSession: unknown,
+  sourceSessionId: string,
+): boolean {
+  const sourceAgent = ctx?.agents?.get?.(sourceSessionId)
+  if (sourceAgent === undefined || sourceAgent === null)
+    return false
+  const child = typeof childSession === 'object' && childSession !== null
+    ? childSession as { header?: { parentSession?: unknown, isSeeded?: unknown }, inheritedEventCount?: unknown }
+    : undefined
+  const boundary = contentRiskRecoveryBoundary(sessionEvents(sourceAgent.session))
+  return boundary !== undefined
+    && sourceAgent.status === 'idle'
+    && child?.header?.parentSession === sourceSessionId
+    && child.header.isSeeded === true
+    && child.inheritedEventCount === boundary + 1
+    && isPristineForkChild(childSession, boundary + 1)
+}
+
+function isPristineForkChild(value: unknown, inheritedEventCount: number): boolean {
+  const events = sessionEvents(value)
+  if (events === undefined || !Number.isSafeInteger(inheritedEventCount) || inheritedEventCount < 0)
+    return false
+  const ownEvents = events.slice(inheritedEventCount) as Array<{
+    type?: unknown
+    data?: { inherited?: unknown, reason?: { kind?: unknown } }
+  }>
+  const marker = ownEvents[0]
+  if (marker?.type !== 'session/end-seed' || marker.data?.inherited !== true)
+    return false
+  if (ownEvents.length === 1)
+    return true
+  let index = 1
+  while (ownEvents[index]?.type === 'tool/result')
+    index += 1
+  if (ownEvents[index]?.type === 'step/end')
+    index += 1
+  if (ownEvents[index]?.type !== 'turn/end' || ownEvents[index]?.data?.reason?.kind !== 'forked')
+    return false
+  index += 1
+  return index === ownEvents.length
 }
 
 /** 内核 `Session` 的日志面逐版本漂移：`snapshotEvents()` 为准，`log` / `events` 仅作兜底。 */

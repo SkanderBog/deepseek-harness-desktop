@@ -2,10 +2,13 @@ import type { ClientContext } from 'dsh-tauri/client'
 import type { ComposerIconState, ComposerSessionBinding, ComposerSessionSnapshot, ComposerSessionsRuntime } from './composer-resume.types'
 import { defineRegister } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../../shared/constants'
+import { isContentRiskFailure } from '../../shared/content-risk'
 import { locale } from '../locales'
 import { resumeComposer } from '../service/composer-resume'
 import {
+  contentRiskRecoveryBoundary,
   isComposerEmpty,
+  lastTurnEndReason,
   paintResumeIcon,
   primaryButtonOf,
   readIconPath,
@@ -114,10 +117,67 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
     if (sessionId === undefined || pending)
       return
     pending = true
-    const outcome = await resumeComposer({ sessionId })
-    pending = false
-    if (!outcome.ok) {
-      console.warn(`[${PLUGIN_ID}] 会话继续失败: ${outcome.error ?? 'unknown'}`)
+    try {
+      const source = bindingOf(sessionId)
+      const eventSource = source?.eventSource
+      let recoveryBoundary: number | undefined
+      let entries = eventSource?.getSnapshot?.().entries
+      if (isContentRiskFailure(lastTurnEndReason(entries)?.error)) {
+        if (eventSource === undefined) {
+          console.warn(`[${PLUGIN_ID}] 无法读取内容审核错误的会话事件`)
+          return
+        }
+        let eventSnapshot = eventSource.getSnapshot()
+        recoveryBoundary = contentRiskRecoveryBoundary(entries, { historyComplete: eventSnapshot.hasMore !== true })
+        let firstSeq = entries?.[0]?.event?.seq
+        const sourceSession = source?.session
+        const loadOlder = sourceSession?.loadOlder?.bind(sourceSession)
+        if (loadOlder !== undefined) {
+          while (recoveryBoundary === undefined && eventSource.getSnapshot().hasMore === true) {
+            await loadOlder()
+            eventSnapshot = eventSource.getSnapshot()
+            entries = eventSnapshot.entries
+            const nextFirstSeq = entries?.[0]?.event?.seq
+            recoveryBoundary = contentRiskRecoveryBoundary(entries, { historyComplete: eventSnapshot.hasMore !== true })
+            if (nextFirstSeq === firstSeq)
+              break
+            firstSeq = nextFirstSeq
+          }
+        }
+        if (recoveryBoundary === undefined) {
+          console.warn(`[${PLUGIN_ID}] 无法定位内容审核错误之前的安全恢复边界`)
+          return
+        }
+      }
+      if (sessionIdNow() !== sessionId)
+        return
+      let outcome: Awaited<ReturnType<typeof resumeComposer>>
+      if (recoveryBoundary === undefined) {
+        outcome = await resumeComposer({ sessionId })
+      }
+      else {
+        const fork = sessions.fork
+        if (typeof fork !== 'function') {
+          console.warn(`[${PLUGIN_ID}] 当前内核不支持安全分叉，已拒绝在原会话重放内容审核错误`)
+          return
+        }
+        outcome = await resumeComposer({
+          sessionId,
+          recovery: {
+            atSeq: recoveryBoundary,
+            sessions: { fork: options => fork.call(sessions, options) },
+            navigation: { open: childId => adapter.openSession(childId) },
+          },
+        })
+      }
+      if (!outcome.ok)
+        console.warn(`[${PLUGIN_ID}] 会话继续失败: ${outcome.error ?? 'unknown'}`)
+    }
+    catch (error) {
+      console.warn(`[${PLUGIN_ID}] 会话继续失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    finally {
+      pending = false
       reconcile()
     }
   }

@@ -1,4 +1,6 @@
-import type { ComposerIconState, ComposerSessionEventEntry, ComposerSessionSnapshot } from './composer-resume.types'
+import type { ComposerIconState, ComposerSessionEventEntry, ComposerSessionSnapshot, ComposerTurnEndReason } from './composer-resume.types'
+
+export { contentRiskRecoveryBoundary } from '../../shared/content-risk'
 
 const PLAY_FILL_PATH = 'M14.642 6.285c1.294.777 1.294 2.653 0 3.43l-9.113 5.468c-1.333.8-3.028-.16-3.029-1.715V2.532C2.5.978 4.196.018 5.53.818z'
 
@@ -16,14 +18,14 @@ export function isComposerEmpty(card: Element): boolean {
   return card.querySelector(COMPOSER_PLACEHOLDER_SELECTOR) !== null
 }
 
-export function lastTurnEndKind(entries: readonly ComposerSessionEventEntry[] | undefined): string | undefined {
+export function lastTurnEndReason(entries: readonly ComposerSessionEventEntry[] | undefined): ComposerTurnEndReason | undefined {
   if (entries === undefined)
     return undefined
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const event = entries[index]?.event
     if (event?.type !== 'turn/end')
       continue
-    return event.data?.reason?.kind
+    return event.data?.reason
   }
   return undefined
 }
@@ -43,7 +45,7 @@ export function shouldOfferResume(input: {
   const session = input.session
   if (session === undefined || session.running === true || session.removed === true)
     return false
-  return isResumableTurnEnd(lastTurnEndKind(input.entries))
+  return isResumableTurnEnd(lastTurnEndReason(input.entries)?.kind)
 }
 
 export function restoreDisabled(composerEmpty: boolean, running: boolean, hasSubagent: boolean): boolean {

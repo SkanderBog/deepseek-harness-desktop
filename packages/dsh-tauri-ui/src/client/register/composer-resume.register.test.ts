@@ -1,5 +1,5 @@
 import type { ComposerSessionEventEntry, ComposerSessionSnapshot } from './composer-resume.types'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { composerResumeFeature } from './composer-resume'
 
 const ARROW_PATH = 'M8.3125 0.980183C8.66767 1.0531'
@@ -129,6 +129,46 @@ function turnStart(): ComposerSessionEventEntry {
   return { type: 'event', event: { type: 'turn/start' } }
 }
 
+function contentRiskEntries(): ComposerSessionEventEntry[] {
+  return [
+    { type: 'event', event: { type: 'turn/end', seq: 0, data: { turn: 1, reason: { kind: 'completed' } } } },
+    { type: 'event', event: { type: 'agent/inbox/spliced', seq: 1, data: { inserted: [{ id: 'request-1' }] } } },
+    { type: 'event', event: { type: 'turn/start', seq: 2, data: { turn: 2 } } },
+    { type: 'event', event: { type: 'user/message', seq: 3, data: { id: 'request-1' } } },
+    {
+      type: 'event',
+      event: {
+        type: 'turn/end',
+        seq: 4,
+        data: {
+          turn: 2,
+          reason: { kind: 'error', error: { code: 'INVALID_REQUEST', message: 'Content Exists Risk', status: 400 } },
+        },
+      },
+    },
+  ]
+}
+
+function repeatedContentRiskEntries(): ComposerSessionEventEntry[] {
+  return [
+    ...contentRiskEntries(),
+    { type: 'event', event: { type: 'agent/inbox/spliced', seq: 5, data: { inserted: [{ id: 'harmless-retry' }] } } },
+    { type: 'event', event: { type: 'turn/start', seq: 6, data: { turn: 3 } } },
+    { type: 'event', event: { type: 'user/message', seq: 7, data: { id: 'harmless-retry' } } },
+    {
+      type: 'event',
+      event: {
+        type: 'turn/end',
+        seq: 8,
+        data: {
+          turn: 3,
+          reason: { kind: 'error', error: { code: 'INVALID_REQUEST', message: 'Content Exists Risk', status: 400 } },
+        },
+      },
+    },
+  ]
+}
+
 function createButton(options: { path: string | null, label?: string, disabled?: boolean }) {
   const attributes = new Map<string, string>()
   if (options.label !== undefined)
@@ -168,6 +208,8 @@ interface HarnessOptions {
   entries?: ComposerSessionEventEntry[]
   path?: string | null
   buttonDisabled?: boolean
+  fork?: (options: { sessionId: string, atSeq: number, increaseTitle: boolean }) => Promise<string>
+  olderEntries?: ComposerSessionEventEntry[]
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -187,13 +229,24 @@ function harness(options: HarnessOptions = {}) {
     removed: false,
     subagent: null,
   })
-  const events = snapshotSource({ entries: options.entries ?? [turnEnd('aborted')] })
+  const events = snapshotSource<{ entries: ComposerSessionEventEntry[], hasMore?: boolean }>({
+    entries: options.entries ?? [turnEnd('aborted')],
+    hasMore: options.olderEntries !== undefined,
+  })
   const list = snapshotSource({ current: sessionId as string | undefined })
+  const olderEntries = options.olderEntries
+  const loadOlder = olderEntries === undefined
+    ? undefined
+    : vi.fn(async () => events.publish({ entries: olderEntries, hasMore: false }))
 
   mocks.adapter.sessions = {
     list,
-    binding: (id: string) => id === sessionId ? { session, eventSource: events } : undefined,
+    binding: (id: string) => id === sessionId
+      ? { session: { ...session, ...(loadOlder === undefined ? {} : { loadOlder }) }, eventSource: events }
+      : undefined,
+    ...(options.fork === undefined ? {} : { fork: options.fork }),
   }
+  mocks.adapter.openSession = vi.fn(() => ({ status: 'opened', value: undefined }))
 
   Object.assign(globalThis, {
     document: {
@@ -223,6 +276,7 @@ function harness(options: HarnessOptions = {}) {
     setEntries: (entries: ComposerSessionEventEntry[]) => events.publish({ entries }),
     triggerObserve: () => controller.triggerObserve(),
     click: (event: unknown) => controller.click(event),
+    loadOlder,
     cleanup,
   }
 }
@@ -231,6 +285,11 @@ beforeEach(() => {
   mocks.resumeComposer.mockClear()
   mocks.resumeComposer.mockResolvedValue({ ok: true })
   delete mocks.adapter.sessions
+  delete mocks.adapter.openSession
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('composerResumeFeature', () => {
@@ -303,6 +362,54 @@ describe('composerResumeFeature', () => {
     expect(preventDefault).toHaveBeenCalledTimes(1)
     expect(stopPropagation).toHaveBeenCalledTimes(1)
     expect(mocks.resumeComposer).toHaveBeenCalledWith({ sessionId: 's-1' })
+    h.cleanup()
+  })
+
+  it('内容审核错误只通过安全边界分叉继续', async () => {
+    const fork = vi.fn(async () => 'child')
+    const h = harness({ entries: contentRiskEntries(), fork })
+    const target = new FakeElement()
+    target.closest = () => h.button
+
+    h.click({ target, preventDefault: vi.fn(), stopPropagation: vi.fn() })
+
+    await vi.waitFor(() => expect(mocks.resumeComposer).toHaveBeenCalledTimes(1))
+    expect(mocks.resumeComposer).toHaveBeenCalledWith({
+      sessionId: 's-1',
+      recovery: expect.objectContaining({ atSeq: 0 }),
+    })
+    h.cleanup()
+  })
+
+  it('内核没有分叉能力时拒绝在原会话重放内容审核错误', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const h = harness({ entries: contentRiskEntries() })
+    const target = new FakeElement()
+    target.closest = () => h.button
+
+    h.click({ target, preventDefault: vi.fn(), stopPropagation: vi.fn() })
+
+    await vi.waitFor(() => expect(warning).toHaveBeenCalledWith(expect.stringContaining('拒绝在原会话重放')))
+    expect(mocks.resumeComposer).not.toHaveBeenCalled()
+    h.cleanup()
+    warning.mockRestore()
+  })
+
+  it('当前窗口缺少安全边界时先加载更早事件再分叉', async () => {
+    const fork = vi.fn(async () => 'child')
+    const fullEntries = repeatedContentRiskEntries()
+    const h = harness({ entries: fullEntries.slice(4), olderEntries: fullEntries, fork })
+    const target = new FakeElement()
+    target.closest = () => h.button
+
+    h.click({ target, preventDefault: vi.fn(), stopPropagation: vi.fn() })
+
+    await vi.waitFor(() => expect(mocks.resumeComposer).toHaveBeenCalledTimes(1))
+    expect(h.loadOlder).toHaveBeenCalledTimes(1)
+    expect(mocks.resumeComposer).toHaveBeenCalledWith({
+      sessionId: 's-1',
+      recovery: expect.objectContaining({ atSeq: 0 }),
+    })
     h.cleanup()
   })
 })

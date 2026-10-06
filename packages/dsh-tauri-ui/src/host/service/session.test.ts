@@ -24,6 +24,50 @@ function turnEnd(kind: string) {
   return { type: 'turn/end', seq: 1, time: 0, data: { turn: 1, reason: { kind } } }
 }
 
+function contentRiskEvents() {
+  return [
+    { type: 'turn/end', seq: 0, time: 0, data: { turn: 1, reason: { kind: 'completed' } } },
+    { type: 'agent/inbox/spliced', seq: 1, time: 1, data: { inserted: [{ id: 'request-1' }] } },
+    { type: 'turn/start', seq: 2, time: 2, data: { turn: 2 } },
+    { type: 'user/message', seq: 3, time: 3, data: { id: 'request-1' } },
+    {
+      type: 'turn/end',
+      seq: 4,
+      time: 4,
+      data: {
+        turn: 2,
+        reason: { kind: 'error', error: { code: 'INVALID_REQUEST', message: 'Content Exists Risk', status: 400 } },
+      },
+    },
+  ]
+}
+
+function repeatedContentRiskEvents() {
+  return [
+    ...contentRiskEvents(),
+    { type: 'agent/inbox/spliced', seq: 5, time: 5, data: { inserted: [{ id: 'harmless-retry' }] } },
+    { type: 'turn/start', seq: 6, time: 6, data: { turn: 3 } },
+    { type: 'user/message', seq: 7, time: 7, data: { id: 'harmless-retry' } },
+    {
+      type: 'turn/end',
+      seq: 8,
+      time: 8,
+      data: {
+        turn: 3,
+        reason: { kind: 'error', error: { code: 'INVALID_REQUEST', message: 'Content Exists Risk', status: 400 } },
+      },
+    },
+  ]
+}
+
+function contentRiskChildEvents(inheritedEventCount = 1) {
+  const inherited = contentRiskEvents().slice(0, inheritedEventCount)
+  return [
+    ...inherited,
+    { type: 'session/end-seed', seq: inheritedEventCount, time: inherited.at(-1)?.time ?? 0, data: { inherited: true } },
+  ]
+}
+
 function setup(options: SetupOptions = {}) {
   const followed: UserMessage[] = []
   const claimed: UserMessage[] = []
@@ -251,6 +295,15 @@ describe('continued turn plan', () => {
     await start()
     expect(projectedTodos(log)).toBeNull()
     expect(log.snapshotEvents().filter(event => (event.type as string) === 'todo/write')).toHaveLength(1)
+  })
+
+  it('does not restore a plan into a content-risk recovery branch', () => {
+    const { log, planLog } = setupTurn()
+    const before = log.snapshotEvents().length
+
+    session.restorePlan(planLog, [{ source: { kind: 'continue', recovery: 'content-risk' } }], 1)
+
+    expect(log.snapshotEvents()).toHaveLength(before)
   })
 })
 
@@ -529,6 +582,66 @@ describe('session.resume', () => {
     const { followed } = setup({ events: [turnEnd('error')] })
     expect(await session.resume('s1')).toEqual({ ok: true })
     expect(followed).toHaveLength(1)
+  })
+
+  it('continues a verified content-risk fork from before the first rejected turn', async () => {
+    const childSession = {
+      header: { parentSession: 'source', isSeeded: true },
+      inheritedEventCount: 1,
+      snapshotEvents: contentRiskChildEvents,
+    }
+    const { agent, ctx, followed } = setup({ session: childSession })
+    const sourceAgent = { ...agent, session: { snapshotEvents: repeatedContentRiskEvents } }
+    ctx.agents.get = (id: string) => id === 'child' ? agent : id === 'source' ? sourceAgent : undefined
+
+    expect(await session.resume('child', 'source')).toEqual({ ok: true })
+    expect(followed).toEqual([expect.objectContaining({
+      content: [{
+        type: 'text',
+        text: 'The rejected turn was excluded from this recovery branch. Continue from the retained safe context without recreating or quoting the rejected content. If the missing task cannot be inferred safely, ask the user to restate it.',
+      }],
+      source: { kind: 'continue', recovery: 'content-risk' },
+    })])
+  })
+
+  it.each([
+    ['wrong parent', { parentSession: 'other', isSeeded: true }, 1],
+    ['unseeded child', { parentSession: 'source', isSeeded: false }, 1],
+    ['unsafe boundary', { parentSession: 'source', isSeeded: true }, 2],
+  ] as const)('refuses a content-risk recovery with a %s', async (_label, header, inheritedEventCount) => {
+    const childSession = { header, inheritedEventCount, snapshotEvents: () => contentRiskChildEvents(inheritedEventCount) }
+    const { agent, ctx, followed } = setup({ session: childSession })
+    const sourceAgent = { ...agent, session: { snapshotEvents: contentRiskEvents } }
+    ctx.agents.get = (id: string) => id === 'child' ? agent : id === 'source' ? sourceAgent : undefined
+
+    expect(await session.resume('child', 'source')).toEqual({
+      ok: false,
+      code: 409,
+      error: '内容审核恢复分支无效或来源会话不匹配',
+    })
+    expect(followed).toEqual([])
+  })
+
+  it('refuses to replay content-risk recovery after the child fork has been used', async () => {
+    const childSession = {
+      header: { parentSession: 'source', isSeeded: true },
+      inheritedEventCount: 1,
+      snapshotEvents: () => [
+        ...contentRiskChildEvents(),
+        { type: 'turn/start', seq: 2, time: 2, data: { turn: 2 } },
+        { type: 'turn/end', seq: 3, time: 3, data: { turn: 2, reason: { kind: 'completed' } } },
+      ],
+    }
+    const { agent, ctx, followed } = setup({ session: childSession })
+    const sourceAgent = { ...agent, session: { snapshotEvents: contentRiskEvents } }
+    ctx.agents.get = (id: string) => id === 'child' ? agent : id === 'source' ? sourceAgent : undefined
+
+    expect(await session.resume('child', 'source')).toEqual({
+      ok: false,
+      code: 409,
+      error: '内容审核恢复分支无效或来源会话不匹配',
+    })
+    expect(followed).toEqual([])
   })
 
   it('refuses a turn that settled normally, naming the reason', async () => {
