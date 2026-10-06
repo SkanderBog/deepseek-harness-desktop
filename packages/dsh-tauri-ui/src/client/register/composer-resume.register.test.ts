@@ -12,6 +12,7 @@ interface ControllerStub {
   triggerObserve: () => void
   click: (event: unknown) => void
   dispose: () => void
+  disposerCount: () => number
 }
 
 const mocks = vi.hoisted(() => ({
@@ -63,6 +64,7 @@ vi.mock('dsh-tauri/client', () => {
       },
       triggerObserve: () => observerCallback?.(),
       click: (event: unknown) => clickHandler?.(event),
+      disposerCount: () => disposers.length,
     }
   }
   return {
@@ -295,6 +297,7 @@ function harness(options: HarnessOptions = {}) {
     triggerObserve: () => controller.triggerObserve(),
     click: (event: unknown) => controller.click(event),
     loadOlder,
+    disposerCount: () => controller.disposerCount(),
     cleanup,
   }
 }
@@ -412,6 +415,7 @@ describe('composerResumeFeature', () => {
   it('内核没有分叉能力时拒绝在原会话重放内容审核错误', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const h = harness({ entries: contentRiskEntries() })
+    const disposerCount = h.disposerCount()
     const target = new FakeElement()
     target.closest = () => h.button
 
@@ -420,6 +424,7 @@ describe('composerResumeFeature', () => {
     await vi.waitFor(() => expect(warning).toHaveBeenCalledWith(expect.stringContaining('拒绝在原会话重放')))
     expect(mocks.openContentRiskRecoveryUnavailable).toHaveBeenCalledTimes(1)
     expect(mocks.resumeComposer).not.toHaveBeenCalled()
+    expect(h.disposerCount()).toBe(disposerCount)
     h.cleanup()
     warning.mockRestore()
   })

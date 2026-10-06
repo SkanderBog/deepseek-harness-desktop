@@ -1,4 +1,5 @@
 import type { ClientContext } from 'dsh-tauri/client'
+import type { ContentRiskRecoveryDialog } from '../components/content-risk-recovery-dialog'
 import type { ComposerIconState, ComposerSessionBinding, ComposerSessionEventEntry, ComposerSessionSnapshot, ComposerSessionsRuntime } from './composer-resume.types'
 import { defineRegister } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../../shared/constants'
@@ -35,6 +36,7 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
   let unwatchEvents: (() => void) | undefined
   let unwatchSession: (() => void) | undefined
   let patch: { button: HTMLButtonElement, icon: ComposerIconState, label: string } | undefined
+  let closeDialog: (() => void) | undefined
   let pending = false
 
   const resumeLabel = (entries?: readonly ComposerSessionEventEntry[]): string =>
@@ -106,6 +108,18 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
     unwatchSession = undefined
   }
 
+  async function waitForDialog(dialog: ContentRiskRecoveryDialog): Promise<boolean> {
+    closeDialog?.()
+    closeDialog = dialog.close
+    try {
+      return await dialog.result
+    }
+    finally {
+      if (closeDialog === dialog.close)
+        closeDialog = undefined
+    }
+  }
+
   function refresh(): void {
     const sessionId = sessionIdNow()
     if (sessionId !== watchedSessionId) {
@@ -136,8 +150,7 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
         if (eventSource === undefined) {
           console.warn(`[${PLUGIN_ID}] 无法读取内容审核错误的会话事件`)
           const dialog = openContentRiskRecoveryUnavailable()
-          controller.add(dialog.close)
-          await dialog.result
+          await waitForDialog(dialog)
           return
         }
         let eventSnapshot = eventSource.getSnapshot()
@@ -162,8 +175,7 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
         if (recoveryBoundary === undefined) {
           console.warn(`[${PLUGIN_ID}] 无法定位内容审核错误之前的安全恢复边界`)
           const dialog = openContentRiskRecoveryUnavailable()
-          controller.add(dialog.close)
-          await dialog.result
+          await waitForDialog(dialog)
           return
         }
         const safeBoundary = recoveryBoundary
@@ -183,16 +195,14 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
         if (typeof fork !== 'function') {
           console.warn(`[${PLUGIN_ID}] 当前内核不支持安全分叉，已拒绝在原会话重放内容审核错误`)
           const dialog = openContentRiskRecoveryUnavailable()
-          controller.add(dialog.close)
-          await dialog.result
+          await waitForDialog(dialog)
           return
         }
         const dialog = openContentRiskRecoveryConfirmation({
           safeSeq: recoveryBoundary,
           excludedEventCount,
         })
-        controller.add(dialog.close)
-        const confirmed = await dialog.result
+        const confirmed = await waitForDialog(dialog)
         if (!confirmed || controller.isDisposed() || sessionIdNow() !== sessionId)
           return
         outcome = await resumeComposer({
@@ -224,6 +234,11 @@ export const composerResumeFeature = defineRegister<ClientContext>((controller, 
       paintResumeIcon(patch.button, patch.label)
     }
   }))
+  controller.add(() => {
+    const close = closeDialog
+    closeDialog = undefined
+    close?.()
+  })
   controller.add(unwatch)
   controller.listen('click', (event) => {
     if (patch === undefined)
