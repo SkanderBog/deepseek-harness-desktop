@@ -18,7 +18,6 @@ import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { queryClient } from '@/config/client'
 import { queryKeys } from '@/config/query-keys'
-import { createAppearanceBootCss, resetBootAppearance } from '@/hooks/use-appearance'
 import { useDshStyle } from '@/hooks/use-dsh-style'
 import { useIframeMessage } from '@/hooks/use-iframe-message'
 import { useIframePost } from '@/hooks/use-iframe-post'
@@ -29,7 +28,7 @@ import { useSyncVisibility } from '@/hooks/use-sync-visibility'
 import { useZoomFactor } from '@/hooks/use-zoom-factor'
 import { store } from '@/store'
 import { zoomActionFromBridgeMessage, zoomActionFromShortcut } from '@/utils/zoom'
-import { appearanceBootCss, normalizeAppearance } from '../../../packages/dsh-tauri/src/shared/appearance'
+import { appearanceBootCss, appearanceTranslucent, normalizeAppearance } from '../../../packages/dsh-tauri/src/shared/appearance'
 import { Loadable } from './loadable'
 
 /** 启动期外观握手兜底：帧内接收器异常时也不让 iframe 永久藏住（远超正常握手耗时）。 */
@@ -219,7 +218,7 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
   const [bootFrame, setBootFrame] = useState<string | null>(null)
   const appearance = normalizeAppearance(setting.appearance)
   const translucent = (window as Window & { __DSH_TRANSPARENT__?: boolean }).__DSH_TRANSPARENT__ === true
-    && appearance.transparency && appearance.opacity < 100
+    && appearanceTranslucent(appearance)
   const bootCss = translucent ? appearanceBootCss(appearance) : ''
   const post = useIframePost(iframeRef)
   // 握手兜底：帧内接收器异常时不能让 iframe 永久藏住，超时后按「未确认」直接揭开。
@@ -230,7 +229,6 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     { immediate: false },
   )
   useWatch([frameKey, remoteMode || harness.serviceHealthy], ([, mounted]) => {
-    resetBootAppearance()
     setBootFrame(null)
     if (mounted)
       armAppearanceFallback()
@@ -244,7 +242,6 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     ([src, css]) => {
       if (!src)
         return
-      createAppearanceBootCss(css)
       post({ type: 'dsh://appearance', bootCss: css })
     },
     { immediate: true },
@@ -279,7 +276,6 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     // 帧内文档离开（帧内导航）：旧确认立刻作废，等新文档自己重新自报（issue #705）；
     // 外观确认同样作废，并重新隐蔽 iframe + 重挂兜底，避免旧样式作用在新文档上。
     if (data.type === 'dsh://plugin-boot:leaving') {
-      resetBootAppearance()
       setBootFrame(null)
       armAppearanceFallback()
       store.harness.markIframeLeaving()

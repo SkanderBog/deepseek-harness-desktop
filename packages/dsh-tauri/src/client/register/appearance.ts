@@ -1,7 +1,7 @@
 import type { ThemeRuntime } from '@deepseek-ai/dsh-client-ui-theme/client'
 import type { Appearance } from '../../shared/appearance'
 import type { ClientContext } from '../types'
-import { appearanceBootCss, appearanceColors, appearanceSidebarFill, appearanceTokens, normalizeAppearance } from '../../shared/appearance'
+import { appearanceBootCss, appearanceColors, appearanceSidebarFill, appearanceTokens, appearanceTranslucent, normalizeAppearance } from '../../shared/appearance'
 import { PLUGIN_ID } from '../../shared/constants'
 import { invokeParent } from '../service/invoke-parent'
 import { listenParent } from '../service/listen-parent'
@@ -29,7 +29,7 @@ export const registerAppearance = defineRegister<ClientContext>((controller, ctx
     if (!current)
       return
     const { canvas, panel } = appearanceColors(current, theme!.getTheme().active.colorScheme)
-    const translucent = current.transparency && current.opacity < 100
+    const translucent = appearanceTranslucent(current)
     style.textContent = [
       translucent ? `html{background:transparent!important}body{background:${appearanceSidebarFill(canvas, panel, translucent, current.opacity)}!important}` : '',
       translucent && current.sidebarOnly
@@ -83,7 +83,7 @@ export const registerAppearance = defineRegister<ClientContext>((controller, ctx
     current = next
     removeTokens?.()
     const tokens = appearanceTokens(next)
-    if (next.transparency && next.opacity < 100) {
+    if (appearanceTranslucent(next)) {
       tokens['--dsw-alias-bg-base'] = { dark: 'transparent', light: 'transparent' }
       tokens['--dsw-specific-sidebar-fill'] = { dark: 'transparent', light: 'transparent' }
     }

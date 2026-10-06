@@ -10,15 +10,11 @@ export interface Appearance {
   sidebarOnly: boolean
 }
 
-function normalizeInteger(value: unknown, minimum: number, maximum: number, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value)
-    ? Math.round(Math.min(maximum, Math.max(minimum, value)))
-    : fallback
-}
-
 export function normalizeAppearance(value: unknown): Appearance {
   const input = value as (Omit<Partial<Appearance>, 'blur'> & { blur?: unknown }) | null
-  const opacity = normalizeInteger(input?.opacity, 20, 100, 100)
+  const opacity = typeof input?.opacity === 'number' && Number.isFinite(input.opacity)
+    ? Math.round(Math.min(100, Math.max(20, input.opacity)))
+    : 100
   return {
     palette: APPEARANCE_PALETTES.includes(input?.palette as Appearance['palette']) ? input!.palette! : 'default',
     terminal: input?.terminal === true,
@@ -29,19 +25,18 @@ export function normalizeAppearance(value: unknown): Appearance {
   }
 }
 
-export function appearanceBackdropFilter(appearance: Appearance): string {
-  return appearance.transparency && appearance.opacity < 100 && appearance.blur
-    ? 'blur(16px)'
-    : 'none'
-}
-
 export function appearanceSidebarFill(canvas: string, panel: string, translucent: boolean, percent: number): string {
   return translucent ? `color-mix(in srgb,${canvas} ${percent}%,transparent)` : panel
 }
 
+/** 「背景真的半透明」只有一个定义：窗口开了透明且 alpha 未满。 */
+export function appearanceTranslucent(appearance: Appearance): boolean {
+  return appearance.transparency && appearance.opacity < 100
+}
+
 /** 启动页填充色：与 navbar / 侧边栏同源同 alpha，100% 或不透明时回到实心 canvas。 */
 export function appearanceStartupFill(appearance: Appearance, canvas: string): string {
-  return appearanceSidebarFill(canvas, canvas, appearance.transparency && appearance.opacity < 100, appearance.opacity)
+  return appearanceSidebarFill(canvas, canvas, appearanceTranslucent(appearance), appearance.opacity)
 }
 
 /**
@@ -61,7 +56,7 @@ export function appearanceStartupFill(appearance: Appearance, canvas: string): s
  * 节点本体的填充规则，避免与它后写的 `body{background:…}` 争同一层 alpha。
  */
 export function appearanceBootCss(appearance: Appearance, bodyOnly = false): string {
-  if (!appearance.transparency || appearance.opacity >= 100)
+  if (!appearanceTranslucent(appearance))
     return ''
   const blocks = (['dark', 'light'] as const).map((scheme) => {
     const { canvas } = appearanceColors(appearance, scheme)

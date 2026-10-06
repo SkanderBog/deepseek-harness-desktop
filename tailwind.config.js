@@ -25,7 +25,6 @@ export default {
         'log-ink': 'var(--color-log-ink)',
         // 加载页 token：与主色不同，必须在此注册才会生成对应工具类
         // （漏掉会整条回退 currentColor，spinner 变成同色整圈、看不出旋转）
-        'load-bg': 'var(--color-load-bg)',
         'load-ink': 'var(--color-load-ink)',
         'load-muted': 'var(--color-load-muted)',
         'load-ring': 'var(--color-load-ring)',

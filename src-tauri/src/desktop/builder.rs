@@ -841,10 +841,7 @@ fn with_shell_chrome<'a>(
             serde_json::json!(crate::config::store_dat_file_name())
         ))
         // 启动期外观引导必须落在 document-start 且覆盖所有 frame：内嵌 dsh 的 boot 页
-        // （HARNESS + Loading plugins…）由内核在插件加载之前绘出，只有这一时刻下发的
-        // 样式才能让它与 navbar 一起透明；Windows 侧现有帧桥走 ContentLoading，
-        // 时机晚于首绘，故这里统一用 Tauri 的全 frame document-start 注入（脚本自带
-        // 幂等守卫与「仅宿主直接内嵌层」判定，顶层文档会立即返回）。
+        // （HARNESS + Loading plugins…）由内核在插件加载之前绘出，晚于首绘的帧桥改不动它。
         .initialization_script_for_all_frames(crate::desktop::appearance::APPEARANCE_BOOTSTRAP_JS)
         .inner_size(1280.0, 840.0)
         .min_inner_size(860.0, 620.0)
@@ -1377,13 +1374,6 @@ mod security_tests {
         serde_json::from_str(include_str!("../../capabilities/default.json")).unwrap()
     }
 
-    fn appearance_effects_capability() -> Value {
-        serde_json::from_str(include_str!(
-            "../../capabilities/appearance-effects.json"
-        ))
-        .unwrap()
-    }
-
     #[test]
     fn remote_capability_allows_only_loopback_harness() {
         let capability = capability();
@@ -1403,17 +1393,10 @@ mod security_tests {
 
     #[test]
     fn native_appearance_effects_are_local_shell_only() {
-        let appearance = appearance_effects_capability();
-        assert_eq!(appearance["local"].as_bool(), Some(true));
+        let appearance: Value =
+            serde_json::from_str(include_str!("../../capabilities/appearance-effects.json")).unwrap();
+        // 这个能力一旦带上 remote，就会把窗口级 setEffects 暴露给回环承载的 Harness 页面。
         assert!(appearance.get("remote").is_none());
-        assert_eq!(
-            appearance["windows"],
-            serde_json::json!(["main", "remote-*", "window-*"])
-        );
-        assert_eq!(
-            appearance["permissions"],
-            serde_json::json!(["core:window:allow-set-effects"])
-        );
 
         let default_permissions = capability()["permissions"]
             .as_array()

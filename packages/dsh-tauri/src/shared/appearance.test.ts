@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { APPEARANCE_DEFAULTS, APPEARANCE_PALETTES, appearanceBackdropFilter, appearanceBootCss, appearanceColors, appearanceSidebarFill, appearanceStartupFill, appearanceTokens, normalizeAppearance } from './appearance'
+import { APPEARANCE_DEFAULTS, APPEARANCE_PALETTES, appearanceBootCss, appearanceColors, appearanceSidebarFill, appearanceStartupFill, appearanceTokens, normalizeAppearance } from './appearance'
 
 describe('appearance preferences', () => {
   it('migrates old transparency settings but respects an explicit disabled switch', () => {
@@ -18,12 +18,6 @@ describe('appearance preferences', () => {
 
   it.each([[false, false], [true, true], [0, false], [1, true], [40, true]])('normalizes blur %s to %s', (input, expected) => {
     expect(normalizeAppearance({ transparency: true, opacity: 70, blur: input }).blur).toBe(expected)
-  })
-
-  it('only enables backdrop blur for a translucent background', () => {
-    expect(appearanceBackdropFilter(normalizeAppearance({ transparency: true, opacity: 70, blur: true }))).toBe('blur(16px)')
-    expect(appearanceBackdropFilter(normalizeAppearance({ transparency: false, opacity: 70, blur: true }))).toBe('none')
-    expect(appearanceBackdropFilter(normalizeAppearance({ transparency: true, opacity: 100, blur: true }))).toBe('none')
   })
 
   it.each([

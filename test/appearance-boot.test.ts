@@ -11,8 +11,7 @@ import { describe, expect, it, vi } from 'vitest'
  *    丢失（表现为 boot 页永远收不到 CSS、宿主一直等不到 ack）。
  * 2. 只写独立 head `<style>`：boot 节点由官方 React 树持有（BootHandoff 只交接
  *    className/innerHTML，额外 inline style 会触发 hydration 不匹配），脚本不得碰它。
- * 3. 有界重试与确认：同一份 CSS 只 ack 一次；骨架未就绪时重试而非丢弃；上限内停在
- *    未确认态，交由宿主侧超时兜底。
+ * 3. 同一份 CSS 只 ack 一次；离开的文档由 pagehide 撤销，新文档自己重新请求。
  */
 const SOURCE = readFileSync(new URL('../src-tauri/src/desktop/appearance.js.inc', import.meta.url), 'utf8')
 
@@ -41,11 +40,7 @@ function fakeNode(): FakeNode {
 }
 
 interface HarnessOptions {
-  /** 模拟 document-start 时 head/documentElement 都还不存在（脚本只能重试）。 */
-  skeletonMissing?: boolean
   /** parent === top：壳层自己的顶层文档，脚本必须立刻退出。 */
-  topLevel?: boolean
-  /** parent !== top：dsh 应用内部再嵌套的 frame，脚本必须立刻退出。 */
   nestedFrame?: boolean
 }
 
@@ -53,8 +48,8 @@ function harness(options: HarnessOptions = {}) {
   const states: Array<Record<string, unknown>> = []
   const created: FakeNode[] = []
   const listeners = new Map<string, (event: unknown) => void>()
-  let head: FakeNode | null = options.skeletonMissing ? null : fakeNode()
-  let documentElement: FakeNode | null = options.skeletonMissing ? null : fakeNode()
+  const head = fakeNode()
+  const documentElement = fakeNode()
 
   const document = {
     get head() {
@@ -88,17 +83,11 @@ function harness(options: HarnessOptions = {}) {
     addEventListener(type: string, handler: (event: unknown) => void) {
       listeners.set(type, handler)
     },
-    setTimeout: (handler: () => void, delay: number) => setTimeout(handler, delay) as unknown as number,
-    clearTimeout: (handle: unknown) => clearTimeout(handle as NodeJS.Timeout),
     parent: parentWindow,
   }
   context.top = parentWindow
   context.window = context
   context.self = context
-  if (options.topLevel) {
-    context.parent = context
-    context.top = context
-  }
   if (options.nestedFrame) {
     context.parent = { __dshPage: true }
     context.top = parentWindow
@@ -121,19 +110,13 @@ function harness(options: HarnessOptions = {}) {
       throw new Error(`${type} listener was not registered`)
     handler({})
   }
-  /** 骨架迟到：挂上 head 之后脚本的下一次下发才能落盘。 */
-  function materializeSkeleton() {
-    head = fakeNode()
-    documentElement = fakeNode()
-  }
-
-  return { states, created, context, parentWindow, bootStyle, deliver, fire, materializeSkeleton, listenerCount: () => listeners.size }
+  return { states, created, context, parentWindow, bootStyle, deliver, fire, listenerCount: () => listeners.size }
 }
 
 describe('appearance boot bootstrap (in-frame receiver)', () => {
-  it('asks the host for the boot projection through the cross-origin-safe wildcard target', () => {
+  it('asks the host once for the boot projection through the cross-origin-safe wildcard target', () => {
     const frame = harness()
-    expect(frame.states[0]).toEqual({ source: 'dsh-desktop', type: 'dsh://appearance:request', targetOrigin: '*' })
+    expect(frame.states).toEqual([{ source: 'dsh-desktop', type: 'dsh://appearance:request', targetOrigin: '*' }])
   })
 
   it('stays out of frames that are not the host’s own embedded layer', () => {
@@ -191,36 +174,14 @@ describe('appearance boot bootstrap (in-frame receiver)', () => {
     expect(frame.parentWindow.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'dsh://appearance:applied' }), expect.anything())
   })
 
-  it('keeps retrying when the projection arrives before the document skeleton exists', () => {
-    const frame = harness({ skeletonMissing: true })
-    const before = frame.parentWindow.postMessage.mock.calls.length
-    frame.deliver({ source: 'dsh-desktop', type: 'dsh://appearance', bootCss: 'x{color:red}' })
-    expect(frame.parentWindow.postMessage.mock.calls.length).toBeGreaterThan(before)
-    expect(frame.parentWindow.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'dsh://appearance:applied' }), expect.anything())
-    frame.materializeSkeleton()
-    frame.deliver({ source: 'dsh-desktop', type: 'dsh://appearance', bootCss: 'x{color:red}' })
-    expect(frame.bootStyle()?.textContent).toBe('x{color:red}')
-    expect(frame.parentWindow.postMessage).toHaveBeenLastCalledWith({ source: 'dsh-desktop', type: 'dsh://appearance:applied' }, '*')
-  })
-
-  it('stops requesting after a bounded number of attempts', async () => {
-    const frame = harness({ skeletonMissing: true })
-    // 退避序列 40+80+160+320+400×8 ≈ 3.8s，等满后再确认停在 12 次。
-    await new Promise(resolve => setTimeout(resolve, 4500))
-    const requests = frame.states.filter(state => state.type === 'dsh://appearance:request')
-    expect(requests).toHaveLength(12)
-    expect(frame.states.at(-1)).toEqual({ source: 'dsh-desktop', type: 'dsh://appearance:request', targetOrigin: '*' })
-  }, 10_000)
-
-  it('drops the frame stylesheet on pagehide so a navigated document starts clean', async () => {
+  it('drops the frame stylesheet on pagehide so a navigated document starts clean', () => {
     const frame = harness()
     frame.deliver({ source: 'dsh-desktop', type: 'dsh://appearance', bootCss: 'x{color:red}' })
     expect(frame.bootStyle()?.textContent).toBe('x{color:red}')
     const before = frame.states.length
     frame.fire('pagehide')
     expect(frame.bootStyle()).toBeNull()
-    // pagehide 只负责撤销：不再重试（新文档自己会重新请求，bfcache 还原走 pageshow）。
-    await new Promise(resolve => setTimeout(resolve, 600))
+    // pagehide 只负责撤销：不再重试，新文档自己会重新请求（bfcache 还原走 pageshow）。
     expect(frame.states.length).toBe(before)
     // 新文档的握手必须被重新接受：旧文档的确认不替它背书。
     frame.deliver({ source: 'dsh-desktop', type: 'dsh://appearance', bootCss: 'y{color:blue}' })

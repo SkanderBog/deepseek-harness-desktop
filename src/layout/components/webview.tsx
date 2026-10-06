@@ -110,8 +110,7 @@ export function Webview() {
 
   return (
     <main className="relative flex flex-col min-h-0 flex-1" style={dshStyle.frame || {}}>
-      {/* 外观投影必须挂在不随启动阶段卸载的位置：启动页、预装引导、恢复页都在
-          Iframe 之前渲染，挂在 Iframe 里会让这些界面拿不到透明/调色板 token。 */}
+      {/* 挂在 Iframe 外：启动页/预装引导/恢复页先于 Iframe 渲染，否则拿不到透明与调色板 token */}
       <style>{appearanceCss}</style>
       <Navbar onRemoteChange={handleRemoteChange} sidebarCollapsed={sidebarCollapsed} {...bridge} />
       <div className="flex min-h-0 flex-1">

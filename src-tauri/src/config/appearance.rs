@@ -24,27 +24,13 @@ impl Default for Appearance {
     }
 }
 
-fn decode_clamped_u8(
-    value: &serde_json::Value,
-    field: &str,
-    minimum: u8,
-    maximum: u8,
-    fallback: u8,
-) -> u8 {
-    value[field]
-        .as_f64()
-        .filter(|value| value.is_finite())
-        .map(|value| {
-            value
-                .round()
-                .clamp(f64::from(minimum), f64::from(maximum)) as u8
-        })
-        .unwrap_or(fallback)
-}
-
 impl From<serde_json::Value> for Appearance {
     fn from(value: serde_json::Value) -> Self {
-        let opacity = decode_clamped_u8(&value, "opacity", 20, 100, 100);
+        let opacity = value["opacity"]
+            .as_f64()
+            .filter(|value| value.is_finite())
+            .map(|value| value.round().clamp(20.0, 100.0) as u8)
+            .unwrap_or(100);
         let mut appearance = Self {
             palette: value["palette"].as_str().unwrap_or("default").to_owned(),
             terminal: value["terminal"].as_bool().unwrap_or(false),
