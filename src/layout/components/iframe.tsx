@@ -276,8 +276,12 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
 
   // iframe → 宿主：iframe 自身的桥共用一个监听器，按 `data.type` 分发
   useIframeMessage<IframeBridgeMessage>(iframeRef, (data) => {
-    // 帧内文档离开（帧内导航）：旧确认立刻作废，等新文档自己重新自报（issue #705）
+    // 帧内文档离开（帧内导航）：旧确认立刻作废，等新文档自己重新自报（issue #705）；
+    // 外观确认同样作废，并重新隐蔽 iframe + 重挂兜底，避免旧样式作用在新文档上。
     if (data.type === 'dsh://plugin-boot:leaving') {
+      resetBootAppearance()
+      setBootFrame(null)
+      armAppearanceFallback()
       store.harness.markIframeLeaving()
       return
     }

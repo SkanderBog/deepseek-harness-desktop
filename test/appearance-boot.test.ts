@@ -20,7 +20,9 @@ interface FakeNode {
   id: string
   textContent: string
   children: FakeNode[]
+  removed: boolean
   appendChild: (child: FakeNode) => void
+  remove: () => void
 }
 
 function fakeNode(): FakeNode {
@@ -28,8 +30,12 @@ function fakeNode(): FakeNode {
     id: '',
     textContent: '',
     children: [],
+    removed: false,
     appendChild(child: FakeNode) {
       this.children.push(child)
+    },
+    remove() {
+      this.removed = true
     },
   }
 }
@@ -58,7 +64,7 @@ function harness(options: HarnessOptions = {}) {
       return documentElement
     },
     getElementById(id: string) {
-      return created.find(node => node.id === id) ?? null
+      return created.find(node => node.id === id && !node.removed) ?? null
     },
     createElement() {
       const node = fakeNode()
@@ -101,7 +107,7 @@ function harness(options: HarnessOptions = {}) {
   runInContext(SOURCE, createContext(context), { filename: 'appearance.js.inc' })
 
   function bootStyle() {
-    return created.find(node => node.id === 'dsh-tauri:boot-appearance') ?? null
+    return created.find(node => node.id === 'dsh-tauri:boot-appearance' && !node.removed) ?? null
   }
   function deliver(data: unknown, source: unknown = parentWindow, origin = 'tauri://localhost') {
     const handler = listeners.get('message')
@@ -205,6 +211,22 @@ describe('appearance boot bootstrap (in-frame receiver)', () => {
     expect(requests).toHaveLength(12)
     expect(frame.states.at(-1)).toEqual({ source: 'dsh-desktop', type: 'dsh://appearance:request', targetOrigin: '*' })
   }, 10_000)
+
+  it('drops the frame stylesheet on pagehide so a navigated document starts clean', async () => {
+    const frame = harness()
+    frame.deliver({ source: 'dsh-desktop', type: 'dsh://appearance', bootCss: 'x{color:red}' })
+    expect(frame.bootStyle()?.textContent).toBe('x{color:red}')
+    const before = frame.states.length
+    frame.fire('pagehide')
+    expect(frame.bootStyle()).toBeNull()
+    // pagehide 只负责撤销：不再重试（新文档自己会重新请求，bfcache 还原走 pageshow）。
+    await new Promise(resolve => setTimeout(resolve, 600))
+    expect(frame.states.length).toBe(before)
+    // 新文档的握手必须被重新接受：旧文档的确认不替它背书。
+    frame.deliver({ source: 'dsh-desktop', type: 'dsh://appearance', bootCss: 'y{color:blue}' })
+    expect(frame.bootStyle()?.textContent).toBe('y{color:blue}')
+    expect(frame.created.filter(node => node.id === 'dsh-tauri:boot-appearance')).toHaveLength(2)
+  })
 
   it('re-handshakes after a bfcache restore so a re-mounted boot page is styled again', () => {
     const frame = harness()

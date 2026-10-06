@@ -79,6 +79,20 @@
     acknowledge()
   })
 
+  // 帧内导航离开：旧文档的 boot 样式立即失效，别让它短暂作用在新文档上；新文档自己
+  // 重新握手（同文档 bfcache 还原走下面的 pageshow，宿主据 leaving 重新隐蔽 iframe）。
+  window.addEventListener('pagehide', function () {
+    var style = document.getElementById(STYLE_ID)
+    if (style) style.remove()
+    acknowledged = false
+    requests = 0
+    requestDelay = 40
+    if (requestTimer !== null) {
+      clearTimeout(requestTimer)
+      requestTimer = null
+    }
+  })
+
   // bfcache 还原 / 文档被再次激活时重新握手：宿主可能已经换过外观，boot 页也可能
   // 重新挂载（页面重载后 style 标签随旧文档一起消失）。
   window.addEventListener('pageshow', function () {

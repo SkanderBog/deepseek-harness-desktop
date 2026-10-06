@@ -35,6 +35,7 @@ mod tests {
         assert!(APPEARANCE_BOOTSTRAP_JS.contains("event.source !== window.parent"));
         assert!(APPEARANCE_BOOTSTRAP_JS.contains("data.source !== 'dsh-desktop'"));
         assert!(APPEARANCE_BOOTSTRAP_JS.contains("pageshow"));
+        assert!(APPEARANCE_BOOTSTRAP_JS.contains("pagehide"));
         // 宿主是 tauri://localhost，帧内是 http://127.0.0.1:<port>，跨源回发只能用 '*'；
         // 用 location.origin 当 targetOrigin 会让消息静默丢失（外观插件的既有教训）。
         assert!(APPEARANCE_BOOTSTRAP_JS.contains("postMessage({ source: 'dsh-desktop', type: 'dsh://appearance:request' }, '*')"));
