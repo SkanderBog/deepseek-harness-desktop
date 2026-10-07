@@ -260,8 +260,6 @@ jobs:
           ref: ${{ needs.prepare.outputs.source_ref }}
           fetch-depth: 0
           fetch-tags: true
-          # 目录里已有下载好的产物，不能被 checkout 的 git clean 清掉。
-          clean: false
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -303,13 +301,6 @@ jobs:
           set -euo pipefail
           mapfile -d '' assets < <(find "$RUNNER_TEMP/release-assets" -type f -print0)
           gh release upload "$NIGHTLY_TAG" "${assets[@]}" --clobber
-
-          # 同步资产清理：清理旧资产
-          new_names="$(cd "$RUNNER_TEMP/release-assets" && find . -type f -exec basename {} \;)"
-          gh release view "$NIGHTLY_TAG" --json assets -q '.assets[].name' | while read -r name; do
-            [ -n "$name" ] || continue
-            grep -qxF "$name" <<< "$new_names" || gh release delete-asset "$NIGHTLY_TAG" "$name" --yes
-          done
 
       - name: Point rolling alias tag at this commit
         uses: actions/github-script@v8
@@ -383,12 +374,6 @@ jobs:
           fi
           mapfile -d '' assets < <(find "$RUNNER_TEMP/release-assets" -type f -print0)
           gh release upload nightly "${assets[@]}" --clobber
-
-          new_names="$(cd "$RUNNER_TEMP/release-assets" && find . -type f -exec basename {} \;)"
-          gh release view nightly --json assets -q '.assets[].name' | while read -r name; do
-            [ -n "$name" ] || continue
-            grep -qxF "$name" <<< "$new_names" || gh release delete-asset nightly "$name" --yes
-          done
 
           gh release view "$NIGHTLY_TAG" --json body -q .body > alias_notes.md
           {
