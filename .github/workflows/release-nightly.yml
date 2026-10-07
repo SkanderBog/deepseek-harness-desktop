@@ -1,29 +1,21 @@
 name: Build & Release (Nightly)
 
 # 夜间版（dig-node 形态）：滚动发布 main 的每日构建，保留最近 N 天。
-# - 版本号固定注入 0.0.0（构建期写入、不入库）：不占用任何正式版号段，也不让 semver 比较
-#   把夜间版算成比正式版新；构建身份看 tag 日期与正文里的构建时间、提交。
-# - 每次构建只写两个 Release：当日日期 tag（nightly-YYYYMMDD，独立资产）与滚动别名
-#   nightly（强制指向本次提交、同步同一批资产），两者都是 pre-release，永不成为 latest。
-# - 日期版草稿在 prepare 就建出来（与 release.yml 同形态）：构建期间在 Releases 里可见，
-#   finalize 只负责上传产物、追加产物清单并发布。
-# - workflow 名称故意**不等于** "Build & Release"：release-bundle.yml 用 workflow_run
-#   监听正式流水线，夜间构建不应触发离线捆绑包。
+# - 版本号固定注入 0.0.0（构建期写入、不入库）：不占用正式版号段。
+# - 每次构建写两个 Release：当日日期 tag (nightly-YYYYMMDD) 与滚动别名 nightly (均标记为 pre-release)。
+# - workflow 名称故意不等于 "Build & Release"，避免误触发 release-bundle.yml。
 on:
-  # UTC 18:00 = 北京时间次日 02:00，构建完正好接上国内早晨。
-  # 注意：仓库连续 60 天无活动后 GitHub 会自动停用 schedule 触发器且不会自动恢复，
-  # 届时用 `gh workflow enable "Build & Release (Nightly)"` 重新启用。
+  # UTC 18:00 = 北京时间次日 02:00
   schedule:
     - cron: '0 18 * * *'
   workflow_dispatch:
     inputs:
       force:
-        description: 忽略「main 无新提交即跳过」，强制重新构建
+        description: '忽略「main 无新提交即跳过」，强制重新构建'
         required: false
         default: false
         type: boolean
 
-# 只有 finalize 需要写权限（建 Release、移动 tag），其余作业一律只读。
 permissions:
   contents: read
 
@@ -32,15 +24,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # 保留窗口：含当天在内最近 N 天（每日一版即 N 个日期 Release），更早的连 tag 一起删除。
+  # 保留窗口：含当天在内最近 N 天，更早的连 tag 一起删除。
   NIGHTLY_RETAIN_DAYS: '10'
 
 jobs:
   prepare:
     name: Prepare Nightly
     runs-on: ubuntu-latest
-    # 草稿 Release、日期 tag 与变更日志都在这里建立（与 release.yml 同形态）：构建期间就能在
-    # Releases 里看到当天的夜间版，而不是等四个平台都打完才凭空出现。
     permissions:
       contents: write
     env:
@@ -52,8 +42,6 @@ jobs:
       tag: ${{ steps.plan.outputs.tag }}
       source_ref: ${{ steps.plan.outputs.source_ref }}
     steps:
-      # 夜间版只代表 main：dispatch 时即使选了别的分支也固定检出默认分支，避免把特性分支的提交
-      # 发成当日的日期 tag；变更日志要算 tag 之间的范围，所以需要全量历史与 tag。
       - name: Checkout default branch
         uses: actions/checkout@v7
         with:
@@ -73,17 +61,16 @@ jobs:
           source_ref="$(git rev-parse HEAD)"
           date="$(date -u +%Y%m%d)"
           tag="nightly-$date"
-          version=0.0.0
-          should_build=true
+          version="0.0.0"
+          should_build="true"
 
           if [ "$FORCE" != "true" ]; then
-            # main 没动就跳过：夜间版的唯一价值是多带出正式版之后的提交，重复构建白烧
-            # runner 且会刷新资产名。上一版夜间版的提交 SHA 记在 Release 正文的标记里。
-            last_tag="$(gh release list --limit 100 --json tagName -q '.[].tagName' | sed -n 's/^\(nightly-[0-9]\{8\}\)$/\1/p' | sort | tail -1)"
+            # 使用 gh jq 过滤获取最新一个 nightly-YYYYMMDD 标签，减少多重管道耗时
+            last_tag="$(gh release list --limit 100 --json tagName -q '[.[].tagName | select(test("^nightly-[0-9]{8}$"))] | sort | last // ""')"
             if [ -n "$last_tag" ]; then
               last_sha="$(gh release view "$last_tag" --json body -q .body | sed -n 's/.*nightly-sha:\([0-9a-f]\{7,40\}\).*/\1/p' | head -1)"
               if [ -n "$last_sha" ] && [ "$last_sha" = "$source_ref" ]; then
-                should_build=false
+                should_build="false"
               fi
             fi
           fi
@@ -95,7 +82,7 @@ jobs:
             echo "source_ref=$source_ref"
           } >> "$GITHUB_OUTPUT"
 
-          if [ "$should_build" = false ]; then
+          if [ "$should_build" = "false" ]; then
             echo "::notice::main 自 $last_tag 以来没有新提交，跳过本次夜间构建"
           else
             echo "::notice::夜间版 $version（tag $tag，提交 $source_ref）"
@@ -109,25 +96,17 @@ jobs:
           set -euo pipefail
           today="${NIGHTLY_TAG#nightly-}"
 
-          # 草稿在 GitHub 上按 tag 查不到（Get a release by tag 对草稿返回 404），changeloggithub 因此
-          # 会在同一天重跑时再造一个同 tag 的草稿；这里按 id 把当天与更早的草稿都删掉，让本轮只留一个。
-          # 更早日期留下的草稿永远不会发布（那天的 run 已经结束），也一并清掉，不然会一直占着列表。
+          # 清理当天与历史残留的草稿 Release
           gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
-            -q '.[] | select(.draft) | (.id|tostring) + " " + .tag_name' |
+            -q '.[] | select(.draft and (.tag_name | test("^nightly-[0-9]{8}$"))) | (.id|tostring) + " " + .tag_name' |
             while read -r id tag; do
               day="${tag#nightly-}"
-              case "$day" in
-                [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
-                *) continue ;;
-              esac
               if [ "$day" -le "$today" ]; then
                 echo "dropping draft release $id ($tag)"
                 gh api -X DELETE "repos/$GH_REPO/releases/$id"
               fi
             done
 
-      # 草稿的 tag 要等发布时才由 GitHub 建立，所以这里显式建/改 tag：变更日志按 tag 之间的范围
-      # 计算，tag 不存在或停在旧提交（同日重建）都会让变更日志算错。
       - name: Point dated nightly tag at this commit
         if: steps.plan.outputs.should_build == 'true'
         uses: actions/github-script@v8
@@ -141,12 +120,10 @@ jobs:
             try {
               await github.rest.git.updateRef({ ...context.repo, ref, sha, force: true });
             } catch (error) {
-              // 不存在的 ref 既可能报 404 也可能报 422（Reference does not exist）。
               if (error.status !== 404 && error.status !== 422) throw error;
               await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
             }
 
-      # 使用 lockfile 固定的 changelogithub，避免带写权限 token 时动态执行 registry 包。
       - name: Install changelog dependencies
         if: steps.plan.outputs.should_build == 'true'
         run: pnpm install --frozen-lockfile --ignore-scripts
@@ -161,13 +138,11 @@ jobs:
           set -euo pipefail
           git fetch --force origin "refs/tags/$NIGHTLY_TAG:refs/tags/$NIGHTLY_TAG"
 
-          # 起点取早于当日的最近一版夜间版 tag（同日重建因此不会算出空范围），一期都没有就退到
-          # 最近的正式版 tag，首版能看到「自上次正式版以来的全部改动」。
-          from="$(gh release list --limit 100 --json tagName -q '.[].tagName' |
-            sed -n 's/^\(nightly-[0-9]\{8\}\)$/\1/p' | sort |
+          from="$(gh release list --limit 100 --json tagName -q '[.[].tagName | select(test("^nightly-[0-9]{8}$"))] | sort | .[]' |
             while read -r t; do
               if [ "$t" \< "$NIGHTLY_TAG" ]; then echo "$t"; fi
             done | tail -1)"
+
           if [ -z "$from" ]; then
             from="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
           fi
@@ -180,12 +155,10 @@ jobs:
           else
             echo '::warning::找不到变更日志起点，按全部历史生成'
           fi
-          # 变更日志是装饰性内容：它失败也不能拖住当天的包。
-          pnpm exec changelogithub "${args[@]}" ||
+
+          pnpm exec changelogithub "${args[@]}" || \
             echo '::warning::changelogithub 生成变更日志失败，Release 只保留产物与提示'
 
-      # 草稿由变更日志步骤建立（changeloggithub --draft，与 release.yml 同形态：它自己创建 Release 并写入
-      # 正文）。它失败时这里补一个空草稿，否则 finalize 没有可上传的目标。
       - name: Ensure draft release exists
         if: steps.plan.outputs.should_build == 'true'
         env:
@@ -244,7 +217,6 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-  # 单一 writer：只有三平台全部构建成功才发布，避免出现「半套资产」的夜间版。
   finalize:
     name: Publish Nightly Release
     needs: [prepare, build-macos, build-windows, build-linux]
@@ -259,11 +231,9 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # finalize 未 checkout，gh 无法从 .git 推断仓库，需显式指定。
       GH_REPO: ${{ github.repository }}
       NIGHTLY_TAG: ${{ needs.prepare.outputs.tag }}
       NIGHTLY_SHA: ${{ needs.prepare.outputs.source_ref }}
-      # 夜间版说明（唯一出处：日期版与滚动别名共用）；变更日志与产物清单追加在它后面。
       NIGHTLY_DESCRIPTION: |
         ## ⚠️重要通知
         这是专为测试目的创建的**开发构建版本**。请注意:
@@ -295,22 +265,19 @@ jobs:
             exit 1
           }
 
-      # 草稿与标题由 prepare 建立（构建期间就可见），这里只把产物塞进去。
       - name: Upload assets to the draft release
         run: |
           set -euo pipefail
           mapfile -d '' assets < <(find release-assets -type f -print0)
           gh release upload "$NIGHTLY_TAG" "${assets[@]}" --clobber
 
-          # 版本号恒为 0.0.0，同名资产由 --clobber 原地替换；但打包集合变化时（改名、停发某格式）
-          # 旧文件覆盖不掉，而客户端的 pick_asset 是「按文件名模式取第一个匹配」，留着会取到旧包。
-          new_names="$(cd release-assets && find . -type f -printf '%f\n')"
+          # 同步资产清理：清理旧资产
+          new_names="$(cd release-assets && find . -type f -exec basename {} \;)"
           gh release view "$NIGHTLY_TAG" --json assets -q '.assets[].name' | while read -r name; do
             [ -n "$name" ] || continue
             grep -qxF "$name" <<< "$new_names" || gh release delete-asset "$NIGHTLY_TAG" "$name" --yes
           done
 
-      # 别名 tag 强制移动（release.yml 的同一手法）：不删 Release 重建，下载链接不会出现 404 空窗。
       - name: Point rolling alias tag at this commit
         uses: actions/github-script@v8
         env:
@@ -322,7 +289,6 @@ jobs:
             try {
               await github.rest.git.updateRef({ ...context.repo, ref, sha, force: true });
             } catch (error) {
-              // 不存在的 ref 既可能报 404 也可能报 422（Reference does not exist）。
               if (error.status !== 404 && error.status !== 422) throw error;
               await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
             }
@@ -330,18 +296,17 @@ jobs:
       - name: Compose release notes
         run: |
           set -euo pipefail
-          # 草稿正文此刻是 prepare 写入的变更日志；说明放最前，让读者先看到「开发构建」警示。
           gh release view "$NIGHTLY_TAG" --json body -q .body > release_notes.md
 
           classify() {
             case "$1" in
               *aarch64*.dmg) echo 'macOS (Apple Silicon)' ;;
-              *x64*.dmg) echo 'macOS (Intel)' ;;
-              *.msi) echo 'Windows (MSI)' ;;
-              *.exe) echo 'Windows (NSIS)' ;;
-              *.AppImage) echo 'Linux (AppImage)' ;;
-              *.deb) echo 'Linux (deb)' ;;
-              *) echo '其他' ;;
+              *x64*.dmg)     echo 'macOS (Intel)' ;;
+              *.msi)         echo 'Windows (MSI)' ;;
+              *.exe)         echo 'Windows (NSIS)' ;;
+              *.AppImage)    echo 'Linux (AppImage)' ;;
+              *.deb)         echo 'Linux (deb)' ;;
+              *)             echo '其他' ;;
             esac
           }
 
@@ -354,10 +319,8 @@ jobs:
             while read -r name; do
               [ -n "$name" ] || continue
               echo "- **$(classify "$name")**: [${name}](https://github.com/$GH_REPO/releases/download/$NIGHTLY_TAG/${name// /%20})"
-            done < <(cd release-assets && find . -type f -printf '%f\n' | sort)
+            done < <(cd release-assets && find . -type f -exec basename {} \; | sort)
             echo
-            # 构建时间必须写进正文：Release 的 published_at 只在 tag 首次创建时更新，
-            # 同日重建不会变，只有正文里的时间是真实的构建新鲜度信号。
             echo "提交 \`$NIGHTLY_SHA\` · 构建时间 $(date -u '+%Y-%m-%d %H:%M UTC')"
             echo
             echo "<!-- nightly-sha:$NIGHTLY_SHA -->"
@@ -389,19 +352,18 @@ jobs:
           mapfile -d '' assets < <(find release-assets -type f -print0)
           gh release upload nightly "${assets[@]}" --clobber
 
-          # 别名只保留最新一版的资产：打包集合变化时旧文件覆盖不掉，会让按文件名取包的客户端选错版本。
-          new_names="$(cd release-assets && find . -type f -printf '%f\n')"
+          new_names="$(cd release-assets && find . -type f -exec basename {} \;)"
           gh release view nightly --json assets -q '.assets[].name' | while read -r name; do
             [ -n "$name" ] || continue
             grep -qxF "$name" <<< "$new_names" || gh release delete-asset nightly "$name" --yes
           done
 
-          # 别名正文与当日日期版一致，只把下载链接指向别名 tag（永远解析到最新一版）。
           gh release view "$NIGHTLY_TAG" --json body -q .body > alias_notes.md
           {
             echo "> 滚动别名：本页资产始终是最近一版夜间版，本次对应 [\`$NIGHTLY_TAG\`](https://github.com/$GH_REPO/releases/tag/$NIGHTLY_TAG)。"
             echo
             sed "s|/download/$NIGHTLY_TAG/|/download/nightly/|g" alias_notes.md
           } > nightly_alias_notes.md
+
           gh release edit nightly --notes-file nightly_alias_notes.md \
             --draft=false --prerelease --latest=false
