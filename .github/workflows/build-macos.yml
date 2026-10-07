@@ -89,7 +89,9 @@ jobs:
 
       - name: Stamp injected version
         if: steps.check.outputs.should_run == 'true' && inputs.version != ''
-        run: node scripts/stamp-version.mjs "${{ inputs.version }}"
+        env:
+          STAMP_VERSION: ${{ inputs.version }}
+        run: node scripts/stamp-version.mjs "$STAMP_VERSION"
 
       - name: Validate signing secrets
         if: steps.check.outputs.should_run == 'true'

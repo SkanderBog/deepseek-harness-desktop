@@ -66,7 +66,9 @@ jobs:
 
       - name: Stamp injected version
         if: inputs.version != ''
-        run: node scripts/stamp-version.mjs "${{ inputs.version }}"
+        env:
+          STAMP_VERSION: ${{ inputs.version }}
+        run: node scripts/stamp-version.mjs "$STAMP_VERSION"
 
       - name: Build packages
         env:

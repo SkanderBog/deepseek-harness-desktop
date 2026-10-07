@@ -45,7 +45,9 @@ jobs:
 
       - name: Stamp injected version
         if: inputs.version != ''
-        run: node scripts/stamp-version.mjs "${{ inputs.version }}"
+        env:
+          STAMP_VERSION: ${{ inputs.version }}
+        run: node scripts/stamp-version.mjs "$STAMP_VERSION"
 
       # WiX 只接受纯数字版本；NSIS 仍使用完整 SemVer。
       - name: Prepare MSI version override

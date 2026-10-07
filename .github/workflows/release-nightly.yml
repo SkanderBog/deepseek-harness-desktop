@@ -21,8 +21,9 @@ on:
         default: false
         type: boolean
 
+# 只有 finalize 需要写权限（建 Release、移动 tag），其余作业一律只读。
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-nightly
@@ -144,6 +145,8 @@ jobs:
       needs.build-windows.result == 'success' &&
       needs.build-linux.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # finalize 未 checkout，gh 无法从 .git 推断仓库，需显式指定。
@@ -275,19 +278,22 @@ jobs:
           gh release edit nightly --notes-file nightly_alias_notes.md \
             --draft=false --prerelease --latest=false
 
-      # 别名必须先有 tag 再改指：github-script 走 API 强制移动 tag（release.yml 建 tag 的同一手法），
-      # 不用删 Release 重建，因此 `releases/download/nightly/...` 的下载链接不会出现 404 空窗。
-      - name: Point rolling nightly tag at this commit
+      # tag 先存在再改指：github-script 走 API 强制移动（release.yml 建 tag 的同一手法），
+      # 不删 Release 重建，因此 `releases/download/nightly/...` 的下载链接不会出现 404 空窗。
+      # 日期 tag 也要跟着走：同日 main 又推进时复用同一个 tag 重建，不改指就会停在旧提交。
+      - name: Point nightly tags at this commit
         uses: actions/github-script@v8
         env:
           NIGHTLY_SHA: ${{ needs.prepare.outputs.source_ref }}
+          NIGHTLY_TAG: ${{ needs.prepare.outputs.tag }}
         with:
           script: |
-            const ref = 'tags/nightly';
             const sha = process.env.NIGHTLY_SHA;
-            try {
-              await github.rest.git.updateRef({ ...context.repo, ref, sha, force: true });
-            } catch (error) {
-              if (error.status !== 404) throw error;
-              await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
+            for (const ref of ['tags/nightly', `tags/${process.env.NIGHTLY_TAG}`]) {
+              try {
+                await github.rest.git.updateRef({ ...context.repo, ref, sha, force: true });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
+              }
             }
