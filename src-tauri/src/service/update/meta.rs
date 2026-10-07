@@ -460,10 +460,15 @@ async fn fetch_release_assets(
 ///
 /// 窗口被夜间版占满时 feed 里一条正式版都没有：此时改问 `/releases/latest` 并读它自己的
 /// tag 页面拿发布时间，否则「关于」对话框的发布日期会在整个夜间版周期里一直空着。
+///
+/// 首条正式版自己没带时间时同样补读它的 tag 页面：顺着列表往下找会显示更旧版本的日期。
 pub(super) async fn fetch_latest_stable_published_at(app_handle: &tauri::AppHandle) -> Result<String, String> {
     let releases = fetch_releases_meta(app_handle).await?;
-    if let Some((_, published_at)) = releases.into_iter().find(|(tag, _)| is_stable_tag(tag)) {
-        return Ok(published_at);
+    if let Some((tag, published_at)) = releases.into_iter().find(|(tag, _)| is_stable_tag(tag)) {
+        if !published_at.is_empty() {
+            return Ok(published_at);
+        }
+        return Ok(fetch_tag_published_at(app_handle, &tag).await?.unwrap_or_default());
     }
     let Some(tag) = fetch_latest_stable_tag(app_handle).await? else {
         // 仓库一个正式版都没有：没有发布日期可显示
