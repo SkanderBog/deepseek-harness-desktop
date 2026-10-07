@@ -223,13 +223,15 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           pattern: release-*
-          path: release-assets
+          # 放在 workspace 之外：下一步 actions/checkout 会清空 workspace 目录
+          # （工作区还不是 git 仓库时会先「Deleting the contents of …」），产物会被删掉。
+          path: ${{ runner.temp }}/release-assets
           merge-multiple: true
 
       - name: Verify downloaded assets
         run: |
-          find release-assets -type f -print
-          [ -n "$(find release-assets -type f -print -quit)" ] || {
+          find "$RUNNER_TEMP/release-assets" -type f -print
+          [ -n "$(find "$RUNNER_TEMP/release-assets" -type f -print -quit)" ] || {
             echo '::error::No nightly assets were downloaded'
             exit 1
           }
@@ -293,17 +295,17 @@ jobs:
             echo '::warning::找不到变更日志起点，按全部历史生成'
           fi
 
-          pnpm exec changeloggithub "${args[@]}" || \
-            echo '::warning::changeloggithub 生成变更日志失败，Release 只保留产物与提示'
+          pnpm exec changelogithub "${args[@]}" || \
+            echo '::warning::changelogithub 生成变更日志失败，Release 只保留产物与提示'
 
       - name: Upload assets to the draft release
         run: |
           set -euo pipefail
-          mapfile -d '' assets < <(find release-assets -type f -print0)
+          mapfile -d '' assets < <(find "$RUNNER_TEMP/release-assets" -type f -print0)
           gh release upload "$NIGHTLY_TAG" "${assets[@]}" --clobber
 
           # 同步资产清理：清理旧资产
-          new_names="$(cd release-assets && find . -type f -exec basename {} \;)"
+          new_names="$(cd "$RUNNER_TEMP/release-assets" && find . -type f -exec basename {} \;)"
           gh release view "$NIGHTLY_TAG" --json assets -q '.assets[].name' | while read -r name; do
             [ -n "$name" ] || continue
             grep -qxF "$name" <<< "$new_names" || gh release delete-asset "$NIGHTLY_TAG" "$name" --yes
@@ -379,10 +381,10 @@ jobs:
             gh release create nightly --draft --target "$NIGHTLY_SHA" \
               --title "$title" --prerelease
           fi
-          mapfile -d '' assets < <(find release-assets -type f -print0)
+          mapfile -d '' assets < <(find "$RUNNER_TEMP/release-assets" -type f -print0)
           gh release upload nightly "${assets[@]}" --clobber
 
-          new_names="$(cd release-assets && find . -type f -exec basename {} \;)"
+          new_names="$(cd "$RUNNER_TEMP/release-assets" && find . -type f -exec basename {} \;)"
           gh release view nightly --json assets -q '.assets[].name' | while read -r name; do
             [ -n "$name" ] || continue
             grep -qxF "$name" <<< "$new_names" || gh release delete-asset nightly "$name" --yes
