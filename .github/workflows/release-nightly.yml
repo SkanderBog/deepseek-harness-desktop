@@ -68,9 +68,6 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Setup Node.js and pnpm
-        uses: ./.github/actions/setup-node-pnpm
-
       - name: Plan nightly version
         id: plan
         env:
@@ -126,59 +123,6 @@ jobs:
               fi
             done
 
-      - name: Point dated nightly tag at this commit
-        if: steps.plan.outputs.should_build == 'true'
-        uses: actions/github-script@v8
-        env:
-          NIGHTLY_SHA: ${{ steps.plan.outputs.source_ref }}
-          NIGHTLY_TAG: ${{ steps.plan.outputs.tag }}
-        with:
-          script: |
-            const ref = `tags/${process.env.NIGHTLY_TAG}`;
-            const sha = process.env.NIGHTLY_SHA;
-            try {
-              await github.rest.git.updateRef({ ...context.repo, ref, sha, force: true });
-            } catch (error) {
-              if (error.status !== 404 && error.status !== 422) throw error;
-              await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
-            }
-
-      - name: Install changelog dependencies
-        if: steps.plan.outputs.should_build == 'true'
-        run: pnpm install --frozen-lockfile --ignore-scripts
-
-      - name: Generate changelog
-        if: steps.plan.outputs.should_build == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NIGHTLY_TAG: ${{ steps.plan.outputs.tag }}
-          NIGHTLY_SHA: ${{ steps.plan.outputs.source_ref }}
-        run: |
-          set -euo pipefail
-          git fetch --force origin "refs/tags/$NIGHTLY_TAG:refs/tags/$NIGHTLY_TAG"
-
-          from="$(gh release list --limit 100 --json tagName -q '[.[].tagName | select(test("^nightly-[0-9]{8}$"))] | sort | .[]' |
-            while read -r t; do
-              if [ "$t" \< "$NIGHTLY_TAG" ]; then echo "$t"; fi
-            done | tail -1)"
-
-          if [ -z "$from" ]; then
-            from="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
-          fi
-
-          day="${NIGHTLY_TAG#nightly-}"
-          title="Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})"
-          args=(--draft --prerelease --to "$NIGHTLY_TAG" --name "$title")
-          if [ -n "$from" ]; then
-            args+=(--from "$from")
-            echo "变更日志范围：$from..$NIGHTLY_TAG"
-          else
-            echo '::warning::找不到变更日志起点，按全部历史生成'
-          fi
-
-          pnpm exec changelogithub "${args[@]}" || \
-            echo '::warning::changelogithub 生成变更日志失败，Release 只保留产物与提示'
-
       - name: Ensure draft release exists
         if: steps.plan.outputs.should_build == 'true'
         env:
@@ -189,23 +133,31 @@ jobs:
           day="${NIGHTLY_TAG#nightly-}"
           title="Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})"
 
-          if ! gh release view "$NIGHTLY_TAG" >/dev/null 2>&1; then
-            printf '%s\n' "$NIGHTLY_DESCRIPTION" > draft_notes.md
-            gh release create "$NIGHTLY_TAG" --draft --target "$NIGHTLY_SHA" \
-              --title "$title" --prerelease --notes-file draft_notes.md
+          if gh release view "$NIGHTLY_TAG" >/dev/null 2>&1; then
+            # 当天已经发布过：构建期间原样保留，等三个平台都构建成功后再由 finalize 更新，
+            # 避免构建失败时把已发布的 Release 打回草稿。
+            if [ "$(gh release view "$NIGHTLY_TAG" --json isDraft -q .isDraft)" != "true" ]; then
+              echo "::notice::$NIGHTLY_TAG 已经是已发布状态，构建期间原样保留。"
+              exit 0
+            fi
+
+            body="$(gh release view "$NIGHTLY_TAG" --json body -q .body)"
+            if [ "$(printf '%s\n' "$body" | head -1)" = "$(printf '%s\n' "$NIGHTLY_DESCRIPTION" | head -1)" ]; then
+              echo "草稿 $NIGHTLY_TAG 已带说明。"
+              exit 0
+            fi
+            {
+              printf '%s\n' "$NIGHTLY_DESCRIPTION"
+              echo
+              printf '%s\n' "$body"
+            } > draft_notes.md
+            gh release edit "$NIGHTLY_TAG" --title "$title" --notes-file draft_notes.md
             exit 0
           fi
 
-          body="$(gh release view "$NIGHTLY_TAG" --json body -q .body)"
-          if [ "$(printf '%s\n' "$body" | head -1)" = "$(printf '%s\n' "$NIGHTLY_DESCRIPTION" | head -1)" ]; then
-            echo "草稿 $NIGHTLY_TAG 已带说明。"
-            exit 0
-          fi
-          {
-            printf '%s\n' "$NIGHTLY_DESCRIPTION"
-            echo
-            printf '%s\n' "$body"
-          } > draft_notes.md
+          printf '%s\n' "$NIGHTLY_DESCRIPTION" > draft_notes.md
+          gh release create "$NIGHTLY_TAG" --draft --target "$NIGHTLY_SHA" \
+            --title "$title" --prerelease --notes-file draft_notes.md
           gh release edit "$NIGHTLY_TAG" --title "$title" --notes-file draft_notes.md
 
   build-macos:
@@ -282,6 +234,68 @@ jobs:
             exit 1
           }
 
+      # 三个平台都构建成功后才移动日期 tag、生成变更日志：构建失败时已发布的 Release
+      # 及其 tag 保持原样。
+      - name: Point dated nightly tag at this commit
+        uses: actions/github-script@v8
+        env:
+          NIGHTLY_SHA: ${{ needs.prepare.outputs.source_ref }}
+          NIGHTLY_TAG: ${{ needs.prepare.outputs.tag }}
+        with:
+          script: |
+            const ref = `tags/${process.env.NIGHTLY_TAG}`;
+            const sha = process.env.NIGHTLY_SHA;
+            try {
+              await github.rest.git.updateRef({ ...context.repo, ref, sha, force: true });
+            } catch (error) {
+              if (error.status !== 404 && error.status !== 422) throw error;
+              await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
+            }
+
+      - name: Checkout source for changelog
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source_ref }}
+          fetch-depth: 0
+          fetch-tags: true
+          # 目录里已有下载好的产物，不能被 checkout 的 git clean 清掉。
+          clean: false
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install changelog dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Generate changelog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/$NIGHTLY_TAG:refs/tags/$NIGHTLY_TAG"
+
+          from="$(gh release list --limit 100 --json tagName -q '[.[].tagName | select(test("^nightly-[0-9]{8}$"))] | sort | .[]' |
+            while read -r t; do
+              if [[ "$t" < "$NIGHTLY_TAG" ]]; then echo "$t"; fi
+            done | tail -1)"
+
+          if [ -z "$from" ]; then
+            from="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+          fi
+
+          day="${NIGHTLY_TAG#nightly-}"
+          title="Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})"
+          args=(--draft --prerelease --to "$NIGHTLY_TAG" --name "$title")
+          if [ -n "$from" ]; then
+            args+=(--from "$from")
+            echo "变更日志范围：$from..$NIGHTLY_TAG"
+          else
+            echo '::warning::找不到变更日志起点，按全部历史生成'
+          fi
+
+          pnpm exec changeloggithub "${args[@]}" || \
+            echo '::warning::changeloggithub 生成变更日志失败，Release 只保留产物与提示'
+
       - name: Upload assets to the draft release
         run: |
           set -euo pipefail
@@ -313,28 +327,26 @@ jobs:
       - name: Compose release notes
         run: |
           set -euo pipefail
-          gh release view "$NIGHTLY_TAG" --json body -q .body > release_notes.md
-
-          classify() {
-            case "$1" in
-              *aarch64*.dmg) echo 'macOS (Apple Silicon)' ;;
-              *x64*.dmg)     echo 'macOS (Intel)' ;;
-              *.msi)         echo 'Windows (MSI)' ;;
-              *.exe)         echo 'Windows (NSIS)' ;;
-              *.AppImage)    echo 'Linux (AppImage)' ;;
-              *.deb)         echo 'Linux (deb)' ;;
-              *)             echo '其他' ;;
-            esac
-          }
+          body="$(gh release view "$NIGHTLY_TAG" --json body -q .body)"
 
           {
-            cat release_notes.md
+            # 说明固定排在最前：变更日志步骤会重写正文，这里按需补回。
+            if [ "$(printf '%s\n' "$body" | head -1)" != "$(printf '%s\n' "$NIGHTLY_DESCRIPTION" | head -1)" ]; then
+              printf '%s\n' "$NIGHTLY_DESCRIPTION"
+              echo
+            fi
+            printf '%s\n' "$body"
             echo
+            # 与正式版（release.yml 的 Append Artifacts section）保持同一份产物清单
             echo '### 📦 Artifacts'
-            while read -r name; do
-              [ -n "$name" ] || continue
-              echo "- **$(classify "$name")**: [${name}](https://github.com/$GH_REPO/releases/download/$NIGHTLY_TAG/${name// /%20})"
-            done < <(cd release-assets && find . -type f -exec basename {} \; | sort)
+            echo '- **macOS (Apple Silicon)**: 下载 `aarch64.dmg`'
+            echo '- **macOS (Intel)**: 下载 `x64.dmg`'
+            echo '- **Windows**: 下载 `.exe`'
+            echo '- **Linux (x64)**: 下载 `.AppImage` 或 `.deb`（基于 Ubuntu 22.04 构建）'
+            echo
+            echo '> 文件名带 `_Bundle` 后缀的是**离线捆绑包**：安装包里已内置 Node.js 运行时、pnpm'
+            echo '> 与打包好的 dsh 内核，首次启动无需联网即可直接运行。不带该后缀的是常规安装包，'
+            echo '> 首次启动时按需下载运行时依赖。'
             echo
             echo "提交 \`$NIGHTLY_SHA\` · 构建时间 $(date -u '+%Y-%m-%d %H:%M UTC')"
             echo
