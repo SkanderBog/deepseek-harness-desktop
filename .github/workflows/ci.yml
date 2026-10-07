@@ -143,12 +143,12 @@ jobs:
       - name: Install current dsh CLI (isolated)
         run: npm install --prefix "$RUNNER_TEMP/dsh-cli-current" --no-audit --no-fund @deepseek-ai/dsh@0.2.0-rc.2
 
-      - name: Official plugins and mobile settings composition (current core)
+      - name: Official plugins, appearance and mobile settings (current core)
         env:
           DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-current/node_modules/@deepseek-ai/dsh/lib/bin.js
         run: |
           for seed in 101 102 103 104 105; do
-            node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts test/e2e/plugins/dsh-tauri-mobile-settings.e2e.ts || exit $?
+            node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts test/e2e/plugins/dsh-tauri-mobile-settings.e2e.ts test/e2e/plugins/dsh-tauri-appearance.e2e.ts test/e2e/plugins/dsh-tauri-appearance-boot.e2e.ts || exit $?
           done
 
   # 桌面端 L3 E2E（vitest + WebdriverIO）：
