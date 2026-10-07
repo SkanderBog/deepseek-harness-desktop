@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: '忽略「main 无新提交即跳过」，强制重新构建'
+        description: 忽略「main 无新提交即跳过」，强制重新构建
         required: false
         default: false
         type: boolean
