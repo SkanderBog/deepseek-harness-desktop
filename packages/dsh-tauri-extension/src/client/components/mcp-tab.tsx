@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import type { McpSaveBody } from '../apis/index.type'
 import type { McpRow } from '../types'
 import type { McpEditorMode, McpEditorState, McpImportItem, McpTabProps } from './mcp-tab.types'
-import { Action, ArrowRotateRight, Button, Card, Icon, Modal, Notice, PlugConnection, Select, StateDot, Tag, Text } from 'dsh-tauri-ui/client'
+import { Action, ArrowRotateRight, Button, Card, Icon, Modal, PlugConnection, Select, Tag, Text, Toast, TriangleExclamation as Warning } from 'dsh-tauri-ui/client'
 import { compact } from 'dsh-tauri/client'
 import { useEffect, useState } from 'react'
 import { deleteMcp, getImportScan, getMcp, postImportApply, postMcp, postMcpCheck, postMcpToggle } from '../apis'
@@ -22,10 +22,9 @@ export function McpTab({ t }: McpTabProps): ReactElement {
   const [importOpen, setImportOpen] = useState(false)
   const [importItems, setImportItems] = useState<McpImportItem[] | null>(null)
   const [busy, setBusy] = useState(false)
-  const [pending, setPending] = useState(false)
   const [restartConfirm, setRestartConfirm] = useState(false)
   const [restarting, setRestarting] = useState(false)
-  const [outcome, setOutcome] = useState<{ ok: boolean, text: string } | null>(null)
+  const [toast, setToast] = useState<{ text: string, ok: boolean, seq: number } | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [reload, setReload] = useState(0)
   const [editorMode, setEditorMode] = useState<McpEditorMode>('json')
@@ -48,7 +47,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
       (error: Error) => {
         if (current) {
           setServers([])
-          setOutcome({ ok: false, text: `${t('failed')}: ${String(error.message ?? error)}` })
+          setToast({ text: `${t('failed')}: ${String(error.message ?? error)}`, ok: false, seq: Date.now() })
         }
       },
     )
@@ -71,7 +70,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     }
     catch (error) {
       setImportItems([])
-      setOutcome({ ok: false, text: failText(t, error) })
+      setToast({ text: failText(t, error), ok: false, seq: Date.now() })
     }
   }
 
@@ -83,15 +82,19 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     try {
       const body = await postImportApply({ items })
       const failed = body.results.filter(item => !item.ok)
-      setOutcome(failed.length === 0
-        ? null
-        : { ok: false, text: `${t('failed')}: ${failed.map(item => `${item.name} (${item.error})`).join(', ')}` })
+      if (failed.length === 0) {
+        setToast({ text: t(body.restartNeeded ? 'restartNeeded' : 'mcpApplied'), ok: true, seq: Date.now() })
+      }
+      else {
+        const detail = failed.map(item => `${item.name} (${item.error})`).join(', ')
+        const restart = body.restartNeeded && body.results.some(item => item.ok) ? ` ${t('restartNeeded')}` : ''
+        setToast({ text: `${t('failed')}: ${detail}${restart}`, ok: false, seq: Date.now() })
+      }
       setImportOpen(false)
-      setPending(true)
       setReload(value => value + 1)
     }
     catch (error) {
-      setOutcome({ ok: false, text: failText(t, error) })
+      setToast({ text: failText(t, error), ok: false, seq: Date.now() })
     }
     finally {
       setBusy(false)
@@ -102,18 +105,16 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setChecking(row.id)
     try {
       const result = await postMcpCheck({ id: row.id })
-      setOutcome({ ok: result.ok, text: result.ok ? `${t('connectivityOk')}${result.detail ? ` (${result.detail})` : ''}` : `${t('connectivityFailed')}: ${result.detail ?? ''}` })
+      setToast({
+        text: result.ok ? `${t('connectivityOk')}${result.detail ? ` (${result.detail})` : ''}` : `${t('connectivityFailed')}: ${result.detail ?? ''}`,
+        ok: result.ok,
+        seq: Date.now(),
+      })
     }
     catch (error) {
-      setOutcome({ ok: false, text: `${t('connectivityFailed')}: ${String(error)}` })
+      setToast({ text: `${t('connectivityFailed')}: ${String(error)}`, ok: false, seq: Date.now() })
     }
     finally { setChecking(null) }
-  }
-
-  const reloadList = (showPending: boolean): void => {
-    setReload(value => value + 1)
-    if (showPending)
-      setPending(true)
   }
 
   const openCreate = (): void => {
@@ -214,10 +215,10 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     setFormError(null)
     setPasteError(null)
     try {
-      await postMcp(input)
+      const body = await postMcp(input)
       setEditor(null)
-      setOutcome(null)
-      reloadList(true)
+      setToast({ text: t(body.restartNeeded ? 'restartNeeded' : 'mcpApplied'), ok: true, seq: Date.now() })
+      setReload(value => value + 1)
     }
     catch (error) {
       setFormError(String(error instanceof Error ? error.message : error))
@@ -230,12 +231,12 @@ export function McpTab({ t }: McpTabProps): ReactElement {
   const doToggle = async (row: McpRow): Promise<void> => {
     setBusy(true)
     try {
-      await postMcpToggle({ id: row.id, disabled: !row.disabled })
-      setOutcome(null)
-      reloadList(true)
+      const body = await postMcpToggle({ id: row.id, disabled: !row.disabled })
+      setToast({ text: t(body.restartNeeded ? 'restartNeeded' : 'mcpApplied'), ok: true, seq: Date.now() })
+      setReload(value => value + 1)
     }
     catch (error) {
-      setOutcome({ ok: false, text: failText(t, error) })
+      setToast({ text: failText(t, error), ok: false, seq: Date.now() })
     }
     finally {
       setBusy(false)
@@ -247,12 +248,12 @@ export function McpTab({ t }: McpTabProps): ReactElement {
       return
     setBusy(true)
     try {
-      await deleteMcp({ id: confirmId })
-      setOutcome(null)
-      reloadList(true)
+      const body = await deleteMcp({ id: confirmId })
+      setToast({ text: t(body.restartNeeded ? 'restartNeeded' : 'mcpApplied'), ok: true, seq: Date.now() })
+      setReload(value => value + 1)
     }
     catch (error) {
-      setOutcome({ ok: false, text: failText(t, error) })
+      setToast({ text: failText(t, error), ok: false, seq: Date.now() })
     }
     finally {
       setBusy(false)
@@ -263,6 +264,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
   const doRestart = (): void => {
     setRestartConfirm(false)
     setRestarting(true)
+    setToast({ text: t('restarting'), ok: true, seq: Date.now() })
     void restartHost()
     if (isDesktopHost())
       return
@@ -279,28 +281,6 @@ export function McpTab({ t }: McpTabProps): ReactElement {
     }
     later(poll, MCP_RESTART_INITIAL_DELAY_MS)
   }
-
-  const restartBanner = (
-    <Notice kind="info">
-      <StateDot state="ongoing" size={10} />
-      <div className="flex-1 min-w-0 flex flex-col gap-[4px]">
-        <span>{restarting ? t('restarting') : t('restartNeeded')}</span>
-        <span className="flex items-center gap-[8px] flex-wrap text-secondary text-[12px] leading-[18px]">
-          {restarting
-            ? (!isDesktopHost() && t('restartPortHint'))
-            : isDesktopHost()
-              ? (
-                  <>
-                    {t('restartDesktopHint')}
-                    {' '}
-                    <Button variant="outline" size="sm" onClick={() => setRestartConfirm(true)}>{t('restartNow')}</Button>
-                  </>
-                )
-              : t('restartOtherHint')}
-        </span>
-      </div>
-    </Notice>
-  )
 
   const scopeOptions = [
     { value: 'all', label: t('scopeAll') },
@@ -319,14 +299,6 @@ export function McpTab({ t }: McpTabProps): ReactElement {
         <Button variant="primary" size="sm" onClick={openCreate}>{t('addServer')}</Button>
       </div>
       <Text tone="tertiary">{t('mcpIntro')}</Text>
-
-      {outcome !== null && (
-        <Notice kind={outcome.ok ? 'ok' : 'error'}>
-          <StateDot state={outcome.ok ? 'done' : 'error'} size={10} />
-          <div className="flex-1 min-w-0 flex flex-col gap-[4px]"><span>{outcome.text}</span></div>
-        </Notice>
-      )}
-      {(pending || restarting) && restartBanner}
 
       <div className="flex items-center gap-[7px] px-[2px] mt-[2px] [&_h3]:m-0 [&_h3]:text-[13px] [&_h3]:leading-[20px] [&_h3]:font-semibold">
         <h3>{t('mcpTab')}</h3>
@@ -452,6 +424,7 @@ export function McpTab({ t }: McpTabProps): ReactElement {
         }}
         onImport={() => void doImport()}
       />
+      {toast !== null && <Toast key={toast.seq} text={toast.text} icon={toast.ok ? undefined : <Icon as={Warning} />} onDone={() => setToast(null)} />}
     </div>
   )
 }

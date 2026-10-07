@@ -28,13 +28,21 @@ export function apply(ctx: HostContext, config?: Config): void {
     setCurrentHostInstance(hostCtx as unknown as PanelExtensionHost)
     resetProviderRuntime()
     const remountProvider = (): Promise<void> => provider.start(packagedSkillsDir())
+    const hotReload = (): boolean => {
+      try {
+        return hostCtx.get('hmr') !== undefined
+      }
+      catch {
+        return false
+      }
+    }
     const profileDirPath = profile.peek(config?.profile ?? profile.resolve() ?? DEFAULT_PROFILE)
     ctx.effect(() => {
       void remountProvider()
       return clearHostRuntime
     }, 'dsh-tauri-extension: skill provider')
     ctx.effect(
-      () => routes(hostCtx as unknown as HostContext, { profileDirPath, remountProvider }),
+      () => routes(hostCtx as unknown as HostContext, { profileDirPath, remountProvider, hotReload }),
       'dsh-tauri-extension: routes',
     )
     return clearHostRuntime

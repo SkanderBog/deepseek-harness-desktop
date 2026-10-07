@@ -101,11 +101,12 @@ function createHarness(): Harness {
   }
 }
 
-function mount(harness: Harness): () => void {
+function mount(harness: Harness, hotReload = false): () => void {
   setCurrentHostInstance(harness.ctx as unknown as PanelExtensionHost)
   return routes(harness.ctx as RoutesContext, {
     profileDirPath: join(harness.dir, 'profiles', 'web'),
     remountProvider: async () => {},
+    hotReload: () => hotReload,
   })
 }
 
@@ -232,6 +233,19 @@ describe('能力管理器路由声明', () => {
     const response = await fetch(`${base}${P}/mcp`)
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ servers: [], restartNeeded: true })
+
+    dispose()
+  })
+
+  it('hMR 在线时 mcp 列表不再要求重启', async () => {
+    const harness = createHarness()
+    dirs.push(harness.dir)
+    const dispose = mount(harness, true)
+    const base = await listen(harness.registered)
+
+    const response = await fetch(`${base}${P}/mcp`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ servers: [], restartNeeded: false })
 
     dispose()
   })
