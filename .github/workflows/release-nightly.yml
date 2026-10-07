@@ -26,6 +26,23 @@ concurrency:
 env:
   # 保留窗口：含当天在内最近 N 天，更早的连 tag 一起删除。
   NIGHTLY_RETAIN_DAYS: '10'
+  # 夜间版说明（唯一出处）：草稿阶段就写进 Release 正文，变更日志紧随其后；
+  # 发布时在其后追加产物清单与构建时间。
+  NIGHTLY_DESCRIPTION: |
+    ## ⚠️重要通知
+    这是专为测试目的创建的**开发构建版本**。请注意:
+
+    - 此版本**不适用于**生产环境
+    - 功能可能不完整或不稳定
+    - 仅用于在桌面环境中验证 PR 更改
+    - 可能包含尚未经过全面审查的实验性代码
+    - 不提供任何稳定性或可靠性方面的保证
+
+    ## 预期用途
+    - 针对 PR 变更进行重点测试
+    - 验证桌面特定行为
+    - 桌面平台上的 UI/UX 验证
+    - 在目标设备上进行性能测试
 
 jobs:
   prepare:
@@ -167,14 +184,27 @@ jobs:
           NIGHTLY_SHA: ${{ steps.plan.outputs.source_ref }}
         run: |
           set -euo pipefail
-          if gh release view "$NIGHTLY_TAG" >/dev/null 2>&1; then
-            echo "草稿 $NIGHTLY_TAG 已就绪。"
+          day="${NIGHTLY_TAG#nightly-}"
+          title="Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})"
+
+          if ! gh release view "$NIGHTLY_TAG" >/dev/null 2>&1; then
+            printf '%s\n' "$NIGHTLY_DESCRIPTION" > draft_notes.md
+            gh release create "$NIGHTLY_TAG" --draft --target "$NIGHTLY_SHA" \
+              --title "$title" --prerelease --notes-file draft_notes.md
             exit 0
           fi
-          day="${NIGHTLY_TAG#nightly-}"
-          gh release create "$NIGHTLY_TAG" --draft --target "$NIGHTLY_SHA" \
-            --title "Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})" --prerelease \
-            --notes '<!-- 构建进行中：产物就绪后会自动补上说明、变更日志与产物清单 -->'
+
+          body="$(gh release view "$NIGHTLY_TAG" --json body -q .body)"
+          if [ "$(printf '%s\n' "$body" | head -1)" = "$(printf '%s\n' "$NIGHTLY_DESCRIPTION" | head -1)" ]; then
+            echo "草稿 $NIGHTLY_TAG 已带说明。"
+            exit 0
+          fi
+          {
+            printf '%s\n' "$NIGHTLY_DESCRIPTION"
+            echo
+            printf '%s\n' "$body"
+          } > draft_notes.md
+          gh release edit "$NIGHTLY_TAG" --title "$title" --notes-file draft_notes.md
 
   build-macos:
     name: Build macOS Artifacts
@@ -234,21 +264,6 @@ jobs:
       GH_REPO: ${{ github.repository }}
       NIGHTLY_TAG: ${{ needs.prepare.outputs.tag }}
       NIGHTLY_SHA: ${{ needs.prepare.outputs.source_ref }}
-      NIGHTLY_DESCRIPTION: |
-        ## ⚠️重要通知
-        这是专为测试目的创建的**开发构建版本**。请注意:
-
-        - 此版本**不适用于**生产环境
-        - 功能可能不完整或不稳定
-        - 仅用于在桌面环境中验证 PR 更改
-        - 可能包含尚未经过全面审查的实验性代码
-        - 不提供任何稳定性或可靠性方面的保证
-
-        ## 预期用途
-        - 针对 PR 变更进行重点测试
-        - 验证桌面特定行为
-        - 桌面平台上的 UI/UX 验证
-        - 在目标设备上进行性能测试
     steps:
       - name: Download build outputs
         uses: actions/download-artifact@v7
@@ -311,8 +326,6 @@ jobs:
           }
 
           {
-            echo "$NIGHTLY_DESCRIPTION"
-            echo
             cat release_notes.md
             echo
             echo '### 📦 Artifacts'
