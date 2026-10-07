@@ -7,6 +7,11 @@
 //! 更新判定只接受**正式版**（纯数字版本，见 [`super::version::is_stable`]）：
 //! rc/beta/alpha 等 pre-release 与手动测试 release（`test-*` tag）一律跳过，
 //! 用户不会收到非正式版的更新通知；装了 rc 的用户仍会按 semver 收到之后的正式版。
+//!
+//! 夜间构建（`nightly-YYYYMMDD` 的滚动 pre-release，见 `.github/workflows/release-nightly.yml`）
+//! 同样被跳过，但 `releases.atom` 只保留最近 10 条：夜间版按天滚动后会把窗口占满，
+//! 正式版全部被挤出，更新检查会静默失效（用户永远停在当前版本）。因此窗口里一条正式版
+//! 都看不见时会再问一次 `/releases/latest`——该端点由 GitHub 保证指向最新正式版。
 
 use std::time::Duration;
 
@@ -149,20 +154,16 @@ async fn fetch_expanded_assets(app_handle: &tauri::AppHandle, tag: &str) -> Resu
     Ok((names, body))
 }
 
-/// 查询最新可用的**正式版** Release（无缓存，每次实时检查，走 HTML/atom 而非
-/// api.github.com）。
+/// 从 atom feed 里筛出「严格高于当前版本的正式版」候选，按 feed 顺序（最新在前）。
 ///
-/// 按 feed 顺序（最新在前）扫描：跳过非法 semver（如手动测试 release 的
-/// `test-*` tag）与 pre-release（rc/beta/alpha），只接受**纯数字正式版**且严格
-/// 高于当前版本。首个命中即返回；当前平台无匹配安装包时继续看更旧的正式版。
-///
-/// 返回 `Ok(Some(LatestRelease))` 表示有更新且匹配到当前平台安装包；
-/// `Ok(None)` 表示无更新（或未匹配到资产）。网络失败返回 Err。
-pub(super) async fn fetch_latest_release(app_handle: &tauri::AppHandle) -> Result<Option<LatestRelease>, String> {
-    let current = current_version();
-    for (tag, published_at) in fetch_releases_meta(app_handle).await? {
-        let version = tag.trim_start_matches('v').to_string();
-        let Some(parsed) = parse_version(&version) else {
+/// 同时回报窗口里是否出现过正式版：`releases.atom` 只保留最近 10 条，夜间版把窗口
+/// 占满后该值为 false，调用方必须改用 `/releases/latest` 兜底。纯函数，便于测试。
+fn stable_candidates(releases: &[(String, String)], current: &str) -> (Vec<(String, String)>, bool) {
+    let mut candidates = Vec::new();
+    let mut saw_stable = false;
+    for (tag, published_at) in releases {
+        let version = tag.trim_start_matches('v');
+        let Some(parsed) = parse_version(version) else {
             log::debug!("UPDATE_SKIP: {tag} 非法 semver（手动测试 release?），跳过");
             continue;
         };
@@ -170,11 +171,83 @@ pub(super) async fn fetch_latest_release(app_handle: &tauri::AppHandle) -> Resul
             log::debug!("UPDATE_SKIP: {tag} 为 pre-release（非正式版），不通知用户");
             continue;
         }
-        if !is_newer(&version, &current) {
+        saw_stable = true;
+        if !is_newer(version, current) {
             log::debug!("UPDATE_SKIP: {tag} 不高于当前版本 {current}");
             continue;
         }
-        if let Some(release) = fetch_release_assets(app_handle, &tag, &version, &published_at).await? {
+        candidates.push((tag.clone(), published_at.clone()));
+    }
+    (candidates, saw_stable)
+}
+
+/// 从 `/releases/latest` 302 之后的最终 URL 解析 tag（纯函数，便于测试）。
+///
+/// 该端点由 GitHub 保证排除 pre-release 与草稿，解析结果必然是正式版 tag；tag 自带
+/// `/` 的极端情况会被截断，本仓正式版 tag 形如 `v0.22.3`，不受影响。
+fn parse_latest_tag(url: &str) -> Option<String> {
+    const MARKER: &str = "/releases/tag/";
+    let rest = &url[url.find(MARKER)? + MARKER.len()..];
+    let end = rest
+        .find(|c| matches!(c, '?' | '#' | '/'))
+        .unwrap_or(rest.len());
+    let tag = &rest[..end];
+    (!tag.is_empty()).then(|| tag.to_string())
+}
+
+/// 查询 `/releases/latest`，返回最新正式版 tag（GitHub 侧已排除 pre-release 与草稿）。
+///
+/// 仓库一个正式版都没有时该端点直接 404：这是「无更新」而不是检查失败，必须返回
+/// `Ok(None)`，否则界面会把「已是最新」显示成检查出错。
+async fn fetch_latest_stable_tag(app_handle: &tauri::AppHandle) -> Result<Option<String>, String> {
+    let response = http_client(app_handle)?
+        .get(format!("{REPO_URL}/releases/latest"))
+        .send()
+        .await
+        .map_err(|e| format!("UPDATE_LATEST: {e}"))?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let response = response
+        .error_for_status()
+        .map_err(|e| format!("UPDATE_LATEST: {e}"))?;
+    Ok(parse_latest_tag(response.url().as_str()))
+}
+
+/// 查询最新可用的**正式版** Release（无缓存，每次实时检查，走 HTML/atom 而非
+/// api.github.com）。
+///
+/// 先按 feed 顺序（最新在前）扫描（见 [`stable_candidates`]）：跳过非法 semver（如手动
+/// 测试 release 的 `test-*` tag）、pre-release（rc/beta/夜间版）与不高于当前版本的 tag，
+/// 首个命中的正式版即返回；当前平台无匹配安装包时继续看更旧的正式版。
+///
+/// feed 里一条正式版都看不见时（窗口被夜间版占满）改问 `/releases/latest`：GitHub 保证
+/// 它指向最新正式版。只要窗口里看得见任一正式版，最新正式版必然也在窗口内，因此不必兜底
+/// ——这条捷径也保证正式版没被挤出时，更新检查行为与旧实现完全一致。
+///
+/// 返回 `Ok(Some(LatestRelease))` 表示有更新且匹配到当前平台安装包；
+/// `Ok(None)` 表示无更新（或未匹配到资产）。网络失败返回 Err。
+pub(super) async fn fetch_latest_release(app_handle: &tauri::AppHandle) -> Result<Option<LatestRelease>, String> {
+    let current = current_version();
+    let (mut candidates, saw_stable) =
+        stable_candidates(&fetch_releases_meta(app_handle).await?, &current);
+
+    if !saw_stable {
+        if let Some(tag) = fetch_latest_stable_tag(app_handle).await? {
+            let version = tag.trim_start_matches('v');
+            if parse_version(version).is_some_and(|parsed| is_stable(&parsed)) && is_newer(version, &current) {
+                // 发布时间只有 feed 正文才有：兜底路径不为它再多请求一次页面。该字段仅随
+                // 更新信息透传给前端、界面不展示（关于对话框的发布日期走 `about.rs`）。
+                candidates.push((tag, String::new()));
+            } else {
+                log::debug!("UPDATE_SKIP: {tag} 非可用正式版（非法/预发布/不高于 {current}）");
+            }
+        }
+    }
+
+    for (tag, published_at) in candidates {
+        let version = tag.trim_start_matches('v');
+        if let Some(release) = fetch_release_assets(app_handle, &tag, version, &published_at).await? {
             return Ok(Some(release));
         }
     }
@@ -219,6 +292,21 @@ async fn fetch_release_assets(
         asset_name,
         digest,
     }))
+}
+
+/// 最新**正式版**在 atom feed 里的发布时间（关于对话框的「发布日期」）。
+///
+/// feed 里混着 pre-release（rc/夜间版）且会被夜间版占满，直接取首条会把夜间版的构建
+/// 时间当成正式版发布时间，因此必须先按 [`super::version::is_stable`] 过滤再取。
+pub(super) async fn fetch_latest_stable_published_at(app_handle: &tauri::AppHandle) -> Result<String, String> {
+    let releases = fetch_releases_meta(app_handle).await?;
+    Ok(releases
+        .into_iter()
+        .find(|(tag, _)| {
+            parse_version(tag.trim_start_matches('v')).is_some_and(|parsed| is_stable(&parsed))
+        })
+        .map(|(_, published_at)| published_at)
+        .unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -319,5 +407,73 @@ mod tests {
         assert_eq!(picked_digest.as_deref(), Some(expected_picked.as_str()));
         // 两个摘要必须不同才是「多资产 + 各自摘要」的有效回归用例
         assert_ne!(rpm_digest, picked_digest);
+    }
+
+    /// 回归：夜间版/滚动别名占满 feed 窗口时必须产出空候选，且 `saw_stable` 为 false
+    /// —— 否则调用方不会走 `/releases/latest` 兜底，正式版用户的更新检查会静默失效
+    /// （用户永远停在当前版本）。
+    #[test]
+    fn stable_candidates_reports_window_without_stable() {
+        let nightlies: Vec<(String, String)> = (1..=10)
+            .map(|day| {
+                (
+                    format!("nightly-202610{day:02}"),
+                    format!("2026-10-{day:02}T18:00:00Z"),
+                )
+            })
+            .collect();
+        let (candidates, saw_stable) = stable_candidates(&nightlies, "0.22.3");
+        assert!(candidates.is_empty());
+        assert!(!saw_stable);
+
+        // 滚动别名 tag（无日期）同样不参与判定，不得被误当成版本
+        let mut mixed = nightlies.clone();
+        mixed.insert(0, ("nightly".to_string(), "2026-10-11T18:00:00Z".to_string()));
+        let (candidates, saw_stable) = stable_candidates(&mixed, "0.22.3");
+        assert!(candidates.is_empty());
+        assert!(!saw_stable);
+
+        // 窗口里重新出现正式版：候选按 feed 顺序返回，且不再需要兜底
+        mixed.push(("v0.22.4".to_string(), "2026-10-12T00:00:00Z".to_string()));
+        let (candidates, saw_stable) = stable_candidates(&mixed, "0.22.3");
+        assert_eq!(
+            candidates,
+            vec![("v0.22.4".to_string(), "2026-10-12T00:00:00Z".to_string())]
+        );
+        assert!(saw_stable);
+    }
+
+    /// 回归：rc/beta 与手动测试 tag 既不参与更新判定，也不影响「窗口里有正式版」的判定。
+    #[test]
+    fn stable_candidates_skips_prerelease_and_junk_tags() {
+        let releases = vec![
+            ("v0.23.0-rc.1".to_string(), "t1".to_string()),
+            ("test-main-42".to_string(), "t2".to_string()),
+            ("v0.22.3".to_string(), "t3".to_string()),
+            ("v0.22.2".to_string(), "t4".to_string()),
+        ];
+        let (candidates, saw_stable) = stable_candidates(&releases, "0.22.3");
+        assert!(candidates.is_empty());
+        assert!(saw_stable);
+
+        let (candidates, saw_stable) = stable_candidates(&releases, "0.22.2");
+        assert_eq!(candidates, vec![("v0.22.3".to_string(), "t3".to_string())]);
+        assert!(saw_stable);
+    }
+
+    /// `/releases/latest` 的最终 URL → tag；落到非 tag 页面时必须返回 None，不能猜一个 tag
+    /// （无正式版时该端点 404，退回自身 URL 就是这种情况）。
+    #[test]
+    fn parse_latest_tag_reads_redirect_target() {
+        assert_eq!(
+            parse_latest_tag("https://github.com/x/y/releases/tag/v0.22.3").as_deref(),
+            Some("v0.22.3")
+        );
+        assert_eq!(
+            parse_latest_tag("https://github.com/x/y/releases/tag/v0.22.3?expanded=true").as_deref(),
+            Some("v0.22.3")
+        );
+        assert_eq!(parse_latest_tag("https://github.com/x/y/releases/latest"), None);
+        assert_eq!(parse_latest_tag("https://github.com/x/y/releases/tag/"), None);
     }
 }

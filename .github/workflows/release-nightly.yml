@@ -1,0 +1,295 @@
+name: Build & Release (Nightly)
+
+# 夜间版（dig-node 形态）：滚动发布 main 的每日构建，保留最近 N 天。
+# - 版本号在 CI 期合成、不入库：`<package.json version>-nightly.<YYYYMMDD>.<短 sha>`。
+#   semver 上 `0.22.3-nightly.*` 低于同号正式版 0.22.3，装夜间版的人仍会收到之后的正式版更新。
+# - 每次构建只写两个 Release：当日日期 tag（nightly-YYYYMMDD，独立资产）与滚动别名
+#   nightly（强制指向本次提交、同步同一批资产），两者都是 pre-release，永不成为 latest。
+# - workflow 名称故意**不等于** "Build & Release"：release-bundle.yml 用 workflow_run
+#   监听正式流水线，夜间构建不应触发离线捆绑包。
+on:
+  # UTC 18:00 = 北京时间次日 02:00，构建完正好接上国内早晨。
+  # 注意：仓库连续 60 天无活动后 GitHub 会自动停用 schedule 触发器且不会自动恢复，
+  # 届时用 `gh workflow enable "Build & Release (Nightly)"` 重新启用。
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 忽略「main 无新提交即跳过」，强制重新构建
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-nightly
+  cancel-in-progress: false
+
+env:
+  # 保留窗口：含当天在内最近 N 天（每日一版即 N 个日期 Release），更早的连 tag 一起删除。
+  NIGHTLY_RETAIN_DAYS: '10'
+
+jobs:
+  prepare:
+    name: Prepare Nightly
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.plan.outputs.should_build }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      source_ref: ${{ steps.plan.outputs.source_ref }}
+    steps:
+      # 夜间版只代表 main：dispatch 时即使选了别的分支也固定检出默认分支，
+      # 避免把特性分支的提交塞进日期 tag 的版本号里。
+      - name: Checkout default branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Plan nightly version
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || 'false' }}
+        run: |
+          set -euo pipefail
+          short_sha="$(git rev-parse --short=7 HEAD)"
+          # 前导零的纯数字短 sha（如 0123456）不是合法 semver 标识符（数字段禁止前导零），
+          # 补一个字母前缀，免得 stamp-version.mjs 判成非法版本、整条夜间流水线中断。
+          if [[ "$short_sha" =~ ^0[0-9]+$ ]]; then short_sha="g$short_sha"; fi
+          source_ref="$(git rev-parse HEAD)"
+          base_version="$(node -p "require('./package.json').version")"
+          date="$(date -u +%Y%m%d)"
+          tag="nightly-$date"
+          version="$base_version-nightly.$date.$short_sha"
+          should_build=true
+
+          if [ "$FORCE" != "true" ]; then
+            # main 没动就跳过：夜间版的唯一价值是多带出正式版之后的提交，重复构建白烧
+            # runner 且会刷新资产名。上一版夜间版的提交 SHA 记在 Release 正文的标记里。
+            last_tag="$(gh release list --limit 100 --json tagName -q '.[].tagName' | sed -n 's/^\(nightly-[0-9]\{8\}\)$/\1/p' | sort | tail -1)"
+            if [ -n "$last_tag" ]; then
+              last_sha="$(gh release view "$last_tag" --json body -q .body | sed -n 's/.*nightly-sha:\([0-9a-f]\{7,40\}\).*/\1/p' | head -1)"
+              if [ -n "$last_sha" ] && [ "$last_sha" = "$source_ref" ]; then
+                should_build=false
+              fi
+            fi
+          fi
+
+          {
+            echo "should_build=$should_build"
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "source_ref=$source_ref"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$should_build" = false ]; then
+            echo "::notice::main 自 $last_tag 以来没有新提交，跳过本次夜间构建"
+          else
+            echo "::notice::夜间版 $version（tag $tag，提交 $source_ref）"
+          fi
+
+  build-macos:
+    name: Build macOS Artifacts
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      version: ${{ needs.prepare.outputs.version }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+  build-windows:
+    name: Build Windows Artifacts
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      version: ${{ needs.prepare.outputs.version }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+  build-linux:
+    name: Build Linux Artifacts
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-linux.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      version: ${{ needs.prepare.outputs.version }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+  # 单一 writer：只有三平台全部构建成功才发布，避免出现「半套资产」的夜间版。
+  finalize:
+    name: Publish Nightly Release
+    needs: [prepare, build-macos, build-windows, build-linux]
+    if: >-
+      always() && needs.prepare.result == 'success' &&
+      needs.prepare.outputs.should_build == 'true' &&
+      needs.build-macos.result == 'success' &&
+      needs.build-windows.result == 'success' &&
+      needs.build-linux.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # finalize 未 checkout，gh 无法从 .git 推断仓库，需显式指定。
+      GH_REPO: ${{ github.repository }}
+      NIGHTLY_TAG: ${{ needs.prepare.outputs.tag }}
+      NIGHTLY_VERSION: ${{ needs.prepare.outputs.version }}
+      NIGHTLY_SHA: ${{ needs.prepare.outputs.source_ref }}
+      # 夜间版 Release 描述（唯一出处，日期版与滚动别名共用），动态信息由各步骤追加在后面。
+      NIGHTLY_DESCRIPTION: |
+        ## ⚠️重要通知
+        这是专为测试目的创建的**开发构建版本**。请注意:
+
+        - 此版本**不适用于**生产环境
+        - 功能可能不完整或不稳定
+        - 仅用于在桌面环境中验证 PR 更改
+        - 可能包含尚未经过全面审查的实验性代码
+        - 不提供任何稳定性或可靠性方面的保证
+
+        ## 预期用途
+        - 针对 PR 变更进行重点测试
+        - 验证桌面特定行为
+        - 桌面平台上的 UI/UX 验证
+        - 在目标设备上进行性能测试
+
+        如发现任何问题，请直接提交 issue 报告。
+    steps:
+      - name: Download build outputs
+        uses: actions/download-artifact@v7
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify downloaded assets
+        run: |
+          find release-assets -type f -print
+          [ -n "$(find release-assets -type f -print -quit)" ] || {
+            echo '::error::No nightly assets were downloaded'
+            exit 1
+          }
+
+      - name: Publish dated nightly release
+        run: |
+          set -euo pipefail
+          if ! gh release view "$NIGHTLY_TAG" >/dev/null 2>&1; then
+            gh release create "$NIGHTLY_TAG" --draft --target "$NIGHTLY_SHA" \
+              --title "Nightly $NIGHTLY_VERSION" --prerelease
+          fi
+          mapfile -d '' assets < <(find release-assets -type f -print0)
+          gh release upload "$NIGHTLY_TAG" "${assets[@]}" --clobber
+
+          # 同一天重复构建（main 又推进了）会换版本号，旧版本的资产名与新版不同、clobber
+          # 覆盖不掉，而客户端的 pick_asset 是「按文件名模式取第一个匹配」，留着会取到旧包。
+          new_names="$(cd release-assets && find . -type f -printf '%f\n')"
+          gh release view "$NIGHTLY_TAG" --json assets -q '.assets[].name' | while read -r name; do
+            [ -n "$name" ] || continue
+            grep -qxF "$name" <<< "$new_names" || gh release delete-asset "$NIGHTLY_TAG" "$name" --yes
+          done
+
+          # 构建时间必须写进正文：Release 的 published_at 只在 tag 首次创建时更新，
+          # 同日重建不会变，只有正文里的时间是真实的构建新鲜度信号。
+          cat > nightly_notes.md << EOF
+          $NIGHTLY_DESCRIPTION
+
+          - 版本：\`$NIGHTLY_VERSION\`
+          - 提交：\`$NIGHTLY_SHA\`
+          - 构建时间：$(date -u '+%Y-%m-%d %H:%M UTC')
+
+          <!-- nightly-sha:$NIGHTLY_SHA -->
+          EOF
+          gh release edit "$NIGHTLY_TAG" --notes-file nightly_notes.md \
+            --draft=false --prerelease --latest=false
+
+      - name: Prune nightlies outside the retention window
+        run: |
+          set -euo pipefail
+          cutoff="$(date -u -d "-$((NIGHTLY_RETAIN_DAYS - 1)) days" +%Y%m%d)"
+          gh release list --limit 100 --json tagName -q '.[].tagName' |
+            sed -n 's/^nightly-\([0-9]\{8\}\)$/\1/p' |
+            while read -r day; do
+              if [ "$day" -lt "$cutoff" ]; then
+                echo "pruning nightly-$day"
+                gh release delete "nightly-$day" --yes --cleanup-tag
+              fi
+            done
+
+      - name: Refresh rolling nightly alias
+        run: |
+          set -euo pipefail
+          if ! gh release view nightly >/dev/null 2>&1; then
+            gh release create nightly --draft --target "$NIGHTLY_SHA" \
+              --title "Nightly (latest)" --prerelease
+          fi
+          mapfile -d '' assets < <(find release-assets -type f -print0)
+          gh release upload nightly "${assets[@]}" --clobber
+
+          # 别名始终只保留最新一版的资产：旧的 clobber 不掉，且会让按文件名取包的客户端选错版本。
+          new_names="$(cd release-assets && find . -type f -printf '%f\n')"
+          gh release view nightly --json assets -q '.assets[].name' | while read -r name; do
+            [ -n "$name" ] || continue
+            grep -qxF "$name" <<< "$new_names" || gh release delete-asset nightly "$name" --yes
+          done
+
+          {
+            echo "$NIGHTLY_DESCRIPTION"
+            echo
+            echo "- 最新版本：\`$NIGHTLY_VERSION\`"
+            echo "- 提交：\`$NIGHTLY_SHA\`"
+            echo "- 构建时间：$(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo
+            echo "### 最近 $NIGHTLY_RETAIN_DAYS 天"
+            echo
+            echo "| 日期 (UTC) | 版本 | Release |"
+            echo "| :--- | :--- | :--- |"
+            gh release list --limit 100 --json tagName,name -q '.[] | select(.tagName | test("^nightly-[0-9]{8}$")) | "\(.tagName)|\(.name)"' |
+              sort -r |
+              while IFS='|' read -r tag name; do
+                [ -n "$tag" ] || continue
+                day="${tag#nightly-}"
+                echo "| ${day:0:4}-${day:4:2}-${day:6:2} | ${name#Nightly } | [下载](https://github.com/$GH_REPO/releases/tag/$tag) |"
+              done
+            echo
+            echo "<!-- nightly-sha:$NIGHTLY_SHA -->"
+          } > nightly_alias_notes.md
+
+          gh release edit nightly --notes-file nightly_alias_notes.md \
+            --draft=false --prerelease --latest=false
+
+      # 别名必须先有 tag 再改指：github-script 走 API 强制移动 tag（release.yml 建 tag 的同一手法），
+      # 不用删 Release 重建，因此 `releases/download/nightly/...` 的下载链接不会出现 404 空窗。
+      - name: Point rolling nightly tag at this commit
+        uses: actions/github-script@v8
+        env:
+          NIGHTLY_SHA: ${{ needs.prepare.outputs.source_ref }}
+        with:
+          script: |
+            const ref = 'tags/nightly';
+            const sha = process.env.NIGHTLY_SHA;
+            try {
+              await github.rest.git.updateRef({ ...context.repo, ref, sha, force: true });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
+            }
