@@ -154,25 +154,19 @@ jobs:
       NIGHTLY_TAG: ${{ needs.prepare.outputs.tag }}
       NIGHTLY_VERSION: ${{ needs.prepare.outputs.version }}
       NIGHTLY_SHA: ${{ needs.prepare.outputs.source_ref }}
-      # 夜间版 Release 描述（唯一出处，日期版与滚动别名共用），动态信息由各步骤追加在后面。
-      NIGHTLY_DESCRIPTION: |
-        ## ⚠️重要通知
-        这是专为测试目的创建的**开发构建版本**。请注意:
-
-        - 此版本**不适用于**生产环境
-        - 功能可能不完整或不稳定
-        - 仅用于在桌面环境中验证 PR 更改
-        - 可能包含尚未经过全面审查的实验性代码
-        - 不提供任何稳定性或可靠性方面的保证
-
-        ## 预期用途
-        - 针对 PR 变更进行重点测试
-        - 验证桌面特定行为
-        - 桌面平台上的 UI/UX 验证
-        - 在目标设备上进行性能测试
-
-        如发现任何问题，请直接提交 issue 报告。
+      # 夜间版提示（唯一出处：日期版与滚动别名共用）；变更日志与产物清单由各步骤追加在后面。
+      NIGHTLY_NOTICE: |
+        > [!WARNING]
+        > 🚨 这是专为测试目的创建的**开发构建版本**，不适用于生产环境，也不提供任何稳定性或可靠性保证。
+        > 🚨 如发现问题，请直接提交 issue 报告。
     steps:
+      # 先 checkout 再取产物：checkout 默认清理工作区，排在下载产物之后会把产物一起删掉。
+      - name: Checkout source for changelog
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source_ref }}
+          fetch-depth: 0
+
       - name: Download build outputs
         uses: actions/download-artifact@v7
         with:
@@ -209,17 +203,97 @@ jobs:
             grep -qxF "$name" <<< "$new_names" || gh release delete-asset "$NIGHTLY_TAG" "$name" --yes
           done
 
-          # 构建时间必须写进正文：Release 的 published_at 只在 tag 首次创建时更新，
-          # 同日重建不会变，只有正文里的时间是真实的构建新鲜度信号。
-          cat > nightly_notes.md << EOF
-          $NIGHTLY_DESCRIPTION
+      # tag 先改指再生成变更日志：changelog 按 tag 算范围，当日 tag 停在旧提交就会漏掉今天的改动；
+      # 别名 tag 同样强制移动（release.yml 的同一手法），不删 Release 重建，下载链接不会出现 404 空窗。
+      - name: Point nightly tags at this commit
+        uses: actions/github-script@v8
+        env:
+          NIGHTLY_SHA: ${{ needs.prepare.outputs.source_ref }}
+          NIGHTLY_TAG: ${{ needs.prepare.outputs.tag }}
+        with:
+          script: |
+            const sha = process.env.NIGHTLY_SHA;
+            for (const ref of ['tags/nightly', `tags/${process.env.NIGHTLY_TAG}`]) {
+              try {
+                await github.rest.git.updateRef({ ...context.repo, ref, sha, force: true });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
+              }
+            }
 
-          - 注入版本：\`$NIGHTLY_VERSION\`
-          - 提交：\`$NIGHTLY_SHA\`
-          - 构建时间：$(date -u '+%Y-%m-%d %H:%M UTC')
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
 
-          <!-- nightly-sha:$NIGHTLY_SHA -->
-          EOF
+      # 使用 lockfile 固定的 changelogithub，避免带写权限 token 时动态执行 registry 包。
+      - name: Install changelog dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Generate changelog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/$NIGHTLY_TAG:refs/tags/$NIGHTLY_TAG"
+
+          # 起点取早于当日的最近一版夜间版 tag（同日重建因此不会算出空范围），一期都没有就退到
+          # 最近的正式版 tag，首版能看到「自上次正式版以来的全部改动」。
+          from="$(gh release list --limit 100 --json tagName -q '.[].tagName' |
+            sed -n 's/^\(nightly-[0-9]\{8\}\)$/\1/p' | sort |
+            while read -r t; do
+              if [ "$t" \< "$NIGHTLY_TAG" ]; then echo "$t"; fi
+            done | tail -1)"
+          if [ -z "$from" ]; then
+            from="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+          fi
+
+          day="${NIGHTLY_TAG#nightly-}"
+          args=(--draft --to "$NIGHTLY_TAG" --name "Nightly $NIGHTLY_VERSION (${day:0:4}-${day:4:2}-${day:6:2})")
+          if [ -n "$from" ]; then
+            args+=(--from "$from")
+            echo "变更日志范围：$from..$NIGHTLY_TAG"
+          else
+            echo '::warning::找不到变更日志起点，按全部历史生成'
+          fi
+          # 变更日志是装饰性内容：它失败也不能拖住当天的包。
+          pnpm exec changelogithub "${args[@]}" ||
+            echo '::warning::changelogithub 生成变更日志失败，Release 只保留产物与提示'
+
+      - name: Append artifacts and notice
+        run: |
+          set -euo pipefail
+          gh release view "$NIGHTLY_TAG" --json body -q .body > release_notes.md
+
+          classify() {
+            case "$1" in
+              *aarch64*.dmg) echo 'macOS (Apple Silicon)' ;;
+              *x64*.dmg) echo 'macOS (Intel)' ;;
+              *.msi) echo 'Windows (MSI)' ;;
+              *.exe) echo 'Windows (NSIS)' ;;
+              *.AppImage) echo 'Linux (AppImage)' ;;
+              *.deb) echo 'Linux (deb)' ;;
+              *) echo '其他' ;;
+            esac
+          }
+
+          {
+            cat release_notes.md
+            echo
+            echo '### 📦 Artifacts'
+            while read -r name; do
+              [ -n "$name" ] || continue
+              echo "- **$(classify "$name")**: [${name}](https://github.com/$GH_REPO/releases/download/$NIGHTLY_TAG/${name// /%20})"
+            done < <(cd release-assets && find . -type f -printf '%f\n' | sort)
+            echo
+            echo "$NIGHTLY_NOTICE"
+            echo
+            # 构建时间必须写进正文：Release 的 published_at 只在 tag 首次创建时更新，
+            # 同日重建不会变，只有正文里的时间是真实的构建新鲜度信号。
+            echo "提交 \`$NIGHTLY_SHA\` · 构建时间 $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo
+            echo "<!-- nightly-sha:$NIGHTLY_SHA -->"
+          } > nightly_notes.md
+
           gh release edit "$NIGHTLY_TAG" --notes-file nightly_notes.md \
             --draft=false --prerelease --latest=false
 
@@ -253,47 +327,12 @@ jobs:
             grep -qxF "$name" <<< "$new_names" || gh release delete-asset nightly "$name" --yes
           done
 
+          # 别名正文与当日日期版一致，只把下载链接指向别名 tag（永远解析到最新一版）。
+          gh release view "$NIGHTLY_TAG" --json body -q .body > alias_notes.md
           {
-            echo "$NIGHTLY_DESCRIPTION"
+            echo "> 滚动别名：本页资产始终是最近一版夜间版，本次对应 [\`$NIGHTLY_TAG\`](https://github.com/$GH_REPO/releases/tag/$NIGHTLY_TAG)。"
             echo
-            echo "- 对应日期版：\`$NIGHTLY_TAG\`"
-            echo "- 提交：\`$NIGHTLY_SHA\`"
-            echo "- 构建时间：$(date -u '+%Y-%m-%d %H:%M UTC')"
-            echo
-            echo "### 最近 $NIGHTLY_RETAIN_DAYS 天"
-            echo
-            echo "| 日期 (UTC) | Release |"
-            echo "| :--- | :--- |"
-            gh release list --limit 100 --json tagName -q '.[] | select(.tagName | test("^nightly-[0-9]{8}$")) | .tagName' |
-              sort -r |
-              while read -r tag; do
-                [ -n "$tag" ] || continue
-                day="${tag#nightly-}"
-                echo "| ${day:0:4}-${day:4:2}-${day:6:2} | [下载](https://github.com/$GH_REPO/releases/tag/$tag) |"
-              done
-            echo
-            echo "<!-- nightly-sha:$NIGHTLY_SHA -->"
+            sed "s|/download/$NIGHTLY_TAG/|/download/nightly/|g" alias_notes.md
           } > nightly_alias_notes.md
-
           gh release edit nightly --notes-file nightly_alias_notes.md \
             --draft=false --prerelease --latest=false
-
-      # tag 先存在再改指：github-script 走 API 强制移动（release.yml 建 tag 的同一手法），
-      # 不删 Release 重建，因此 `releases/download/nightly/...` 的下载链接不会出现 404 空窗。
-      # 日期 tag 也要跟着走：同日 main 又推进时复用同一个 tag 重建，不改指就会停在旧提交。
-      - name: Point nightly tags at this commit
-        uses: actions/github-script@v8
-        env:
-          NIGHTLY_SHA: ${{ needs.prepare.outputs.source_ref }}
-          NIGHTLY_TAG: ${{ needs.prepare.outputs.tag }}
-        with:
-          script: |
-            const sha = process.env.NIGHTLY_SHA;
-            for (const ref of ['tags/nightly', `tags/${process.env.NIGHTLY_TAG}`]) {
-              try {
-                await github.rest.git.updateRef({ ...context.repo, ref, sha, force: true });
-              } catch (error) {
-                if (error.status !== 404) throw error;
-                await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
-              }
-            }
