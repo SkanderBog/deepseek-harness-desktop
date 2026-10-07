@@ -43,8 +43,10 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # windows-latest 默认 PowerShell，$STAMP_VERSION 会被当成本地变量读成空串；显式用 bash。
       - name: Stamp injected version
         if: inputs.version != ''
+        shell: bash
         env:
           STAMP_VERSION: ${{ inputs.version }}
         run: node scripts/stamp-version.mjs "$STAMP_VERSION"
