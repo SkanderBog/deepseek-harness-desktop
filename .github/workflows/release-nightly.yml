@@ -133,7 +133,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NIGHTLY_TAG: ${{ steps.plan.outputs.tag }}
-          NIGHTLY_VERSION: ${{ steps.plan.outputs.version }}
+          NIGHTLY_SHA: ${{ steps.plan.outputs.source_ref }}
         run: |
           set -euo pipefail
           git fetch --force origin "refs/tags/$NIGHTLY_TAG:refs/tags/$NIGHTLY_TAG"
@@ -148,7 +148,8 @@ jobs:
           fi
 
           day="${NIGHTLY_TAG#nightly-}"
-          args=(--draft --prerelease --to "$NIGHTLY_TAG" --name "Nightly $NIGHTLY_VERSION (${day:0:4}-${day:4:2}-${day:6:2})")
+          title="Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})"
+          args=(--draft --prerelease --to "$NIGHTLY_TAG" --name "$title")
           if [ -n "$from" ]; then
             args+=(--from "$from")
             echo "变更日志范围：$from..$NIGHTLY_TAG"
@@ -163,7 +164,6 @@ jobs:
         if: steps.plan.outputs.should_build == 'true'
         env:
           NIGHTLY_TAG: ${{ steps.plan.outputs.tag }}
-          NIGHTLY_VERSION: ${{ steps.plan.outputs.version }}
           NIGHTLY_SHA: ${{ steps.plan.outputs.source_ref }}
         run: |
           set -euo pipefail
@@ -173,7 +173,7 @@ jobs:
           fi
           day="${NIGHTLY_TAG#nightly-}"
           gh release create "$NIGHTLY_TAG" --draft --target "$NIGHTLY_SHA" \
-            --title "Nightly $NIGHTLY_VERSION (${day:0:4}-${day:4:2}-${day:6:2})" --prerelease \
+            --title "Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})" --prerelease \
             --notes '<!-- 构建进行中：产物就绪后会自动补上说明、变更日志与产物清单 -->'
 
   build-macos:
@@ -326,8 +326,9 @@ jobs:
             echo "<!-- nightly-sha:$NIGHTLY_SHA -->"
           } > nightly_notes.md
 
-          gh release edit "$NIGHTLY_TAG" --notes-file nightly_notes.md \
-            --draft=false --prerelease --latest=false
+          day="${NIGHTLY_TAG#nightly-}"
+          gh release edit "$NIGHTLY_TAG" --title "Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})" \
+            --notes-file nightly_notes.md --draft=false --prerelease --latest=false
 
       - name: Prune nightlies outside the retention window
         run: |
@@ -345,9 +346,11 @@ jobs:
       - name: Refresh rolling nightly alias
         run: |
           set -euo pipefail
+          day="${NIGHTLY_TAG#nightly-}"
+          title="Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})"
           if ! gh release view nightly >/dev/null 2>&1; then
             gh release create nightly --draft --target "$NIGHTLY_SHA" \
-              --title "Nightly (latest)" --prerelease
+              --title "$title" --prerelease
           fi
           mapfile -d '' assets < <(find release-assets -type f -print0)
           gh release upload nightly "${assets[@]}" --clobber
@@ -365,5 +368,5 @@ jobs:
             sed "s|/download/$NIGHTLY_TAG/|/download/nightly/|g" alias_notes.md
           } > nightly_alias_notes.md
 
-          gh release edit nightly --notes-file nightly_alias_notes.md \
+          gh release edit nightly --title "$title" --notes-file nightly_alias_notes.md \
             --draft=false --prerelease --latest=false
