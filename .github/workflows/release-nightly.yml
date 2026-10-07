@@ -1,8 +1,8 @@
 name: Build & Release (Nightly)
 
 # 夜间版（dig-node 形态）：滚动发布 main 的每日构建，保留最近 N 天。
-# - 版本号在 CI 期合成、不入库：`<package.json version>-nightly.<YYYYMMDD>.<短 sha>`。
-#   semver 上 `0.22.3-nightly.*` 低于同号正式版 0.22.3，装夜间版的人仍会收到之后的正式版更新。
+# - 版本号固定注入 0.0.0（构建期写入、不入库）：不占用任何正式版号段，也不让 semver 比较
+#   把夜间版算成比正式版新；构建身份看 tag 日期与正文里的构建时间、提交。
 # - 每次构建只写两个 Release：当日日期 tag（nightly-YYYYMMDD，独立资产）与滚动别名
 #   nightly（强制指向本次提交、同步同一批资产），两者都是 pre-release，永不成为 latest。
 # - workflow 名称故意**不等于** "Build & Release"：release-bundle.yml 用 workflow_run
@@ -43,7 +43,7 @@ jobs:
       source_ref: ${{ steps.plan.outputs.source_ref }}
     steps:
       # 夜间版只代表 main：dispatch 时即使选了别的分支也固定检出默认分支，
-      # 避免把特性分支的提交塞进日期 tag 的版本号里。
+      # 避免把特性分支的提交发成当日的日期 tag。
       - name: Checkout default branch
         uses: actions/checkout@v7
         with:
@@ -61,15 +61,10 @@ jobs:
           FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || 'false' }}
         run: |
           set -euo pipefail
-          short_sha="$(git rev-parse --short=7 HEAD)"
-          # 前导零的纯数字短 sha（如 0123456）不是合法 semver 标识符（数字段禁止前导零），
-          # 补一个字母前缀，免得 stamp-version.mjs 判成非法版本、整条夜间流水线中断。
-          if [[ "$short_sha" =~ ^0[0-9]+$ ]]; then short_sha="g$short_sha"; fi
           source_ref="$(git rev-parse HEAD)"
-          base_version="$(node -p "require('./package.json').version")"
           date="$(date -u +%Y%m%d)"
           tag="nightly-$date"
-          version="$base_version-nightly.$date.$short_sha"
+          version=0.0.0
           should_build=true
 
           if [ "$FORCE" != "true" ]; then
@@ -194,8 +189,11 @@ jobs:
         run: |
           set -euo pipefail
           if ! gh release view "$NIGHTLY_TAG" >/dev/null 2>&1; then
+            # 版本号恒为 0.0.0，标题里另带日期：Release 的 published_at 只在 tag 首次创建时
+            # 更新，同日重建不会变，日期与正文的构建时间才是新鲜度信号。
+            day="${NIGHTLY_TAG#nightly-}"
             gh release create "$NIGHTLY_TAG" --draft --target "$NIGHTLY_SHA" \
-              --title "Nightly $NIGHTLY_VERSION" --prerelease
+              --title "Nightly $NIGHTLY_VERSION (${day:0:4}-${day:4:2}-${day:6:2})" --prerelease
           fi
           mapfile -d '' assets < <(find release-assets -type f -print0)
           gh release upload "$NIGHTLY_TAG" "${assets[@]}" --clobber
@@ -261,14 +259,14 @@ jobs:
             echo
             echo "### 最近 $NIGHTLY_RETAIN_DAYS 天"
             echo
-            echo "| 日期 (UTC) | 版本 | Release |"
-            echo "| :--- | :--- | :--- |"
-            gh release list --limit 100 --json tagName,name -q '.[] | select(.tagName | test("^nightly-[0-9]{8}$")) | "\(.tagName)|\(.name)"' |
+            echo "| 日期 (UTC) | Release |"
+            echo "| :--- | :--- |"
+            gh release list --limit 100 --json tagName -q '.[] | select(.tagName | test("^nightly-[0-9]{8}$")) | .tagName' |
               sort -r |
-              while IFS='|' read -r tag name; do
+              while read -r tag; do
                 [ -n "$tag" ] || continue
                 day="${tag#nightly-}"
-                echo "| ${day:0:4}-${day:4:2}-${day:6:2} | ${name#Nightly } | [下载](https://github.com/$GH_REPO/releases/tag/$tag) |"
+                echo "| ${day:0:4}-${day:4:2}-${day:6:2} | [下载](https://github.com/$GH_REPO/releases/tag/$tag) |"
               done
             echo
             echo "<!-- nightly-sha:$NIGHTLY_SHA -->"
