@@ -21,6 +21,13 @@ Derived (upstream → this package):
 - Official settings launcher seat (`ui-settings-general` `SettingsRoot` rendering the account menu) → `src/client/constants/index.ts` (`SETTINGS_TRIGGER_PRIORITY`), `src/client/ui/settings-trigger.tsx`: seat takeover keeping a host for the official account UI, plus the official dictionary strings for the sidebar "new session" button and the ungrouped workspace-group `+` (`new-session.utils.ts`, official `UNGROUPED_KEY`).
 - Official primitives variants `PermissionRow.selector`, `PermissionSelect`, `AgentPresetSeat` → `src/client/components/chip.tsx`: per-variant wrapping and the official `@container` query that `css-render` can only emit as a top-level raw rule.
 
+## hongweifei/dsh-chat-content-visibility-auto
+
+- Repository: <https://github.com/hongweifei/dsh-chat-content-visibility-auto>
+- Version: `1.0.0`
+- License: MIT — Copyright (c) 2026 dsh-chat-content-visibility-auto contributors
+- Not vendored, not installed: the external client plugin stays out of this repo's manifests. Its converged windowing rule — `content-visibility: auto` + `contain-intrinsic-size: auto 320px` on `[data-chat-flow] > [data-chat-anchor-key]` — is reimplemented on this repo's own `css-render` stack in `src/client/styles/global.cssr.ts`, keyed off the official chat DOM contract (`ChatView` column `[data-chat-flow]` → node rows `[data-chat-anchor-key]`).
+
 ## License
 
 ```text
