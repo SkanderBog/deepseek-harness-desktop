@@ -101,38 +101,30 @@ jobs:
             echo "::notice::夜间版 $version（tag $tag，提交 $source_ref）"
           fi
 
-      - name: Create draft nightly release
+      - name: Clean up leftover drafts
         if: steps.plan.outputs.should_build == 'true'
         env:
           NIGHTLY_TAG: ${{ steps.plan.outputs.tag }}
-          NIGHTLY_VERSION: ${{ steps.plan.outputs.version }}
-          NIGHTLY_SHA: ${{ steps.plan.outputs.source_ref }}
         run: |
           set -euo pipefail
           today="${NIGHTLY_TAG#nightly-}"
 
-          # 上一次失败留下的旧草稿永远不会发布（那天的 run 已经结束），顺手清掉，否则会一直占着
-          # Releases 列表直到保留窗口过期。
-          gh release list --limit 100 --json tagName,isDraft -q '.[] | select(.isDraft) | .tagName' |
-            sed -n 's/^nightly-\([0-9]\{8\}\)$/\1/p' |
-            while read -r day; do
-              if [ "$day" -lt "$today" ]; then
-                echo "pruning stale draft nightly-$day"
-                gh release delete "nightly-$day" --yes --cleanup-tag
+          # 草稿在 GitHub 上按 tag 查不到（Get a release by tag 对草稿返回 404），changeloggithub 因此
+          # 会在同一天重跑时再造一个同 tag 的草稿；这里按 id 把当天与更早的草稿都删掉，让本轮只留一个。
+          # 更早日期留下的草稿永远不会发布（那天的 run 已经结束），也一并清掉，不然会一直占着列表。
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            -q '.[] | select(.draft) | (.id|tostring) + " " + .tag_name' |
+            while read -r id tag; do
+              day="${tag#nightly-}"
+              case "$day" in
+                [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+                *) continue ;;
+              esac
+              if [ "$day" -le "$today" ]; then
+                echo "dropping draft release $id ($tag)"
+                gh api -X DELETE "repos/$GH_REPO/releases/$id"
               fi
             done
-
-          # tag 由 Release 首次创建时建立，同一天重建只能复用已有草稿，重复 create 会撞 tag。
-          if gh release view "$NIGHTLY_TAG" >/dev/null 2>&1; then
-            echo "草稿 $NIGHTLY_TAG 已存在，复用。"
-            exit 0
-          fi
-
-          # 版本号恒为 0.0.0，标题里另带日期：Release 的 published_at 只在 tag 首次创建时更新，
-          # 同日重建不会变，日期与正文的构建时间才是新鲜度信号。
-          gh release create "$NIGHTLY_TAG" --draft --target "$NIGHTLY_SHA" \
-            --title "Nightly $NIGHTLY_VERSION (${today:0:4}-${today:4:2}-${today:6:2})" --prerelease \
-            --notes '<!-- 构建进行中：产物就绪后会自动补上说明、变更日志与产物清单 -->'
 
       # 草稿的 tag 要等发布时才由 GitHub 建立，所以这里显式建/改 tag：变更日志按 tag 之间的范围
       # 计算，tag 不存在或停在旧提交（同日重建）都会让变更日志算错。
@@ -191,6 +183,25 @@ jobs:
           # 变更日志是装饰性内容：它失败也不能拖住当天的包。
           pnpm exec changelogithub "${args[@]}" ||
             echo '::warning::changelogithub 生成变更日志失败，Release 只保留产物与提示'
+
+      # 草稿由变更日志步骤建立（changeloggithub --draft，与 release.yml 同形态：它自己创建 Release 并写入
+      # 正文）。它失败时这里补一个空草稿，否则 finalize 没有可上传的目标。
+      - name: Ensure draft release exists
+        if: steps.plan.outputs.should_build == 'true'
+        env:
+          NIGHTLY_TAG: ${{ steps.plan.outputs.tag }}
+          NIGHTLY_VERSION: ${{ steps.plan.outputs.version }}
+          NIGHTLY_SHA: ${{ steps.plan.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          if gh release view "$NIGHTLY_TAG" >/dev/null 2>&1; then
+            echo "草稿 $NIGHTLY_TAG 已就绪。"
+            exit 0
+          fi
+          day="${NIGHTLY_TAG#nightly-}"
+          gh release create "$NIGHTLY_TAG" --draft --target "$NIGHTLY_SHA" \
+            --title "Nightly $NIGHTLY_VERSION (${day:0:4}-${day:4:2}-${day:6:2})" --prerelease \
+            --notes '<!-- 构建进行中：产物就绪后会自动补上说明、变更日志与产物清单 -->'
 
   build-macos:
     name: Build macOS Artifacts
