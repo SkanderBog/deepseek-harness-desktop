@@ -201,8 +201,8 @@ jobs:
           mapfile -d '' assets < <(find release-assets -type f -print0)
           gh release upload "$NIGHTLY_TAG" "${assets[@]}" --clobber
 
-          # 同一天重复构建（main 又推进了）会换版本号，旧版本的资产名与新版不同、clobber
-          # 覆盖不掉，而客户端的 pick_asset 是「按文件名模式取第一个匹配」，留着会取到旧包。
+          # 版本号恒为 0.0.0，同名资产由 --clobber 原地替换；但打包集合变化时（改名、停发某格式）
+          # 旧文件覆盖不掉，而客户端的 pick_asset 是「按文件名模式取第一个匹配」，留着会取到旧包。
           new_names="$(cd release-assets && find . -type f -printf '%f\n')"
           gh release view "$NIGHTLY_TAG" --json assets -q '.assets[].name' | while read -r name; do
             [ -n "$name" ] || continue
@@ -214,7 +214,7 @@ jobs:
           cat > nightly_notes.md << EOF
           $NIGHTLY_DESCRIPTION
 
-          - 版本：\`$NIGHTLY_VERSION\`
+          - 注入版本：\`$NIGHTLY_VERSION\`
           - 提交：\`$NIGHTLY_SHA\`
           - 构建时间：$(date -u '+%Y-%m-%d %H:%M UTC')
 
@@ -246,7 +246,7 @@ jobs:
           mapfile -d '' assets < <(find release-assets -type f -print0)
           gh release upload nightly "${assets[@]}" --clobber
 
-          # 别名始终只保留最新一版的资产：旧的 clobber 不掉，且会让按文件名取包的客户端选错版本。
+          # 别名只保留最新一版的资产：打包集合变化时旧文件覆盖不掉，会让按文件名取包的客户端选错版本。
           new_names="$(cd release-assets && find . -type f -printf '%f\n')"
           gh release view nightly --json assets -q '.assets[].name' | while read -r name; do
             [ -n "$name" ] || continue
@@ -256,7 +256,7 @@ jobs:
           {
             echo "$NIGHTLY_DESCRIPTION"
             echo
-            echo "- 最新版本：\`$NIGHTLY_VERSION\`"
+            echo "- 对应日期版：\`$NIGHTLY_TAG\`"
             echo "- 提交：\`$NIGHTLY_SHA\`"
             echo "- 构建时间：$(date -u '+%Y-%m-%d %H:%M UTC')"
             echo
