@@ -61,6 +61,9 @@ jobs:
           # squashfs-tools 提供 mksquashfs，供 AppImage 宿主库剔除后重打包使用。
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-tools squashfs-tools
 
+      - name: Test media dependency checks
+        run: python3 scripts/test-appimage-media.py
+
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
