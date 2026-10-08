@@ -159,6 +159,9 @@ export default c([
     contentVisibility: 'auto',
     containIntrinsicSize: 'auto 320px',
   }),
+  c('[data-chat-flow-key]:has(> [data-slot="conversation.chat.node"] > [data-dsh-tauri-ui-continue-notice])', {
+    display: 'none !important',
+  }),
 
   c('[class$="sidebarCol"]', {
     borderRight: 'none !important',

@@ -122,6 +122,10 @@ describe('chat flow off-screen rendering', () => {
     })
   })
 
+  it('只移除带 continue 标记的外层聊天节点，不留下间距', () => {
+    expect(rules['[data-chat-flow-key]:has(> [data-slot="conversation.chat.node"] > [data-dsh-tauri-ui-continue-notice])']).toEqual({ display: 'none' })
+  })
+
   it('不把内容整块藏起来（保浏览器查找与无障碍树）', () => {
     expect(globalStyle.render()).not.toMatch(/content-visibility:\s*hidden/)
   })
