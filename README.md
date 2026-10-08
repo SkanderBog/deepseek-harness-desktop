@@ -103,7 +103,7 @@ brew install dsh-tauri/desktop/deepseek-harness
 - 包含 `Bundle` 后缀为离线安装包（`_Bundle_*.exe`、`_Bundle_*.deb`、两种 `_Bundle_*.dmg`）。
 - 本地运行不等于完全离线：模型服务、插件安装、更新与桌宠预设素材仍可能联网。
 - Linux 显示、Wayland、AppImage 与权限问题的处理见[安装与故障排查文档](https://dshtauri.mintlify.site/zh-CN/help/troubleshooting)。
-- Linux 透明视频桌宠需要 GStreamer 的 VP9 解析器与透明通道解码器；缺失时动画可能正常播放，但背景显示为黑色矩形。`.deb` 已声明 `gstreamer1.0-plugins-good` 与 `gstreamer1.0-plugins-bad` 依赖；旧版 Debian/Ubuntu 安装可运行 `sudo apt install gstreamer1.0-plugins-good gstreamer1.0-plugins-bad`，安装后重启应用。
+- Linux 透明视频桌宠需要 GStreamer 的 VP9 解析器与透明通道解码器；缺失时动画可能正常播放，但背景显示为黑色矩形。`.deb` 已声明 `gstreamer1.0-plugins-good` 与 `gstreamer1.0-plugins-bad` 依赖，AppImage 打包媒体框架并检查所需解码器；旧版 Debian/Ubuntu 安装可运行 `sudo apt install gstreamer1.0-plugins-good gstreamer1.0-plugins-bad`，安装后重启应用。
 
 ### 桌面代理
 
