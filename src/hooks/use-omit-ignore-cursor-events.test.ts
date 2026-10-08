@@ -124,6 +124,19 @@ describe('pet cursor input lifecycle', () => {
     expect(requests()).toEqual([true])
   })
 
+  it('retests a stationary cursor when the window moves away and back', async () => {
+    renderHook(() => useOmitIgnoreCursorEvents({ current: element }))
+    await flush()
+    await emit('device-mouse-move', { x: 120, y: 120 })
+    expect(requests()).toEqual([])
+    native.position.mockResolvedValue({ x: 400, y: 400 })
+    await emit('moved', {})
+    expect(requests()).toEqual([true])
+    native.position.mockResolvedValue({ x: 100, y: 100 })
+    await emit('moved', {})
+    expect(requests()).toEqual([true, false])
+  })
+
   it('retests a stationary cursor after resizing the hitbox', async () => {
     renderHook(() => useOmitIgnoreCursorEvents({ current: element }))
     await flush()
