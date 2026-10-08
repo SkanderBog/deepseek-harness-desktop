@@ -74,7 +74,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --bundles appimage,deb
+        run: pnpm tauri build --bundles appimage,deb ${{ inputs.version != '' && '--config src-tauri/tauri.nightly.conf.json' || '' }}
 
       # Tauri 固定的 linuxdeploy 会把构建镜像的 libwayland-*/libxkbcommon/libxcb/
       # libXau/libXdmcp 一并打进 AppImage，AppRun 又把这些库置于 LD_LIBRARY_PATH 首位；
@@ -90,6 +90,9 @@ jobs:
           for appimage in "${appimages[@]}"; do
             bash scripts/fix-appimage-host-libs.sh --require-removal "$appimage"
           done
+
+      - name: Normalize release asset names
+        run: node scripts/rename-release-assets.mjs src-tauri/target/release/bundle/appimage src-tauri/target/release/bundle/deb
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6

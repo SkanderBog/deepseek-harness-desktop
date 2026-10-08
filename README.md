@@ -1,10 +1,10 @@
 <p align="center">
   <a href="https://github.com/dsh-tauri/deepseek-harness-desktop">
-    <img src="public/favicon.svg" width="96" alt="DeepSeek Harness Desktop" />
+    <img src="public/deepseek-harness-desktop-tauri.svg" width="96" alt="DeepSeek Harness Tauri Desktop" />
   </a>
 </p>
 
-<h1 align="center">DeepSeek Harness 桌面版</h1>
+<h1 align="center">DeepSeek Harness Tauri 桌面版</h1>
 
 <p align="center">
   在桌面上运行 <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a> ——<br />

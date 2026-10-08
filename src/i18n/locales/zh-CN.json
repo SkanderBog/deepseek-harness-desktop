@@ -197,6 +197,7 @@
   "nav.maximize": "最大化",
   "nav.restore": "还原",
   "nav.background": "后台化",
+  "navbar.nightly_build": "夜间构建版本",
   "messages.logs_copied": "日志已复制到剪贴板",
   "messages.logs_read_failed": "读取日志失败，请稍后重试",
   "app.help": "帮助",

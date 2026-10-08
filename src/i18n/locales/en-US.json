@@ -197,6 +197,7 @@
   "nav.maximize": "Maximize",
   "nav.restore": "Restore",
   "nav.background": "Background",
+  "navbar.nightly_build": "Nightly build",
   "messages.logs_copied": "Logs copied to clipboard",
   "messages.logs_read_failed": "Failed to read logs. Please try again.",
   "app.help": "Help",

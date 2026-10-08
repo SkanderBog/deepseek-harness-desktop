@@ -298,3 +298,29 @@ jobs:
             cargo test --all-features --locked desktop::startup::tests:: -- --test-threads=1 || exit 1
           done
         working-directory: src-tauri
+
+      - name: Check macOS login startup regression
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'git restore -- src/desktop/autostart.rs' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/desktop/autostart.rs')
+          source = path.read_text()
+          assert source.count('set_enabled(app, true)') == 1
+          path.write_text(source.replace('set_enabled(app, true)', 'Ok(true)'))
+          PY
+          test_name=desktop::autostart::tests::macos_init_refreshes_only_enabled_login_items
+          if cargo test --lib --all-features --locked "$test_name" -- --exact --nocapture > "$RUNNER_TEMP/autostart-mutant.log" 2>&1; then
+            cat "$RUNNER_TEMP/autostart-mutant.log"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/autostart-mutant.log"
+          grep -F 'enabled login item must target the current executable' "$RUNNER_TEMP/autostart-mutant.log"
+          git restore -- src/desktop/autostart.rs
+          for iteration in 1 2 3 4 5; do
+            cargo test --lib --all-features --locked "$test_name" -- --exact --nocapture
+          done
+        working-directory: src-tauri

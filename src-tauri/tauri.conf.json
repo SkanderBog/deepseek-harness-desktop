@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Deepseek Harness Desktop",
+  "productName": "DSH Tauri",
   "version": "0.22.4",
   "identifier": "dsh-tauri",
   "build": {
@@ -50,6 +50,12 @@
       "infoPlist": "Info.plist",
       "entitlements": "Entitlements.plist"
     },
+    "linux": {
+      "deb": {
+        "conflicts": ["deepseek-harness-desktop"],
+        "replaces": ["deepseek-harness-desktop"]
+      }
+    },
     "windows": {
       "nsis": {
         "template": "templates/installer.nsi",
@@ -59,8 +65,10 @@
         "uninstallerIcon": "icons/icon.ico"
       },
       "wix": {
+        "upgradeCode": "d6340322-9fd6-54cd-a64f-28a2ade67a65",
         "language": ["en-US", "zh-CN"],
-        "fragmentPaths": ["./windows/fragments/autostart-cleanup.wxs"]
+        "fragmentPaths": ["./windows/fragments/autostart-cleanup.wxs"],
+        "componentRefs": ["CleanupLegacyShortcuts"]
       }
     },
     "shortDescription": "Desktop application for DeepSeek Harness",

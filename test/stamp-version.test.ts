@@ -19,7 +19,7 @@ interface StampVersionModule {
 const stampVersionScript = fileURLToPath(new URL('../scripts/stamp-version.mjs', import.meta.url))
 const stamp = stampVersionModule as StampVersionModule
 
-const nightlyVersion = '0.22.3-nightly.20261007.abc1234'
+const nightlyVersion = '0.0.0-nightly.20261007.gabc1234'
 const temporaryRepos: string[] = []
 
 function readVersion(filePath: string) {
@@ -55,7 +55,7 @@ function writeRepo(versions: { packageJson: string, cargoToml: string, tauriConf
   ].join('\n'))
   writeFileSync(path.join(repo, 'src-tauri', 'tauri.conf.json'), [
     '{',
-    '  "productName": "Deepseek Harness Desktop",',
+    '  "productName": "DSH Tauri",',
     `  "version": "${versions.tauriConfig}",`,
     '  "identifier": "dsh-tauri",',
     '  "bundle": {',

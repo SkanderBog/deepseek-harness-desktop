@@ -70,9 +70,10 @@ pub const DSH_HOME_DIR_NAME: &str = ".dsh";
 /// 同时运行时互不干扰，也不会互相污染对方的会话数据。
 pub const DSH_HOME_DEV_DIR_NAME: &str = ".dsh.dev";
 
-/// 应用标识符：`app_data_dir()` / `app_local_data_dir()` 的目录名，必须与
-/// `tauri.conf.json` 的 `identifier` 逐字一致（日志目录同样由它派生）。
-pub const APP_IDENTIFIER: &str = "dsh-tauri";
+/// 启动前的目录解析也读取有效构建配置，避免夜间版读写正式版日志和 Store。
+pub const APP_IDENTIFIER: &str = env!("DSH_APP_IDENTIFIER");
+
+pub const HARNESS_PID_MARKER_NAMES: [&str; 2] = [".harness.pid", ".harness-nightly.pid"];
 
 /// 开发构建在 AppData 下使用的独立子目录。Node、Harness、pnpm、Git 等可执行
 /// 核心不应与 release 共用，否则开发版更新/切换核心会替换正在运行的生产文件。

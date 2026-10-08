@@ -1,7 +1,7 @@
 name: Build & Release (Nightly)
 
 # 夜间版（dig-node 形态）：滚动发布 main 的每日构建，保留最近 N 天。
-# - 版本号固定注入 0.0.0（构建期写入、不入库）：不占用正式版号段。
+# - 注入 0.0.0-nightly.YYYYMMDD.g<sha>（构建期写入、不入库）：不占用正式版号段。
 # - 每次构建写两个 Release：当日日期 tag (nightly-YYYYMMDD) 与滚动别名 nightly (均标记为 pre-release)。
 # - workflow 名称故意不等于 "Build & Release"，避免误触发 release-bundle.yml。
 on:
@@ -77,7 +77,7 @@ jobs:
           source_ref="$(git rev-parse HEAD)"
           date="$(date -u +%Y%m%d)"
           tag="nightly-$date"
-          version="0.0.0"
+          version="0.0.0-nightly.$date.g${source_ref:0:7}"
           should_build="true"
 
           if [ "$FORCE" != "true" ]; then
@@ -384,3 +384,23 @@ jobs:
 
           gh release edit nightly --title "$title" --notes-file nightly_alias_notes.md \
             --draft=false --prerelease --latest=false
+
+      - name: Prune stale nightly installer assets
+        if: success()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const files = fs.readdirSync(path.join(process.env.RUNNER_TEMP, 'release-assets'), { recursive: true, withFileTypes: true });
+            const keep = new Set(files.filter(file => file.isFile()).map(file => file.name));
+            const nightlyAsset = /^Deepseek\.Harness\.Desktop_0\.0\.0(?:-nightly(?:\.[0-9A-Za-z-]+)*)?_[^/\\]+\.(?:exe|msi|dmg|AppImage|deb)(?:\.sig)?$/;
+            for (const tag of [process.env.NIGHTLY_TAG, 'nightly']) {
+              const { data: release } = await github.rest.repos.getReleaseByTag({ ...context.repo, tag });
+              const assets = await github.paginate(github.rest.repos.listReleaseAssets, { ...context.repo, release_id: release.id, per_page: 100 });
+              for (const asset of assets) {
+                if (nightlyAsset.test(asset.name) && !keep.has(asset.name)) {
+                  await github.rest.repos.deleteReleaseAsset({ ...context.repo, asset_id: asset.id });
+                }
+              }
+            }

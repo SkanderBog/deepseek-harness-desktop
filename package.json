@@ -25,7 +25,7 @@
     "lint": "eslint",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --project tsconfig.typecheck.json --noEmit",
-    "icons": "tauri icon public/favicon.svg && tsx scripts/rebuild-macos-icon.ts"
+    "icons": "tauri icon public/deepseek-harness-desktop-tauri.svg --output src-tauri/icons && tauri icon public/deepseek-harness-desktop-tauri-nightly.svg --output src-tauri/icons/nightly --ios-color \"#000000\" && tsx scripts/rebuild-macos-icon.ts"
   },
   "dependencies": {
     "@choochmeque/tauri-plugin-notifications-api": "catalog:",

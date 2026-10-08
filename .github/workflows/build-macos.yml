@@ -122,7 +122,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm tauri build --target ${{ matrix.target }}
+        run: pnpm tauri build ${{ inputs.version != '' && '--config src-tauri/tauri.nightly.conf.json' || '' }} --target ${{ matrix.target }}
 
       - name: Verify signature and notarization
         if: steps.check.outputs.should_run == 'true'
@@ -136,6 +136,10 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app_path"
           xcrun stapler validate "$app_path"
           spctl --assess --type execute --verbose=4 "$app_path"
+
+      - name: Normalize release asset names
+        if: steps.check.outputs.should_run == 'true'
+        run: node scripts/rename-release-assets.mjs src-tauri/target/${{ matrix.target }}/release/bundle/dmg
 
       - name: Upload build output
         if: steps.check.outputs.should_run == 'true'
