@@ -130,16 +130,20 @@ export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | nu
       }),
     ]
 
-    void Promise.all(subscriptions.map(async (subscription) => {
+    void Promise.allSettled(subscriptions.map(async (subscription) => {
       const unlisten = await subscription
       if (disposed)
         unlisten()
       else
         unlisteners.push(unlisten)
-    })).then(() => {
+    })).then((results) => {
+      for (const result of results) {
+        if (result.status === 'rejected')
+          console.warn('[pet] PET_INPUT_LISTEN_FAILED:', result.reason)
+      }
       if (!disposed)
         return invoke('start_pet_mouse_stream')
-    }).catch(error => console.warn('[pet] PET_INPUT_LISTEN_FAILED:', error))
+    }).catch(error => console.warn('[pet] PET_INPUT_STREAM_FAILED:', error))
 
     return () => {
       disposed = true

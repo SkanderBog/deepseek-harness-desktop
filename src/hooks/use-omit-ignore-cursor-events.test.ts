@@ -193,8 +193,51 @@ describe('pet cursor input lifecycle', () => {
     expect(handlers.size).toBe(0)
   })
 
-  it('does not start the stream when subscription completes after unmount', async () => {
+  it.each(['moved', 'resized', 'pet://status', 'device-mouse-move'])('starts the stream when the %s listener fails', async (event) => {
+    const error = new Error(`${event} registration failed`)
+    if (event === 'moved')
+      native.moved.mockRejectedValue(error)
+    else if (event === 'resized')
+      native.resized.mockRejectedValue(error)
+    else
+      native.listen.mockImplementation((name, handler) => name === event ? Promise.reject(error) : subscribe(name, handler))
+    renderHook(() => useOmitIgnoreCursorEvents({ current: element }))
+    await flush()
+    expect(native.invoke).toHaveBeenCalledExactlyOnceWith('start_pet_mouse_stream')
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[pet] PET_INPUT_LISTEN_FAILED:', error)
+  })
+
+  it('waits for remaining subscriptions after failures and reports each failure', async () => {
     const pending = deferred<() => void>()
+    const movedError = new Error('moved registration failed')
+    const resizedError = new Error('resized registration failed')
+    native.moved.mockRejectedValue(movedError)
+    native.resized.mockRejectedValue(resizedError)
+    native.listen.mockImplementation((name, handler) => name === 'device-mouse-move' ? pending.promise : subscribe(name, handler))
+    renderHook(() => useOmitIgnoreCursorEvents({ current: element }))
+    await flush()
+    expect(native.invoke).not.toHaveBeenCalledWith('start_pet_mouse_stream')
+    await act(async () => {
+      pending.resolve(vi.fn())
+    })
+    expect(native.invoke).toHaveBeenCalledExactlyOnceWith('start_pet_mouse_stream')
+    expect(console.warn).toHaveBeenCalledTimes(2)
+    expect(console.warn).toHaveBeenCalledWith('[pet] PET_INPUT_LISTEN_FAILED:', movedError)
+    expect(console.warn).toHaveBeenCalledWith('[pet] PET_INPUT_LISTEN_FAILED:', resizedError)
+  })
+
+  it('reports stream startup failures separately from subscription failures', async () => {
+    const error = new Error('stream startup failed')
+    native.invoke.mockRejectedValue(error)
+    renderHook(() => useOmitIgnoreCursorEvents({ current: element }))
+    await flush()
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith('[pet] PET_INPUT_STREAM_FAILED:', error)
+  })
+
+  it.each([false, true])('does not start the stream after unmount with failed registration: %s', async (failed) => {
+    const pending = deferred<() => void>()
+    if (failed)
+      native.resized.mockRejectedValue(new Error('registration failed'))
     native.listen.mockImplementation((name, handler) => name === 'device-mouse-move' ? pending.promise : subscribe(name, handler))
     const { unmount } = renderHook(() => useOmitIgnoreCursorEvents({ current: element }))
     await flush()
