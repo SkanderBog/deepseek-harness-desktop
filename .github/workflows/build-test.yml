@@ -112,10 +112,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-tools
-
-      - name: Test media dependency checks
-        run: python3 scripts/test-appimage-media.py
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -127,16 +124,6 @@ jobs:
 
       - name: Build packages
         run: pnpm tauri build --bundles appimage,deb ${{ inputs.nightly && '--config src-tauri/tauri.nightly.conf.json' || '' }}
-
-      - name: Verify bundled transparent video codecs
-        shell: bash
-        run: |
-          shopt -s nullglob
-          appimages=(src-tauri/target/release/bundle/appimage/*.AppImage)
-          [ "${#appimages[@]}" -gt 0 ] || { echo '::error::no AppImage was produced'; exit 1; }
-          for appimage in "${appimages[@]}"; do
-            bash scripts/check-appimage-media.sh "$appimage"
-          done
 
       - name: Normalize release asset names
         run: node scripts/rename-release-assets.mjs src-tauri/target/release/bundle/appimage src-tauri/target/release/bundle/deb

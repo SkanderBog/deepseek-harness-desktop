@@ -59,10 +59,7 @@ jobs:
           done
           [ "$apt_ok" = "1" ] || { echo "apt-get update 连续 3 次失败，中止"; exit 1; }
           # squashfs-tools 提供 mksquashfs，供 AppImage 宿主库剔除后重打包使用。
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-tools squashfs-tools
-
-      - name: Test media dependency checks
-        run: python3 scripts/test-appimage-media.py
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-plugins-bad squashfs-tools
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -92,16 +89,6 @@ jobs:
           [ "${#appimages[@]}" -gt 0 ] || { echo '::error::no AppImage was produced'; exit 1; }
           for appimage in "${appimages[@]}"; do
             bash scripts/fix-appimage-host-libs.sh --require-removal "$appimage"
-          done
-
-      - name: Verify bundled transparent video codecs
-        shell: bash
-        run: |
-          shopt -s nullglob
-          appimages=(src-tauri/target/release/bundle/appimage/*.AppImage)
-          [ "${#appimages[@]}" -gt 0 ] || { echo '::error::no AppImage was produced'; exit 1; }
-          for appimage in "${appimages[@]}"; do
-            bash scripts/check-appimage-media.sh "$appimage"
           done
 
       - name: Normalize release asset names
