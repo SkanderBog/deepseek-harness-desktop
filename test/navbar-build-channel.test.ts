@@ -48,6 +48,7 @@ const UPDATE_INFO = {
 }
 const getAppIdentifier = vi.fn<() => Promise<string>>()
 const openExternalUrl = vi.fn()
+const checkDesktopUpdate = vi.fn()
 let client: QueryClient
 let i18n: I18n
 
@@ -76,12 +77,15 @@ beforeEach(async () => {
   desktopUpdater.updateInfo = null
   getAppIdentifier.mockReset().mockResolvedValue('dsh-tauri')
   openExternalUrl.mockReset()
+  checkDesktopUpdate.mockReset().mockResolvedValue(null)
   mockWindows('main')
   mockIPC((command, args) => {
     if (command === 'plugin:app|identifier')
       return getAppIdentifier()
     if (command === 'open_external_url')
       return openExternalUrl(args)
+    if (command === 'check_desktop_update')
+      return checkDesktopUpdate()
     if (command === 'get_dsh_plugins')
       return []
     if (command === 'plugin:window|is_maximized')
@@ -102,9 +106,45 @@ afterEach(async () => {
 })
 
 describe('navbar build channel', () => {
+  it.each(['dsh-tauri', 'dsh-tauri-nightly'])('waits for a pending identifier before checking updates for %s', async (identifier) => {
+    const pending = Promise.withResolvers<string>()
+    getAppIdentifier.mockReturnValue(pending.promise)
+    const check = checkDesktopUpdate
+    renderNavbar()
+    fireEvent.click(await screen.findByTestId('dsh-navbar-menu-help'))
+    fireEvent.click(await screen.findByTestId('dsh-navbar-item-check-update'))
+    expect(check).not.toHaveBeenCalled()
+    expect(openExternalUrl).not.toHaveBeenCalled()
+
+    await act(async () => pending.resolve(identifier))
+    if (identifier === 'dsh-tauri-nightly') {
+      await waitFor(() => expect(openExternalUrl).toHaveBeenCalledOnce())
+      expect(check).not.toHaveBeenCalled()
+    }
+    else {
+      await waitFor(() => expect(check).toHaveBeenCalledOnce())
+      expect(openExternalUrl).not.toHaveBeenCalled()
+    }
+    expect(getAppIdentifier).toHaveBeenCalledOnce()
+  })
+
+  it('does not guess the update channel when a pending identifier lookup fails', async () => {
+    const pending = Promise.withResolvers<string>()
+    getAppIdentifier.mockReturnValue(pending.promise)
+    const check = checkDesktopUpdate
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    renderNavbar()
+    fireEvent.click(await screen.findByTestId('dsh-navbar-menu-help'))
+    fireEvent.click(await screen.findByTestId('dsh-navbar-item-check-update'))
+    await act(async () => pending.reject(new Error('IDENTIFIER_FAILED')))
+    await waitFor(() => expect(warning).toHaveBeenCalledWith('[Navbar] check update failed:', expect.any(Error)))
+    expect(check).not.toHaveBeenCalled()
+    expect(openExternalUrl).not.toHaveBeenCalled()
+  })
+
   it('opens the nightly release page instead of checking for a stable installer', async () => {
     getAppIdentifier.mockResolvedValue('dsh-tauri-nightly')
-    const check = vi.spyOn(desktopUpdater, 'check').mockResolvedValue(null)
+    const check = checkDesktopUpdate
     await client.prefetchQuery({ queryKey: queryKeys.appIdentifier, queryFn: getIdentifier })
     renderNavbar()
     fireEvent.click(await screen.findByTestId('dsh-navbar-menu-help'))
