@@ -5,9 +5,9 @@ export interface DesktopUpdateInfo {
   /** 当前已安装版本号（无 v 前缀） */
   currentVersion: string
   tag: string
-  publishedAt: string
+  published_at: string
   url: string
-  assetName: string
+  asset_name: string
   path: string
   downloaded: boolean
 }

@@ -40,9 +40,9 @@ const UPDATE_INFO = {
   version: '0.23.0',
   currentVersion: '0.22.4',
   tag: 'v0.23.0',
-  publishedAt: '2026-10-08T00:00:00Z',
+  published_at: '2026-10-08T00:00:00Z',
   url: 'https://example.invalid/update.exe',
-  assetName: 'update.exe',
+  asset_name: 'update.exe',
   path: '',
   downloaded: false,
 }
