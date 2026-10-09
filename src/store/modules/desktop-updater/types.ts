@@ -5,9 +5,9 @@ export interface DesktopUpdateInfo {
   /** 当前已安装版本号（无 v 前缀） */
   currentVersion: string
   tag: string
-  published_at: string
+  publishedAt: string
   url: string
-  asset_name: string
+  assetName: string
   path: string
   downloaded: boolean
 }
@@ -24,8 +24,8 @@ export interface DesktopDownloadProgress {
 /** Rust 侧 get_desktop_about 返回的关于信息 */
 export interface DesktopAboutInfo {
   version: string
-  published_at: string
+  publishedAt: string
   copyright: string
   repo: string
-  powered_by: string
+  poweredBy: string
 }
