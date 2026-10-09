@@ -407,6 +407,10 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
   /** 「检查更新」：先检查，有更新才弹框；检查失败提示错误而非「已是最新」 */
   async function handleCheckUpdate() {
     try {
+      if (isNightly) {
+        await invoke('open_external_url', { url: 'https://github.com/dsh-tauri/deepseek-harness-desktop/releases/tag/nightly' })
+        return
+      }
       const info = await store.desktopUpdater.check()
       if (info)
         handleOpenUpdateDialog()

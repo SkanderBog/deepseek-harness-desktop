@@ -47,6 +47,7 @@ const UPDATE_INFO = {
   downloaded: false,
 }
 const getAppIdentifier = vi.fn<() => Promise<string>>()
+const openExternalUrl = vi.fn()
 let client: QueryClient
 let i18n: I18n
 
@@ -63,6 +64,7 @@ function renderNavbar() {
 }
 
 beforeEach(async () => {
+  vi.stubGlobal('CSS', { escape: (value: string) => value.replace(/[^\w-]/g, character => `\\${character}`) })
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   i18n = createInstance()
   await i18n.init({
@@ -73,10 +75,13 @@ beforeEach(async () => {
   })
   desktopUpdater.updateInfo = null
   getAppIdentifier.mockReset().mockResolvedValue('dsh-tauri')
+  openExternalUrl.mockReset()
   mockWindows('main')
-  mockIPC((command) => {
+  mockIPC((command, args) => {
     if (command === 'plugin:app|identifier')
       return getAppIdentifier()
+    if (command === 'open_external_url')
+      return openExternalUrl(args)
     if (command === 'get_dsh_plugins')
       return []
     if (command === 'plugin:window|is_maximized')
@@ -92,10 +97,23 @@ afterEach(async () => {
   client.clear()
   desktopUpdater.updateInfo = null
   clearMocks()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
 describe('navbar build channel', () => {
+  it('opens the nightly release page instead of checking for a stable installer', async () => {
+    getAppIdentifier.mockResolvedValue('dsh-tauri-nightly')
+    const check = vi.spyOn(desktopUpdater, 'check').mockResolvedValue(null)
+    await client.prefetchQuery({ queryKey: queryKeys.appIdentifier, queryFn: getIdentifier })
+    renderNavbar()
+    fireEvent.click(await screen.findByTestId('dsh-navbar-menu-help'))
+    fireEvent.click(await screen.findByTestId('dsh-navbar-item-check-update'))
+    await waitFor(() => expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith({ url: 'https://github.com/dsh-tauri/deepseek-harness-desktop/releases/tag/nightly' }))
+    expect(check).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('navbar-test-update-dialog')).toBeNull()
+  })
+
   it.each([
     { language: 'zh-CN', label: '夜间构建版本', updateLabel: '更新可用', updateInfo: null },
     { language: 'zh-CN', label: '夜间构建版本', updateLabel: '更新可用', updateInfo: UPDATE_INFO },
