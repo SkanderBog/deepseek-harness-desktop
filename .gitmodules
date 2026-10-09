@@ -37,3 +37,12 @@
 [submodule "source/tauri-plugin-notifications"]
 	path = source/tauri-plugin-notifications
 	url = https://github.com/Choochmeque/tauri-plugin-notifications
+[submodule "soruce/dsh-tui"]
+	path = soruce/dsh-tui
+	url = https://github.com/ccch1mneyyy/dsh-TUI.git
+[submodule "soruce/relay-dsh-plugin-codex"]
+	path = soruce/relay-dsh-plugin-codex
+	url = https://github.com/yangbobo2021/relay-dsh-plugin-codex.git
+[submodule "soruce/relay-dsh-plugin-claude"]
+	path = soruce/relay-dsh-plugin-claude
+	url = https://github.com/yangbobo2021/relay-dsh-plugin-claude.git
