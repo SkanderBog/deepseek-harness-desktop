@@ -17,7 +17,7 @@ export function DesktopUpdateDialog(props: DesktopUpdateDialogProps) {
   const { t } = useTranslation()
   const { updateInfo, downloading, downloadProgress } = useStore(store.desktopUpdater)
 
-  // 5. 使用 useMutation 封装安装流程
+  // 5. 使用 useMutation 封装安装流程 (Mutations)
   const { mutate: handlePrimary, isPending: openingInstaller } = useMutation({
     mutationFn: () => store.desktopUpdater.downloadAndOpen(),
     onSuccess: (opened) => {
