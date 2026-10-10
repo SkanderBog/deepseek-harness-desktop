@@ -16,6 +16,11 @@ export async function loadSchedulerRuntimeModules(loader: PlatformModuleLoader):
   }
 }
 
+export async function loadSchedulerMessageFactory(loader: PlatformModuleLoader): Promise<SchedulerRuntimeModules['createUserMessage']> {
+  const llm = await loader.import('@deepseek-ai/dsh-llm')
+  return resolveRuntimeExport(loader, llm, 'createUserMessage')
+}
+
 export function resolveSetupAgent(
   agentCtx: unknown,
   createdAgent?: SetupAgentLike,
