@@ -13,6 +13,7 @@ import { recovery } from './recovery'
 import { task } from './task'
 
 const SCHEDULER_MAX_CONCURRENT_RUNS = 4
+const DELIVERY_RETRY_DELAY_MS = 30_000
 
 export const scheduler = defineService({
   start(tickMs: number): () => Promise<void> {
@@ -20,13 +21,21 @@ export const scheduler = defineService({
     const ctx = getServerContext<HostContext>(server)
     const stopActivity = ctx.on?.('workspace/session-activity', sessionActivity)
     const stopSession = ctx.on?.('workspace/session-stop', sessionStop)
+    let tickPending = true
     const recovered = trackAccepted(background(async () => {
       await recovery.recover()
       if (!runtime.stopping)
         await scheduler.tick()
-    }).catch((error: unknown) => warn('recover interrupted runs failed', error)))
+    }).catch((error: unknown) => warn('recover interrupted runs failed', error)).finally(() => {
+      tickPending = false
+    }))
     const timer = setInterval(() => {
-      void recovered.then(() => background(() => scheduler.tick())).catch((error: unknown) => warn('tick failed', error))
+      if (tickPending || runtime.stopping)
+        return
+      tickPending = true
+      void recovered.then(() => background(() => scheduler.tick())).catch((error: unknown) => warn('tick failed', error)).finally(() => {
+        tickPending = false
+      })
     }, tickMs)
     return async () => {
       runtime.stopping = true
@@ -64,6 +73,10 @@ export const scheduler = defineService({
       if (runtime.stopping)
         return
       await repairOccurrences()
+      for (const [id, retryAt] of runtime.failed) {
+        if (retryAt <= Date.now())
+          runtime.failed.delete(id)
+      }
       let all = await task.list()
       for (const item of all.filter(item => item.status === 'active' && item.enabled && !item.nextRunAt))
         await task.ensureTarget(item)
@@ -103,6 +116,7 @@ export const scheduler = defineService({
 })
 
 async function repairOccurrences(taskId?: string): Promise<void> {
+  await history.recoverRuns()
   for (const item of await history.journals(taskId)) {
     if (!item.completedAt)
       continue
@@ -134,13 +148,13 @@ async function acceptDelivery(target: SchedulerTask, trigger: RunTrigger, schedu
   try {
     const result = await trackAccepted(accepted)
     if (!result.ok && result.code !== 'delivery_pending' && result.code !== 'delivery_not_due') {
-      runtime.failed.add(target.id)
+      runtime.failed.set(target.id, Date.now() + DELIVERY_RETRY_DELAY_MS)
       warn('this-session delivery failed', result.error)
     }
     return result
   }
   catch (error) {
-    runtime.failed.add(target.id)
+    runtime.failed.set(target.id, Date.now() + DELIVERY_RETRY_DELAY_MS)
     warn('this-session delivery failed', error)
     return { ok: false, error: error instanceof Error ? error.message : String(error), code: 'delivery_failed' }
   }

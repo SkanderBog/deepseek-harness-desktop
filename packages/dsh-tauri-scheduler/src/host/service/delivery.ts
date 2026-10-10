@@ -6,6 +6,7 @@ import { defineService } from 'dsh-tauri'
 import { runtime } from '../config/runtime'
 import { server } from '../server'
 import { loadSchedulerMessageFactory } from '../utils/agent-runtime'
+import { hostOperation } from '../utils/host-operation'
 import { nextFutureOccurrence } from '../utils/occurrence'
 import { sameTaskRecord } from '../utils/task-record'
 import { history } from './history'
@@ -19,7 +20,7 @@ export const delivery = defineService({
     let pending = runtime.pending.get(target.id) ?? (await history.pending(target.id))[0]
     let enqueued = runtime.pending.has(target.id)
     if (pending && !enqueued) {
-      const inspected = await ctx.sessionController.inspect(pending.task.sessionId!)
+      const inspected = await hostOperation(ctx.sessionController.inspect(pending.task.sessionId!))
       enqueued = containsMessage(inspected.events, pending.message.id)
     }
     const snapshot = pending?.task ?? target
@@ -38,7 +39,7 @@ export const delivery = defineService({
     const bound = await task.validateTarget(snapshot)
     if (!bound.ok)
       return bound
-    const resolved = await ctx.sessionController.resolveAgent(snapshot.sessionId!)
+    const resolved = await hostOperation(ctx.sessionController.resolveAgent(snapshot.sessionId!))
     if (!resolved.agent)
       return { ok: false, error: resolved.error?.message ?? '无法恢复目标会话', code: resolved.error?.code ?? 'session_unavailable' }
     const agent = resolved.agent
@@ -81,7 +82,7 @@ export const delivery = defineService({
       agent.followup(pending.message)
     }
     runtime.pending.set(target.id, pending)
-    const flushed = await ctx.sessions.flush(agent.session)
+    const flushed = await hostOperation(ctx.sessions.flush(agent.session))
     if (flushed !== true)
       return { ok: false, error: 'Session persistence did not acknowledge the reminder', code: 'delivery_pending' }
     pending.deliveredAt = new Date().toISOString()

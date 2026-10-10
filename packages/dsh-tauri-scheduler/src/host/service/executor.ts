@@ -15,6 +15,7 @@ import { defineService } from 'dsh-tauri'
 import { join } from 'pathe'
 import { server } from '../server'
 import { loadSchedulerRuntimeModules, resolveSetupAgent } from '../utils/agent-runtime'
+import { hostOperation } from '../utils/host-operation'
 import { applyUnattendedPermission } from '../utils/permission'
 import { decideRunOutcome, isPluginUnloadError, summarizeCollectedRun, waitForTurnStart, watchSessionEvents } from './executor.utils'
 import { runs } from './runs'
@@ -116,7 +117,7 @@ export const executor = defineService({
           result = { status: 'failed', error: { code: 'cancel_convergence_timeout', message: '定时任务取消后未能在安全时限内停止。' } }
         }
         else {
-          const flushed = await (ctx.sessions as { flush: (session: unknown) => Promise<unknown> }).flush(handle.agent.session)
+          const flushed = await hostOperation((ctx.sessions as { flush: (session: unknown) => Promise<unknown> }).flush(handle.agent.session))
           if (flushed === false)
             throw new Error('定时任务会话日志保存失败。')
           const outcome = summarizeCollectedRun(watched?.events ?? [], handle.agent.session, firstSeq)

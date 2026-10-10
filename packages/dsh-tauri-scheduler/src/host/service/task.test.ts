@@ -72,6 +72,17 @@ afterEach(() => {
 })
 
 describe('unified task storage and update', () => {
+  it('allows pausing and renaming an archived binding but rejects enabling it', async () => {
+    const bound = { ...current, delivery: 'this-session', sessionId: 'owner', permission: undefined, enabled: true }
+    state.set('tasks', { version: 2, tasks: [bound] })
+    host.workspaceRegistry.archivedSessionIds.push('owner')
+    expect(await task.toggle(current.id, false)).toMatchObject({ ok: true, task: { enabled: false } })
+    expect(await task.update(current.id, { name: 'renamed' })).toMatchObject({ ok: true, task: { name: 'renamed', sessionId: 'owner', nextRunAt: current.nextRunAt } })
+    expect(await task.toggle(current.id, true)).toMatchObject({ ok: false, code: 'session_archived' })
+    host.inspect.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 'session/not-found' }))
+    expect(await task.update(current.id, { sessionId: 'missing' })).toMatchObject({ ok: false, code: 'session_not_found' })
+  })
+
   it('reads legacy records as new-session active without losing protocol fields', async () => {
     const { delivery: _delivery, status: _status, ...legacy } = current
     state.set('tasks', { version: 1, tasks: [legacy] })

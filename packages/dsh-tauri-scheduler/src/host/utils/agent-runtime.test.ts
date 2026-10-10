@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { loadSchedulerRuntimeModules, resolveSetupAgent } from './agent-runtime'
+import { isSessionNotFound, loadSchedulerRuntimeModules, resolveSetupAgent } from './agent-runtime'
 
 describe('loadSchedulerRuntimeModules', () => {
   it('resolves DSH-owned modules through the platform loader', async () => {
@@ -67,5 +67,24 @@ describe('resolveSetupAgent', () => {
   it('returns undefined when neither the parameter nor the context entry carries an Agent', () => {
     expect(resolveSetupAgent(undefined)).toBeUndefined()
     expect(resolveSetupAgent({})).toBeUndefined()
+  })
+})
+
+describe('isSessionNotFound', () => {
+  it('recognizes the runtime constructor without treating unrelated read errors as missing', async () => {
+    class ApiSessionNotFound extends Error {}
+    const loader = { import: vi.fn(async () => ({ ApiSessionNotFound })), unwrapExports: (value: unknown) => value }
+    expect(await isSessionNotFound(loader, new ApiSessionNotFound('missing'))).toBe(true)
+    expect(loader.import).toHaveBeenCalledWith('@deepseek-ai/dsh-api-session-controller')
+    expect(await isSessionNotFound(loader, new Error('missing'))).toBe(false)
+    expect(await isSessionNotFound(loader, { code: 'session/not-found' })).toBe(true)
+  })
+
+  it('supports wrapped runtime exports and unavailable loaders', async () => {
+    class ApiSessionNotFound extends Error {}
+    const loader = { import: vi.fn(async () => ({})), unwrapExports: () => ({ ApiSessionNotFound }) }
+    expect(await isSessionNotFound(loader, new ApiSessionNotFound())).toBe(true)
+    loader.import.mockRejectedValueOnce(new Error('module unavailable'))
+    expect(await isSessionNotFound(loader, new Error('read failed'))).toBe(false)
   })
 })

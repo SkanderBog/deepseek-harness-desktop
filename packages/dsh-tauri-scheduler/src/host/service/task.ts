@@ -6,6 +6,8 @@ import { isEqual } from 'lodash-es'
 import { runtime, withTaskQueue, withWriteQueue } from '../config/runtime'
 import { server } from '../server'
 import { storage } from '../storage'
+import { isSessionNotFound } from '../utils/agent-runtime'
+import { hostOperation } from '../utils/host-operation'
 import { localTimeZone, nextOccurrence, validateSchedule } from '../utils/schedule'
 import { sameTaskRecord } from '../utils/task-record'
 
@@ -76,9 +78,12 @@ export const task = defineService({
       const invalid = validateInput(merged)
       if (invalid !== null)
         return { ok: false, error: invalid, code: 'task_invalid' }
-      const bound = await validateBinding(merged, merged.sessionId, initiator?.session.id)
-      if (!bound.ok)
-        return bound
+      const metadataOnly = Object.entries(definedPatch).every(([key, value]) => key === 'name' || (key === 'enabled' && value === false) || isEqual(value, current[key as keyof SchedulerTask]))
+      if (!metadataOnly || (initiator && merged.sessionId !== initiator.session.id)) {
+        const bound = await validateBinding(merged, merged.sessionId, initiator?.session.id)
+        if (!bound.ok)
+          return bound
+      }
       const rebuilt = build(merged)
       runtime.failed.delete(id)
       const updated: SchedulerTask = {
@@ -262,7 +267,7 @@ async function validateBinding(input: Pick<TaskInput, 'delivery' | 'sessionId' |
   if (ctx.workspaceRegistry.archivedSessionIds.includes(sessionId))
     return { ok: false, error: '目标会话已归档', code: 'session_archived' }
   try {
-    const inspected = await ctx.sessionController.inspect(sessionId)
+    const inspected = await hostOperation(ctx.sessionController.inspect(sessionId))
     if (inspected?.meta?.id !== sessionId)
       return { ok: false, error: '目标会话不存在', code: 'session_not_found' }
     if (inspected.meta.origin === 'subagent' || (inspected.meta.delegationDepth ?? 0) > 0)
@@ -272,8 +277,7 @@ async function validateBinding(input: Pick<TaskInput, 'delivery' | 'sessionId' |
     return { ok: true }
   }
   catch (error) {
-    const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
-    return code === 'session/not-found'
+    return await isSessionNotFound(ctx.loader, error)
       ? { ok: false, error: '目标会话不存在', code: 'session_not_found' }
       : { ok: false, error: '宿主无法读取目标会话', code: 'session_unavailable' }
   }

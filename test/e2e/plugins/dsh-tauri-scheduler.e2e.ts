@@ -381,7 +381,7 @@ describe('L2 宿主路由', () => {
       body: JSON.stringify({ id: 'task-missing' }),
     })
     expect(notFound.status, '任务不存在必须 400，而不是 500（服务内部抛错）').toBe(400)
-    expect(await notFound.json() as ActionResultPayload, '不存在文案必须逐字相等且与缺参可区分').toEqual({ error: '任务不存在' })
+    expect(await notFound.json() as ActionResultPayload, '不存在文案必须逐字相等且与缺参可区分').toEqual({ ok: false, error: '任务不存在', code: 'task_not_found' })
 
     expect(await readTasks(), '被拒绝的删除不得改动清单').toEqual([])
   })

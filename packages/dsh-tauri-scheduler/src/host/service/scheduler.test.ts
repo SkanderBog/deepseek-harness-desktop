@@ -175,6 +175,130 @@ afterEach(async () => {
 })
 
 describe('this-session scheduled delivery', () => {
+  it('coalesces timer ticks while recovery or delivery is still pending', async () => {
+    const releases: Array<() => void> = []
+    const tick = vi.spyOn(scheduler, 'tick').mockImplementation(() => new Promise<void>((resolve) => {
+      releases.push(resolve)
+    }))
+    const stop = scheduler.start(1000)
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      releases[0]!()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(tick).toHaveBeenCalledTimes(2)
+    }
+    finally {
+      releases.forEach(resolve => resolve())
+      tick.mockRestore()
+      await stop()
+    }
+  })
+
+  it('times out a stalled lookup and ignores its late result before retrying', async () => {
+    seed(fixture)
+    let release = () => {}
+    host.resolveAgent.mockImplementationOnce(() => new Promise((resolve) => {
+      release = () => resolve({ agent: host.boundAgent })
+    }))
+    const first = scheduler.tick()
+    await vi.advanceTimersByTimeAsync(30_000)
+    const finished = vi.fn()
+    void first.then(finished)
+    await vi.advanceTimersByTimeAsync(0)
+    try {
+      expect(finished).toHaveBeenCalledTimes(1)
+      expect(host.followup).not.toHaveBeenCalled()
+    }
+    finally {
+      release()
+      await first
+    }
+    await vi.advanceTimersByTimeAsync(30_000)
+    await scheduler.tick()
+    expect(host.followup).toHaveBeenCalledTimes(1)
+  })
+
+  it('retains the message identity after a stalled flush and allows shutdown', async () => {
+    seed(fixture)
+    let release = () => {}
+    host.flush.mockImplementationOnce(() => new Promise((resolve) => {
+      release = () => resolve(true)
+    }))
+    const first = scheduler.tick()
+    await vi.advanceTimersByTimeAsync(30_000)
+    const finished = vi.fn()
+    void first.then(finished)
+    await vi.advanceTimersByTimeAsync(0)
+    try {
+      expect(finished).toHaveBeenCalledTimes(1)
+      expect(await history.pending()).toHaveLength(1)
+      await scheduler.stop()
+      runtime.stopping = false
+    }
+    finally {
+      release()
+      await first
+    }
+    await vi.advanceTimersByTimeAsync(30_000)
+    await scheduler.tick()
+    expect(host.followup).toHaveBeenCalledTimes(1)
+    expect(await task.get(fixture.id)).toMatchObject({ status: 'inactive' })
+  })
+
+  it('settles a new-session run when its final flush stalls', async () => {
+    seed(newTask())
+    let release = () => {}
+    host.flush.mockImplementationOnce(() => new Promise((resolve) => {
+      release = () => resolve(true)
+    }))
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(30_000)
+    try {
+      expect(runtime.running.size).toBe(0)
+      expect(await task.get('new-task')).toMatchObject({ status: 'inactive' })
+      expect(await history.query({ taskId: 'new-task', limit: 10 })).toMatchObject({ ok: true, records: [{ status: 'failed' }] })
+    }
+    finally {
+      release()
+      await vi.advanceTimersByTimeAsync(0)
+    }
+  })
+
+  it('retries a transient lookup failure without restarting the scheduler', async () => {
+    seed(fixture)
+    host.resolveAgent.mockRejectedValueOnce(new Error('temporary lookup failure'))
+    await scheduler.tick()
+    expect(host.followup).not.toHaveBeenCalled()
+    await scheduler.tick()
+    expect(host.resolveAgent).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(30_000)
+    await scheduler.tick()
+    expect(host.followup).toHaveBeenCalledTimes(1)
+    expect(await task.get(fixture.id)).toMatchObject({ status: 'inactive' })
+  })
+
+  it('repairs a run whose terminal writes failed without executing its occurrence twice', async () => {
+    seed(newTask())
+    let failTerminal = true
+    vi.mocked(storage.setItem).mockImplementation(async (key, value) => {
+      const decoded = typeof value === 'string' ? JSON.parse(value) : structuredClone(value)
+      if (key === 'history' && failTerminal && JSON.stringify(decoded).includes('"finishedAt"'))
+        throw new Error('terminal writes unavailable')
+      state.set(key, decoded)
+    })
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(host.create).toHaveBeenCalledTimes(1)
+    expect(runtime.running.size).toBe(0)
+    expect(await history.journals()).toHaveLength(1)
+    failTerminal = false
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(host.create).toHaveBeenCalledTimes(1)
+    expect(await task.get('new-task')).toMatchObject({ status: 'inactive' })
+    expect(await history.query({ taskId: 'new-task', limit: 10 })).toMatchObject({ ok: true, records: [{ status: 'interrupted' }] })
+  })
+
   it('restores a cold bound session and records only a durable receipt, not execution success', async () => {
     seed(fixture)
     await scheduler.tick()

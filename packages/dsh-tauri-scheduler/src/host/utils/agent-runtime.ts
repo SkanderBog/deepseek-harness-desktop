@@ -21,6 +21,21 @@ export async function loadSchedulerMessageFactory(loader: PlatformModuleLoader):
   return resolveRuntimeExport(loader, llm, 'createUserMessage')
 }
 
+export async function isSessionNotFound(loader: PlatformModuleLoader, error: unknown): Promise<boolean> {
+  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'session/not-found')
+    return true
+  try {
+    const exported = await loader.import('@deepseek-ai/dsh-api-session-controller')
+    const direct = exported as { ApiSessionNotFound?: unknown } | null
+    const unwrapped = loader.unwrapExports(exported) as { ApiSessionNotFound?: unknown } | null
+    const missing = direct?.ApiSessionNotFound ?? unwrapped?.ApiSessionNotFound
+    return typeof missing === 'function' && error instanceof missing
+  }
+  catch {
+    return false
+  }
+}
+
 export function resolveSetupAgent(
   agentCtx: unknown,
   createdAgent?: SetupAgentLike,

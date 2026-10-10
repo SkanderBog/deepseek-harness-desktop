@@ -8,7 +8,7 @@ export const runtime = {
   running: new Set<string>(),
   accepted: new Set<Promise<unknown>>(),
   pending: new Map<string, PendingDelivery>(),
-  failed: new Set<string>(),
+  failed: new Map<string, number>(),
 }
 
 export function withWriteQueue<T>(fn: () => T | Promise<T>): Promise<T> {
