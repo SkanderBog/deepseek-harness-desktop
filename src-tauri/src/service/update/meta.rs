@@ -332,7 +332,10 @@ async fn fetch_listed_stable_candidates(
 }
 
 /// 拉取某个 release 的 tag 页面并解析发布时间（解析不出来返回 `None`，不阻断更新检查）。
-async fn fetch_tag_published_at(app_handle: &tauri::AppHandle, tag: &str) -> Result<Option<String>, String> {
+pub(super) async fn fetch_tag_published_at(
+    app_handle: &tauri::AppHandle,
+    tag: &str,
+) -> Result<Option<String>, String> {
     let body = http_client(app_handle)?
         .get(format!("{REPO_URL}/releases/tag/{tag}"))
         .send()
@@ -454,31 +457,6 @@ async fn fetch_release_assets(
         asset_name,
         digest,
     }))
-}
-
-/// 最新**正式版**的发布时间（关于对话框的「发布日期」）。
-///
-/// feed 里混着 pre-release（rc/夜间版）且会被夜间版占满，直接取首条会把夜间版的构建
-/// 时间当成正式版发布时间，因此必须先按 [`super::version::is_stable`] 过滤再取。
-///
-/// 窗口被夜间版占满时 feed 里一条正式版都没有：此时改问 `/releases/latest` 并读它自己的
-/// tag 页面拿发布时间，否则「关于」对话框的发布日期会在整个夜间版周期里一直空着。
-///
-/// 首条正式版自己没带时间时同样补读它的 tag 页面：顺着列表往下找会显示更旧版本的日期。
-pub(super) async fn fetch_latest_stable_published_at(app_handle: &tauri::AppHandle) -> Result<String, String> {
-    let releases = fetch_releases_meta(app_handle).await?;
-    if let Some((tag, published_at)) = releases.into_iter().find(|(tag, _)| is_stable_tag(tag)) {
-        if !published_at.is_empty() {
-            return Ok(published_at);
-        }
-        return Ok(fetch_tag_published_at(app_handle, &tag).await?.unwrap_or_default());
-    }
-    let Some(tag) = fetch_latest_stable_tag(app_handle).await? else {
-        // 仓库一个正式版都没有：没有发布日期可显示
-        return Ok(String::new());
-    };
-    // 页面结构解析不出来时保持旧行为（空串 → 界面显示 `-`），不把更新检查拖成错误
-    Ok(fetch_tag_published_at(app_handle, &tag).await?.unwrap_or_default())
 }
 
 #[cfg(test)]
