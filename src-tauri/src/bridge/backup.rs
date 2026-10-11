@@ -82,6 +82,8 @@ pub fn list_backups(app_handle: AppHandle) -> Vec<backup::BackupInfo> {
 
 /// 删除指定备份。
 #[tauri::command]
-pub fn delete_backup(app_handle: AppHandle, timestamp: String) -> Result<(), String> {
-    backup::delete_backup(&app_handle, &timestamp)
+pub async fn delete_backup(app_handle: AppHandle, timestamp: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || backup::delete_backup(&app_handle, &timestamp))
+        .await
+        .map_err(|e| format!("BACKUP_DELETE_TASK: {e}"))?
 }

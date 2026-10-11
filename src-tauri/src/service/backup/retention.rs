@@ -39,7 +39,7 @@ pub fn prune_backups_in_dir(
     backups.sort_by(|a, b| {
         let a_ts = a["timestamp"].as_str().unwrap_or("");
         let b_ts = b["timestamp"].as_str().unwrap_or("");
-        a_ts.cmp(b_ts)
+        backup::timestamp_order(a_ts).cmp(&backup::timestamp_order(b_ts))
     });
     let remove_count = backups.len() - retention_count as usize;
     // 收集要删除的条目（保留完整 JSON 以获取 path），然后从清单移除
@@ -148,6 +148,48 @@ mod tests {
             .iter()
             .filter_map(|v| v["timestamp"].as_str().map(String::from))
             .collect()
+    }
+
+    #[test]
+    fn retention_keeps_latest_numeric_suffixes_within_the_same_second() {
+        let dir = setup_fake_backups(0);
+        let timestamps = [
+            "20261011093345-9",
+            "20261011093345-10",
+            "20261011093345-2",
+            "20261011093345-11",
+            "20261011093345",
+            "20261011093346",
+        ];
+        let entries: Vec<_> = timestamps
+            .iter()
+            .map(|timestamp| {
+                let path = dir.join(format!("web-{timestamp}.tar.zst"));
+                fs::write(&path, timestamp).unwrap();
+                serde_json::json!({"timestamp": timestamp, "path": path, "profile": "web"})
+            })
+            .collect();
+        fs::write(
+            dir.join(".manifest.json"),
+            serde_json::to_vec(&serde_json::json!({"backups": entries})).unwrap(),
+        )
+        .unwrap();
+
+        prune_backups_in_dir(&dir, 3).unwrap();
+
+        assert_eq!(
+            read_manifest_backups(&dir),
+            ["20261011093345-10", "20261011093345-11", "20261011093346"]
+        );
+        for timestamp in &timestamps[..] {
+            let exists = dir.join(format!("web-{timestamp}.tar.zst")).exists();
+            assert_eq!(
+                exists,
+                ["20261011093345-10", "20261011093345-11", "20261011093346"].contains(timestamp),
+                "{timestamp}"
+            );
+        }
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -151,38 +151,65 @@ fn now_timestamp() -> String {
     )
 }
 
-/// 生成碰撞安全的时间戳：同名归档已存在时追加 `-2`、`-3`… 直到空闲。
-///
-/// 时间戳同时是文件名主体、清单键和 IPC 键，三者必须一致；早期实现只给文件名
-/// 加后缀、`BackupInfo.timestamp` 保持原值，导致还原 / 删除按时间戳拼出的文件名
-/// 指向另一份备份。
-fn collision_safe_timestamp(backup_dir: &Path, profile: &str, timestamp: &str) -> String {
-    let mut candidate = timestamp.to_string();
-    let mut counter = 1;
-    while backup_dir
-        .join(archive_filename(profile, &candidate))
-        .exists()
-    {
-        counter += 1;
-        candidate = format!("{timestamp}-{counter}");
+fn timestamp_order(timestamp: &str) -> (&str, u64) {
+    match timestamp.rsplit_once('-') {
+        Some((base, suffix)) if base.len() == 14 && base.bytes().all(|b| b.is_ascii_digit()) => {
+            match suffix.parse() {
+                Ok(sequence) => (base, sequence),
+                Err(_) => (timestamp, 1),
+            }
+        }
+        _ => (timestamp, 1),
     }
-    candidate
 }
+
+fn collision_safe_timestamp(backup_dir: &Path, timestamp: &str) -> Result<String, String> {
+    let marker = format!("-{timestamp}");
+    let mut latest = 0_u64;
+    for entry in fs::read_dir(backup_dir).map_err(|e| format!("BACKUP_READDIR: {e}"))? {
+        let name = entry.map_err(|e| format!("BACKUP_ENTRY: {e}"))?.file_name();
+        let Some(stem) = name.to_str().and_then(|name| name.strip_suffix(".tar.zst")) else {
+            continue;
+        };
+        let Some((_, suffix)) = stem.rsplit_once(&marker) else {
+            continue;
+        };
+        let sequence = if suffix.is_empty() {
+            1
+        } else if let Some(sequence) = suffix
+            .strip_prefix('-')
+            .and_then(|value| value.parse::<u64>().ok())
+        {
+            sequence
+        } else {
+            continue;
+        };
+        latest = latest.max(sequence);
+    }
+    if latest == 0 {
+        return Ok(timestamp.to_string());
+    }
+    let next = latest.checked_add(1).ok_or("BACKUP_SEQUENCE_EXHAUSTED")?;
+    Ok(format!("{timestamp}-{next}"))
+}
+
+// 同一进程的创建、裁剪、删除和还原共用清单与归档，必须串行完成。
+static BACKUP_OPERATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// 创建备份。
 ///
 /// 只备份当前激活的 profile（不是整个 $DSH_HOME），
 /// 输出到 `$DSH_HOME/.backups/{profile}-{yyyymmddhhmmss}.tar.zst`，更新清单，并按保留份数裁剪。
-pub fn create_backup(
-    app_handle: &AppHandle,
-    options: BackupOptions,
-) -> Result<BackupInfo, String> {
+pub fn create_backup(app_handle: &AppHandle, options: BackupOptions) -> Result<BackupInfo, String> {
+    let _operation = BACKUP_OPERATION
+        .lock()
+        .map_err(|e| format!("BACKUP_LOCK: {e}"))?;
     let backup_dir = get_backup_dir(app_handle);
     // 只备份当前激活的 profile 目录（其他 profile 不参与备份）
     let active = crate::service::profile::active_profile(app_handle);
     let source = crate::service::profile::profile_dir_of(app_handle, &active);
     // 碰撞安全：同名文件已存在时追加 -2、-3…
-    let timestamp = collision_safe_timestamp(&backup_dir, &active, &now_timestamp());
+    let timestamp = collision_safe_timestamp(&backup_dir, &now_timestamp())?;
     let dest = backup_dir.join(archive_filename(&active, &timestamp));
 
     if let Err(e) = archive::create_archive(&source, &dest, options.include_credentials) {
@@ -250,6 +277,9 @@ pub fn list_backups(app_handle: &AppHandle) -> Vec<BackupInfo> {
 /// `timestamp` 会经过 `fs_guard::validate_id` 校验，防路径穿越。
 pub fn delete_backup(app_handle: &AppHandle, timestamp: &str) -> Result<(), String> {
     crate::service::fs_guard::validate_id(timestamp)?;
+    let _operation = BACKUP_OPERATION
+        .lock()
+        .map_err(|e| format!("BACKUP_LOCK: {e}"))?;
     let backup_dir = get_backup_dir(app_handle);
     let active = crate::service::profile::active_profile(app_handle);
     let filename = archive_filename(&active, timestamp);
@@ -283,6 +313,9 @@ pub fn restore_backup(
     mode: RestoreMode,
 ) -> Result<(), String> {
     crate::service::fs_guard::validate_id(timestamp)?;
+    let _operation = BACKUP_OPERATION
+        .lock()
+        .map_err(|e| format!("BACKUP_LOCK: {e}"))?;
     let backup_dir = get_backup_dir(app_handle);
     let active = crate::service::profile::active_profile(app_handle);
     let filename = archive_filename(&active, timestamp);
@@ -361,7 +394,7 @@ pub fn restore_backup(
 }
 
 /// 按保留份数裁剪旧备份（超出时删除最旧的）。
-pub fn prune_if_needed(app_handle: &AppHandle) -> Result<(), String> {
+fn prune_if_needed(app_handle: &AppHandle) -> Result<(), String> {
     let setting = config::get_store_dat_setting(app_handle);
     retention::prune_old_backups(app_handle, setting.backup_retention_count)
 }
@@ -388,11 +421,11 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
 
         let base = "2026-10-02T15-24-08";
-        let first = collision_safe_timestamp(&dir, "web", base);
+        let first = collision_safe_timestamp(&dir, base).unwrap();
         assert_eq!(first, base, "无同名文件时应保持原时间戳");
         fs::write(dir.join(archive_filename("web", &first)), b"first").unwrap();
 
-        let second = collision_safe_timestamp(&dir, "web", base);
+        let second = collision_safe_timestamp(&dir, base).unwrap();
         assert_ne!(second, first, "同名归档已存在时必须换一个时间戳");
         assert_eq!(second, format!("{base}-2"));
         assert!(
@@ -401,12 +434,98 @@ mod tests {
         );
         fs::write(dir.join(archive_filename("web", &second)), b"second").unwrap();
         assert_eq!(
-            collision_safe_timestamp(&dir, "web", base),
+            collision_safe_timestamp(&dir, base).unwrap(),
             format!("{base}-3"),
             "再次碰撞应继续递增"
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn collision_timestamp_does_not_reuse_pruned_lower_suffixes() {
+        let dir = std::env::temp_dir().join(format!(
+            "dsh-backup-pruned-collision-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let base = "20261011093345";
+        for suffix in ["-9", "-10", "-12"] {
+            fs::write(
+                dir.join(archive_filename("web", &format!("{base}{suffix}"))),
+                b"retained",
+            )
+            .unwrap();
+        }
+        fs::write(
+            dir.join(archive_filename("other", &format!("{base}-99"))),
+            b"other",
+        )
+        .unwrap();
+        assert_eq!(
+            collision_safe_timestamp(&dir, base).unwrap(),
+            format!("{base}-100")
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn repeated_creation_and_retention_preserve_the_last_two_archives() {
+        let dir =
+            std::env::temp_dir().join(format!("dsh-backup-retention-loop-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        for index in 1..=20 {
+            let timestamp = collision_safe_timestamp(&dir, "20261011093345").unwrap();
+            let profile = if index % 2 == 0 { "web" } else { "tauri" };
+            let path = dir.join(archive_filename(profile, &timestamp));
+            fs::write(&path, index.to_string()).unwrap();
+            let mut manifest = read_manifest(&dir).unwrap();
+            manifest.backups.push(ManifestEntry {
+                timestamp,
+                profile: profile.into(),
+                path: path.to_string_lossy().into_owned(),
+                size: 0,
+                include_credentials: false,
+            });
+            write_manifest(&dir, &manifest).unwrap();
+            retention::prune_backups_in_dir(&dir, 2).unwrap();
+            assert!(path.exists(), "latest archive {index} was pruned");
+        }
+        let manifest = read_manifest(&dir).unwrap();
+        assert_eq!(
+            manifest
+                .backups
+                .iter()
+                .map(|entry| entry.timestamp.as_str())
+                .collect::<Vec<_>>(),
+            ["20261011093345-19", "20261011093345-20"]
+        );
+        assert_eq!(fs::read_to_string(&manifest.backups[0].path).unwrap(), "19");
+        assert_eq!(fs::read_to_string(&manifest.backups[1].path).unwrap(), "20");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn collision_timestamp_rejects_directory_errors_and_sequence_overflow() {
+        let dir = std::env::temp_dir().join(format!(
+            "dsh-backup-collision-errors-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        assert!(collision_safe_timestamp(&dir, "20261011093345")
+            .unwrap_err()
+            .starts_with("BACKUP_READDIR:"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("web-20261011093345-18446744073709551615.tar.zst"),
+            b"keep",
+        )
+        .unwrap();
+        assert_eq!(
+            collision_safe_timestamp(&dir, "20261011093345").unwrap_err(),
+            "BACKUP_SEQUENCE_EXHAUSTED"
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 
     /// 集成测试：create_archive 真实文件系统往返（验证 zstd 多线程在 CI/release 下可用）
