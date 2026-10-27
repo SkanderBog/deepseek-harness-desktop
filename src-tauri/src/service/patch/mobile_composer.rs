@@ -9,8 +9,17 @@ const LEGACY_MOBILE: &str = r#"function isDshMobileComposer() {
 }
 "#;
 /// issue #1128：指针查询在触屏桌面上同样成立，必须叠加与官方布局一致的 1024px 门槛。
-const MOBILE: &str = r#"function isDshMobileComposer() {
+/// 上一版 `MOBILE` 的判据含 `(hover: none)`/`(any-hover: none)`，在 vivo V2353A（Android 14 /
+/// Chrome 116）上恒 false，导致回车换行、跳过自动聚焦、跳过 DOM selection 三项全部静默失效。
+/// 保留原文仅用于升级已经打过上一版补丁的运行时。
+const MOBILE_V1: &str = r#"function isDshMobileComposer() {
     return typeof document !== "undefined" && document.documentElement.hasAttribute("data-dsh-mobile-ui") && typeof window.matchMedia === "function" && window.innerWidth < 1024 && ["(hover: none)", "(any-pointer: coarse)", "(any-hover: none)"].every(query => window.matchMedia(query).matches);
+}
+"#;
+/// issue #1128：指针查询在触屏桌面上同样成立，必须叠加与官方布局一致的 1024px 门槛。
+/// 判据只保留 `pointer` 两条，与前端 `MOBILE_POINTER_QUERIES` 保持一致。
+const MOBILE: &str = r#"function isDshMobileComposer() {
+    return typeof document !== "undefined" && document.documentElement.hasAttribute("data-dsh-mobile-ui") && typeof window.matchMedia === "function" && window.innerWidth < 1024 && ["(pointer: coarse)", "(any-pointer: coarse)"].every(query => window.matchMedia(query).matches);
 }
 "#;
 const KEYMAP: &str = "function registerComposerKeymap(editor, handlers) {";
@@ -26,6 +35,15 @@ const ROOT_PATCHED: &str = "this._updateTags.add(xo), isDshMobileComposer() && t
 fn patch_source(source: &str) -> PatchOutcome {
     if source.contains(MOBILE) && source.contains(MARKER) {
         return PatchOutcome::AlreadyPatched;
+    }
+    if source.matches(MOBILE_V1).count() == 1 {
+        if [ENTER_PATCHED, AUTOFOCUS_PATCHED, ROOT_PATCHED]
+            .iter()
+            .any(|anchor| source.matches(anchor).count() != 1)
+        {
+            return PatchOutcome::AnchorMissing;
+        }
+        return PatchOutcome::Patched(source.replacen(MOBILE_V1, MOBILE, 1));
     }
     if source.contains(LEGACY_MOBILE) {
         let root = if source.contains(MARKER) {
@@ -129,6 +147,34 @@ mod tests {
             patch_source(&legacy.replace(AUTOFOCUS_PATCHED, "")),
             PatchOutcome::AnchorMissing
         );
+    }
+
+    /// 真机回归：上一版判据含 hover 查询，在 vivo V2353A 上恒 false，回车换行/
+    /// 跳过自动聚焦/跳过 DOM selection 三项全部静默失效。
+    #[test]
+    fn drops_hover_queries_from_the_runtime_predicate() {
+        assert!(!MOBILE.contains("(hover: none)"));
+        assert!(!MOBILE.contains("(any-hover: none)"));
+        assert!(MOBILE.contains(
+            r#"["(pointer: coarse)", "(any-pointer: coarse)"].every(query => window.matchMedia(query).matches)"#
+        ));
+    }
+
+    #[test]
+    fn upgrades_the_previous_hover_dependent_patch() {
+        let legacy = fixture()
+            .replacen(KEYMAP, &format!("{MOBILE_V1}{KEYMAP}"), 1)
+            .replacen(ENTER, ENTER_PATCHED, 1)
+            .replacen(AUTOFOCUS, AUTOFOCUS_PATCHED, 1)
+            .replacen(ROOT, ROOT_PATCHED, 1);
+        let PatchOutcome::Patched(result) = patch_source(&legacy) else {
+            panic!("not upgraded")
+        };
+        assert!(result.contains(MOBILE));
+        assert!(!result.contains("(hover: none)"));
+        assert!(result.contains(ROOT_PATCHED));
+        assert_eq!(result.matches("function isDshMobileComposer()").count(), 1);
+        assert_eq!(patch_source(&result), PatchOutcome::AlreadyPatched);
     }
 
     #[test]
