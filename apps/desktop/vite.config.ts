@@ -10,5 +10,9 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    watch: {
+      // Electron distribution is republished by rename during the Rust build.
+      ignored: ['**/src-tauri/**'],
+    },
   },
 })
