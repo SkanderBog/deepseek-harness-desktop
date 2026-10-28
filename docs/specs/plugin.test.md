@@ -48,7 +48,7 @@ test/e2e/
   plugins/*.e2e.ts                 # L2 + C 层用例
   desktop/*.e2e.ts                 # L3 层用例
 docs/specs/plugin.test.md          # 本规范文件
-vitest.plugin.config.ts            # plugin project 配置
+packages/builtin-plugin-config/vitest.config.ts            # plugin project 配置
 
 ```
 
@@ -80,7 +80,7 @@ node node_modules/vitest/vitest.mjs run --project plugin test/e2e/plugins/dsh-ta
 * **显式传递 `run` 参数**：避免 Vitest 在非 CI 环境进入 watch 模式挂起。若通过 npm scripts 执行，需补充 `-- --run`。
 * **单文件过滤**：必须通过位置参数传参。使用 `-- <file>` 会导致参数隔离，引发全车道误执行。
 * **前置依赖**：L2/C 仅针对构建产物运行，需预先执行 `pnpm build:plugins`（构建工具包已排除）。缺失产物或环境未就绪时直接 Fail，禁止提供 skip 开关。
-* **串行保证**：`vitest.plugin.config.ts` 设置 `fileParallelism: false`，保证单实例共享宿主串行执行。
+* **串行保证**：`packages/builtin-plugin-config/vitest.config.ts` 设置 `fileParallelism: false`，保证单实例共享宿主串行执行。
 
 ### 3.2 驱动选型与定位口径
 
@@ -125,7 +125,7 @@ node node_modules/vitest/vitest.mjs run --project plugin test/e2e/plugins/dsh-ta
 * L1 服务注册测试从 `host/server/index.ts` 激活真实 `defineWebServer`，通过 HTTP 验证方法集合、query/body、返回值、实例配置隔离及卸载；业务依赖可以替身，不能替换被测路由。
 * 使用原生 H3/dsh-h3 方法语义：GET 同时允许 HEAD；未注册 OPTIONS 时返回 405，`Allow` 按实际方法集合断言，不要求顺序。不得继续期待旧路由的 OPTIONS 204 或自定义 405 JSON 错误体。
 * 不再存在共享 1 MiB 请求体限制。大请求用实际发送的有效 JSON 验证业务响应，不使用虚假的 Content-Length，也不期待已删除的 413。
-* API 生成测试运行 `genapi.config.ts` 的完整 pipeline 并读取输出文件，验证完整 URL、query/body 参数、响应类型及既有传输导入；仅验证进程退出码或扫描函数名不足以证明生成成功。
+* API 生成测试运行 `packages/builtin-plugin-config/genapi.config.ts` 的完整 pipeline 并读取输出文件，验证完整 URL、query/body 参数、响应类型及既有传输导入；仅验证进程退出码或扫描函数名不足以证明生成成功。
 * L2 保持正常 Cookie 鉴权。独立的载体边界测试必须验证 `gate` 只放行 401、保留 403，插件精确路由的请求安全检查不能因 index 已授权而被绕过。
 
 ### 关键环境变量

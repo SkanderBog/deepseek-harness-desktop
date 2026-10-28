@@ -1,0 +1,27 @@
+{
+  "name": "dsh-desktop",
+  "version": "0.25.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@choochmeque/tauri-plugin-notifications-api": "catalog:",
+    "@tauri-apps/api": "catalog:tauri",
+    "react": "catalog:runtime",
+    "react-dom": "catalog:runtime"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "catalog:tauri",
+    "@tailwindcss/vite": "catalog:build",
+    "@types/react": "catalog:types",
+    "@types/react-dom": "catalog:types",
+    "@vitejs/plugin-react": "catalog:build",
+    "typescript": "catalog:cli",
+    "vite": "catalog:build"
+  }
+}
