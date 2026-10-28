@@ -4,7 +4,7 @@ import { defineStore } from 'dsh-tauri/client'
 import { mergeSyncResults } from './sync.utils'
 
 function initialState(): SyncState {
-  return { status: 'idle', error: null, preview: null, applying: false, results: null }
+  return { status: 'idle', error: null, preview: null, applying: false, machineId: null, results: null }
 }
 
 export const sync = defineStore({
@@ -29,7 +29,10 @@ export const sync = defineStore({
     fail(error: string): void {
       this.error = error
     },
-    beginApply(): void {
+    beginApply(machineId: string | null = null): void {
+      if (this.machineId !== machineId)
+        this.results = null
+      this.machineId = machineId
       this.applying = true
       this.error = null
     },

@@ -168,6 +168,129 @@ describe('syncEngine.apply', () => {
     vi.restoreAllMocks()
   })
 
+  it('rejects a duplicate sync before opening another SSH session', async () => {
+    const session = fakeSession(() => ok())
+    const opening = Promise.withResolvers<RemoteSession>()
+    const connect = vi.fn<() => Promise<RemoteSession>>()
+      .mockImplementationOnce(() => opening.promise)
+      .mockRejectedValue(new Error('duplicate SSH session'))
+    seed({ connect })
+    const pending = sync.apply(machineId, [], [{ name: 'alpha', root: 'dsh' }])
+    try {
+      await expect(sync.apply(machineId, [], [{ name: 'beta', root: 'dsh' }])).rejects.toThrow('sync already running')
+    }
+    finally {
+      opening.resolve(session)
+      await pending
+    }
+    expect(connect).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears preparation progress and permits another sync after SSH open fails', async () => {
+    const session = fakeSession(() => ok())
+    const connect = vi.fn<() => Promise<RemoteSession>>()
+      .mockRejectedValueOnce(new Error('SSH unavailable'))
+      .mockResolvedValue(session)
+    seed({ connect })
+    const progress = vi.spyOn(machine, 'setProgress')
+    await expect(sync.apply(machineId, [], [{ name: 'alpha', root: 'dsh' }])).rejects.toThrow('SSH unavailable')
+    expect(progress).toHaveBeenCalledWith(machineId, { phase: 'syncing', attempt: 0, total: 1 })
+    expect(progress).toHaveBeenLastCalledWith(machineId)
+    await expect(sync.apply(machineId, [], [{ name: 'alpha', root: 'dsh' }])).resolves.toEqual({ items: [] })
+    expect(connect).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the running guard when cleanup overlaps a new request', async () => {
+    const session = fakeSession(() => ok())
+    const closing = Promise.withResolvers<void>()
+    session.close = vi.fn(() => closing.promise)
+    const connect = vi.fn(async () => session)
+    seed({ connect })
+    const pending = sync.apply(machineId, [], [{ name: 'alpha', root: 'dsh' }])
+    await vi.waitFor(() => expect(session.close).toHaveBeenCalledOnce())
+    try {
+      await expect(sync.apply(machineId, [], [{ name: 'beta', root: 'dsh' }])).rejects.toThrow('sync already running')
+    }
+    finally {
+      closing.resolve()
+      await pending
+    }
+    expect(connect).toHaveBeenCalledTimes(1)
+  })
+
+  it('blocks a second request while the first reads machine profiles', async () => {
+    const reading = Promise.withResolvers<void>()
+    const refresh = vi.spyOn(machine, 'syncProfiles').mockImplementationOnce(async () => {
+      await reading.promise
+      machine.refreshProfiles(new Map(machineTable.machines))
+    })
+    const connect = vi.fn(async () => fakeSession(() => ok()))
+    seed({ connect })
+    const pending = sync.apply(machineId, [], [{ name: 'alpha', root: 'dsh' }])
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce())
+    try {
+      await expect(sync.apply(machineId, [], [{ name: 'beta', root: 'dsh' }])).rejects.toThrow('sync already running')
+    }
+    finally {
+      reading.resolve()
+      await pending
+    }
+    expect(connect).toHaveBeenCalledTimes(1)
+  })
+
+  it('releases the running guard if profile refresh fails', async () => {
+    const refresh = vi.spyOn(machine, 'syncProfiles').mockRejectedValueOnce(new Error('profile unavailable'))
+    const connect = vi.fn(async () => fakeSession(() => ok()))
+    seed({ connect })
+    await expect(sync.apply(machineId, [], [{ name: 'alpha', root: 'dsh' }])).rejects.toThrow('profile unavailable')
+    await expect(sync.apply(machineId, [], [{ name: 'alpha', root: 'dsh' }])).resolves.toEqual({ items: [] })
+    expect(refresh).toHaveBeenCalledTimes(2)
+    expect(connect).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects parallel syncs for different machines sharing a remote profile', async () => {
+    const session = fakeSession(() => ok())
+    const opening = Promise.withResolvers<RemoteSession>()
+    const connect = vi.fn<() => Promise<RemoteSession>>()
+      .mockImplementationOnce(() => opening.promise)
+      .mockRejectedValue(new Error('duplicate SSH session'))
+    seed({ connect })
+    const another = MachineId('m2')
+    machineTable.machines.set(another, { ...machineTable.machines.get(machineId)!, id: another })
+    const pending = sync.apply(machineId, [], [{ name: 'alpha', root: 'dsh' }])
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1))
+    try {
+      await expect(sync.apply(another, [], [{ name: 'beta', root: 'dsh' }])).rejects.toThrow('sync already running')
+    }
+    finally {
+      opening.resolve(session)
+      await pending
+    }
+    expect(connect).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows independent targets to sync in parallel', async () => {
+    const opening = Promise.withResolvers<RemoteSession>()
+    const first = fakeSession(() => ok())
+    const second = fakeSession(() => ok())
+    const connect = vi.fn<() => Promise<RemoteSession>>()
+      .mockImplementationOnce(() => opening.promise)
+      .mockResolvedValueOnce(second)
+    seed({ connect })
+    const another = MachineId('m2')
+    machineTable.machines.set(another, { ...machineTable.machines.get(machineId)!, id: another, host: 'another-host' })
+    const pending = sync.apply(machineId, [], [{ name: 'alpha', root: 'dsh' }])
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1))
+    try {
+      await expect(sync.apply(another, [], [{ name: 'beta', root: 'dsh' }])).resolves.toEqual({ items: [] })
+    }
+    finally {
+      opening.resolve(first)
+      await pending
+    }
+    expect(connect).toHaveBeenCalledTimes(2)
+  })
+
   it('returns per-item successes when everything lands', async () => {
     const session = fakeSession((command) => {
       // The entry probe is the only command carrying a printf.
@@ -438,6 +561,6 @@ describe('syncEngine.apply', () => {
     )
     // 去重后 2 插件 + 4 skill；ghost 在本地校验出局（不公告但照样结算），
     // 每个 root 的 skill 共用一份 tar，故只公告批首那条。
-    expect(seen).toEqual(['1/6:p1', '2/6:p2', '4/6:alpha', '6/6:gamma'])
+    expect(seen).toEqual(['0/6:undefined', '1/6:p1', '2/6:p2', '4/6:alpha', '6/6:gamma'])
   })
 })

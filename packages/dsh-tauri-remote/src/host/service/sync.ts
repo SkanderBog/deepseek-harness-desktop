@@ -2,7 +2,7 @@ import type { Buffer } from 'node:buffer'
 import type { MachineId, RemoteSession, SyncApplyResult, SyncItemResult, SyncPluginRef, SyncPreview, SyncSkillRef, SyncSkillRoot } from '../types/index'
 import type { SyncDeps } from './sync.types'
 import { defineService } from 'dsh-tauri'
-import { syncRuntimeDeps } from '../config/runtime'
+import { activeSyncs, machineProfiles, syncRuntimeDeps } from '../config/runtime'
 import { carryWorkspaceAllowlist, parseBuildAllowKeys } from '../utils/allowlist'
 import { assertRemoteDshVersion, dshEntryProbeCommand, firstLineOf } from './bootstrap.utils'
 import { machine } from './machine'
@@ -21,19 +21,37 @@ export const sync = defineService({
     const uniqueSkills = dedupeBy(skills, ref => `${ref.root}:${ref.name}`)
     if (uniquePlugins.length === 0 && uniqueSkills.length === 0)
       return { items }
-    await machine.syncProfiles()
-    const profileName = machine.profileName(machineId)
-    const progress: SyncProgress = { settled: 0, total: uniquePlugins.length + uniqueSkills.length }
-    const session = await machine.openSession(machineId)
+    if (activeSyncs.has(machineId))
+      throw new Error('sync already running for this remote profile')
+    const task = Symbol(machineId)
+    activeSyncs.set(machineId, { target: undefined, task })
     try {
-      if (uniquePlugins.length > 0)
-        await carryWorkspaceAllowlist(session, profileName, machine.localAllowlist()).then(() => undefined).catch(() => undefined)
-      await applyPlugins(session, deps, uniquePlugins, items, progress, machineId, profileName)
-      await applySkills(session, deps, uniqueSkills, items, progress, machineId)
+      await machine.syncProfiles()
+      const profile = machineProfiles.get(machineId)
+      const profileName = machine.profileName(machineId)
+      const target = profile === undefined ? undefined : `${profile.host}:${profile.port}:${profile.user}:${profileName}`
+      if (target !== undefined && [...activeSyncs.values()].some(active => active.task !== task && active.target === target))
+        throw new Error('sync already running for this remote profile')
+      activeSyncs.set(machineId, { target, task })
+      const progress: SyncProgress = { settled: 0, total: uniquePlugins.length + uniqueSkills.length }
+      let session: RemoteSession | undefined
+      try {
+        machine.setProgress(machineId, { phase: 'syncing', attempt: 0, total: progress.total })
+        session = await machine.openSession(machineId)
+        if (uniquePlugins.length > 0)
+          await carryWorkspaceAllowlist(session, profileName, machine.localAllowlist()).then(() => undefined).catch(() => undefined)
+        await applyPlugins(session, deps, uniquePlugins, items, progress, machineId, profileName)
+        await applySkills(session, deps, uniqueSkills, items, progress, machineId)
+      }
+      finally {
+        await session?.close().catch(() => undefined)
+        if (activeSyncs.get(machineId)?.task === task)
+          machine.setProgress(machineId)
+      }
     }
     finally {
-      await session.close().catch(() => undefined)
-      machine.setProgress(machineId)
+      if (activeSyncs.get(machineId)?.task === task)
+        activeSyncs.delete(machineId)
     }
     return { items }
   },
@@ -72,6 +90,7 @@ async function applyPlugins(
         ok: false,
         error: 'no dsh entry under the remote ~/.dsh-desktop install layout; run the machine install first',
       })
+      progress.settled += 1
       continue
     }
     const deadline = deps.commandTimeoutMs === undefined ? {} : { timeoutMs: deps.commandTimeoutMs }

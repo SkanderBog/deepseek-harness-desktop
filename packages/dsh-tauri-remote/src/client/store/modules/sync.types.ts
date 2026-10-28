@@ -7,5 +7,6 @@ export interface SyncState {
   error: string | null
   preview: SyncPreview | null
   applying: boolean
+  machineId: string | null
   results: SyncItemResult[] | null
 }

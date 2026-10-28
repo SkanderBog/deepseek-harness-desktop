@@ -130,6 +130,79 @@ describe('syncPanel', () => {
     expect(screen.getByTestId('sync-apply').textContent).toContain('Syncing')
   })
 
+  it('restores the running target after remount and blocks a second submission', async () => {
+    routeWire({})
+    seedConnected()
+    store.sync.beginApply('a')
+    store.machines.commitList({
+      machines: [machineA],
+      discovered: [],
+      statuses: { a: { ...connectedStatus, progress: { phase: 'syncing', attempt: 0, total: 3 } } },
+    })
+    render(<SyncPanel t={t} />)
+    await waitFor(() => expect(screen.getByTestId('sync-progress')).toBeTruthy())
+    expect(screen.getByTestId('sync-progress').textContent).toContain('Connecting and preparing sync')
+    expect(screen.getByTestId('sync-apply').hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByTestId('sync-apply'))
+    expect(applyCalls()).toHaveLength(0)
+  })
+
+  it('blocks duplicate submission using host progress after client state resets', async () => {
+    routeWire({})
+    seedConnected()
+    store.machines.commitList({
+      machines: [machineA],
+      discovered: [],
+      statuses: { a: { ...connectedStatus, progress: { phase: 'syncing', attempt: 0, total: 1 } } },
+    })
+    render(<SyncPanel t={t} />)
+    await waitFor(() => expect(screen.getByTestId('sync-apply').hasAttribute('disabled')).toBe(true))
+    expect(screen.getByTestId('sync-progress').textContent).toContain('Connecting and preparing sync')
+    fireEvent.click(screen.getByTestId('sync-apply'))
+    expect(applyCalls()).toHaveLength(0)
+  })
+
+  it('labels results by machine and prevents retry on another target', async () => {
+    routeWire({})
+    const other = { ...machineA, id: 'b', name: 'beta' }
+    store.machines.commitList({
+      machines: [machineA, other],
+      discovered: [],
+      statuses: { a: connectedStatus, b: connectedStatus },
+    })
+    store.sync.commitPreview(preview)
+    store.sync.beginApply('a')
+    store.sync.endApply()
+    store.sync.mergeResults([{ kind: 'skill', name: 'alpha', root: 'dsh', ok: false, error: 'missing' }])
+    render(<SyncPanel t={t} />)
+    await waitFor(() => expect(screen.getByTestId('sync-retry')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('sync-target-b'))
+    expect(screen.getByTestId('sync-results').textContent).toContain('Sync results for alpha')
+    expect(screen.getByTestId('sync-retry').hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByTestId('sync-retry'))
+    expect(applyCalls()).toHaveLength(0)
+    fireEvent.click(screen.getByTestId('sync-target-a'))
+    expect(screen.getByTestId('sync-retry').hasAttribute('disabled')).toBe(false)
+  })
+
+  it('blocks target switching while another sync is active', async () => {
+    routeWire({})
+    const other = { ...machineA, id: 'b', name: 'beta' }
+    store.machines.commitList({
+      machines: [machineA, other],
+      discovered: [],
+      statuses: { a: connectedStatus, b: connectedStatus },
+    })
+    store.sync.commitPreview(preview)
+    store.sync.beginApply('b')
+    render(<SyncPanel t={t} />)
+    await waitFor(() => expect(screen.getByTestId('sync-target-a')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('sync-target-a'))
+    expect(screen.getByTestId('sync-apply').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTestId('sync-target-b').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('sync-apply').textContent).toContain('Syncing')
+  })
+
   it('renders partial failures per item with reasons and a retry that re-sends only them', async () => {
     routeWire({ [`${baseURL}/sync/apply`]: { items: [] }, [`${baseURL}/machines`]: { items: [] } })
     seedConnected()
@@ -195,12 +268,17 @@ describe('syncPanel', () => {
   it('surfaces a request-level failure without swallowing previous results', async () => {
     routeWire({ [`${baseURL}/sync/apply`]: { items: [] } }, [`${baseURL}/sync/apply`])
     seedConnected()
-    store.sync.mergeResults([{ kind: 'plugin', name: 'dsh-market', ok: true }])
+    store.sync.beginApply('a')
+    store.sync.endApply()
+    store.sync.mergeResults([{ kind: 'plugin', name: 'dsh-market', ok: false, error: 'earlier failure' }])
     render(<SyncPanel t={t} />)
     await waitFor(() => expect(screen.getByTestId('sync-apply')).toBeTruthy())
     fireEvent.click(screen.getByTestId('sync-apply'))
-    await waitFor(() => expect(screen.getByText(regexOf(`The sync request failed: ${baseURL}/sync/apply broke`))).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(regexOf(`Sync completion is unconfirmed; check the remote before retrying: ${baseURL}/sync/apply broke`))).toBeTruthy())
     expect(screen.getByTestId('sync-result-dsh-market')).toBeTruthy()
+    expect(screen.getByTestId('sync-retry').hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByTestId('sync-retry'))
+    expect(applyCalls()).toHaveLength(1)
   })
 
   it('disables apply with an empty tick set', async () => {
