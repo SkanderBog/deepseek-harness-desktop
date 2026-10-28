@@ -78,6 +78,9 @@
   --color-panel-hover: #2c2c2e;        /* sidebar-nav-item-hover (bluish-850) */
   --color-line: rgba(255, 255, 255, 0.12);   /* border-l2 #ffffff1f */
   --color-line-strong: rgba(255, 255, 255, 0.2); /* border-l4 #fff3 */
+  /* === 自绘窗口外框 token === */
+  --frame-radius: 10px;
+  --color-frame-border: rgba(255, 255, 255, 0.14);
   --color-ink: #f9fafb;                /* label-primary (bluish-50) */
   --color-info: #7aaaff;               /* state-business-primary (deepseek-400) */
   --color-info-hover: #4176e6;         /* button-info-hover (deepseek-500) */
@@ -113,6 +116,7 @@ html[data-theme="light"] {
   --backdrop: rgba(0, 0, 0, 0.24);
   --color-canvas: #ffffff;             /* bg-base (bluish-00) */
   --color-startup: #ffffff;            /* 启动页底色：默认与画布同色 */
+  --color-frame-border: rgba(0, 0, 0, 0.55);
   --color-panel: #f9fafb;              /* specific-sidebar-fill (bluish-50) */
   --color-panel-2: #f5f6f7;            /* bg-module-platform / selector (bluish-60) */
   --color-panel-hover: #f1f3f5;        /* sidebar-nav-item-hover (bluish-75) */
@@ -182,5 +186,37 @@ html[data-theme="light"] {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
     font-size: 14px;
   }
+}
+
+/* Linux 自绘外框：body 裁剪 portal，#root 画框；flat 模式保持直角。 */
+html[data-dsh-frame] body {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  transform: translateZ(0);
+}
+
+html[data-dsh-frame="border"] body {
+  clip-path: inset(0 round var(--frame-radius));
+}
+
+html[data-dsh-frame] #root {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+html[data-dsh-frame] [data-testid="dsh-shell-root"] {
+  height: 100%;
+  width: 100%;
+  background: var(--color-canvas);
+}
+
+html[data-dsh-frame="border"] #root {
+  border-radius: var(--frame-radius);
+  border: 1px solid var(--color-frame-border);
 }
 
