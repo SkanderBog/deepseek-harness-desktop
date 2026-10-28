@@ -7,3 +7,6 @@
 [submodule "crates/electron-rs"]
 	path = crates/electron-rs
 	url = https://github.com/hairyf/electron-rs
+[submodule "source/v1"]
+	path = source/v1
+	url = https://github.com/dsh-tauri/deepseek-harness-desktop
