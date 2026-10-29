@@ -9,12 +9,11 @@ use tauri::{Manager, Runtime, WebviewWindow};
 use tokio::sync::oneshot;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2, ICoreWebView2CapturePreviewCompletedHandler, ICoreWebView2Environment6,
-    ICoreWebView2ExecuteScriptCompletedHandler, ICoreWebView2Frame,
-    ICoreWebView2FrameCreatedEventHandler, ICoreWebView2Frame2,
-    ICoreWebView2PrintToPdfCompletedHandler, ICoreWebView2ScriptDialogOpeningEventHandler,
-    ICoreWebView2WebMessageReceivedEventHandler, ICoreWebView2_4, ICoreWebView2_7,
-    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG, COREWEBVIEW2_PRINT_ORIENTATION_LANDSCAPE,
-    COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT,
+    ICoreWebView2ExecuteScriptCompletedHandler, ICoreWebView2Frame, ICoreWebView2Frame2,
+    ICoreWebView2FrameCreatedEventHandler, ICoreWebView2PrintToPdfCompletedHandler,
+    ICoreWebView2ScriptDialogOpeningEventHandler, ICoreWebView2WebMessageReceivedEventHandler,
+    ICoreWebView2_4, ICoreWebView2_7, COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
+    COREWEBVIEW2_PRINT_ORIENTATION_LANDSCAPE, COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT,
 };
 use windows::core::{Interface, HSTRING, PCWSTR};
 use windows::Win32::Foundation::HGLOBAL;
@@ -167,10 +166,37 @@ impl FrameRegistry {
         }
     }
 
-    fn get(&self, label: &str, index: usize) -> Option<(SendableComPtr, String)> {
-        let frames = self.frames.lock().ok()?;
-        let handle = frames.get(label)?.get(index)?;
-        Some((handle.acquire(), handle.name.clone()))
+    // IsDestroyed、AddRef 与 Release 必须在 WebView 所属的 COM 线程执行。
+    unsafe fn get(
+        &self,
+        label: &str,
+        index: usize,
+    ) -> Result<Option<(SendableComPtr, String)>, String> {
+        let mut frames = self.frames.lock().map_err(|e| e.to_string())?;
+        let Some(handles) = frames.get_mut(label) else {
+            return Ok(None);
+        };
+        let mut slot = 0;
+        while slot < handles.len() {
+            let frame = ICoreWebView2Frame::from_raw(handles[slot].ptr.as_ptr());
+            let mut destroyed = BOOL(0);
+            let result = frame.IsDestroyed(&raw mut destroyed);
+            if let Err(error) = result {
+                let _ = frame.into_raw();
+                return Err(format!("Frame IsDestroyed failed: {error:?}"));
+            }
+            if destroyed.as_bool() {
+                handles.remove(slot);
+                drop(frame);
+            } else {
+                let _ = frame.into_raw();
+                slot += 1;
+            }
+        }
+        // ponytail: 创建顺序仅覆盖壳层帧替换；支持 DOM 重排前需绑定帧身份。
+        Ok(handles
+            .get(index)
+            .map(|handle| (handle.acquire(), handle.name.clone())))
     }
 }
 
@@ -223,7 +249,10 @@ mod frames {
                     }
                 };
 
-                tracing::debug!("FrameCreated: name='{name}' registered for '{}'", self.label);
+                tracing::debug!(
+                    "FrameCreated: name='{name}' registered for '{}'",
+                    self.label
+                );
                 self.registry.register(&self.label, &frame, name);
             }
 
@@ -238,11 +267,7 @@ use frames::FrameCreatedHandler;
 ///
 /// # Safety
 /// Must be called from a COM-initialized thread with a valid webview.
-unsafe fn register_frame_handler(
-    webview: &ICoreWebView2,
-    registry: FrameRegistry,
-    label: &str,
-) {
+unsafe fn register_frame_handler(webview: &ICoreWebView2, registry: FrameRegistry, label: &str) {
     let Ok(webview4) = webview.cast::<ICoreWebView2_4>() else {
         tracing::error!("CoreWebView2 does not expose ICoreWebView2_4; frames unavailable");
         return;
@@ -286,10 +311,7 @@ impl<R: Runtime + 'static> WindowsExecutor<R> {
     /// `ScriptExecutionLocks` before calling this method.
     ///
     /// Runs `script` in the top-level context, unwrapped.
-    async fn evaluate_js_top_level(
-        &self,
-        script: &str,
-    ) -> Result<Value, WebDriverErrorResponse> {
+    async fn evaluate_js_top_level(&self, script: &str) -> Result<Value, WebDriverErrorResponse> {
         let (tx, rx) = oneshot::channel();
         let script_preview: String = script.chars().take(100).collect();
         let error_key = format!("__wdio_script_error_{}", uuid::Uuid::new_v4().simple());
@@ -310,8 +332,13 @@ impl<R: Runtime + 'static> WindowsExecutor<R> {
                     let handler: ICoreWebView2ExecuteScriptCompletedHandler =
                         ExecuteScriptHandler::new(tx.clone()).into();
 
-                    if let Err(e) = webview2.ExecuteScript(PCWSTR(script_hstring.as_ptr()), &handler) {
-                        tracing::error!("ExecuteScript call failed for script '{}...': {e:?}", script_preview);
+                    if let Err(e) =
+                        webview2.ExecuteScript(PCWSTR(script_hstring.as_ptr()), &handler)
+                    {
+                        tracing::error!(
+                            "ExecuteScript call failed for script '{}...': {e:?}",
+                            script_preview
+                        );
                         if let Ok(mut guard) = tx.lock() {
                             if let Some(tx) = guard.take() {
                                 let _ = tx.send(Err(format!("ExecuteScript failed: {e:?}")));
@@ -339,6 +366,32 @@ impl<R: Runtime + 'static> WindowsExecutor<R> {
         }
 
         self.collect_script_result(rx, &error_key).await
+    }
+
+    async fn native_frame(
+        &self,
+        index: usize,
+    ) -> Result<Option<(SendableComPtr, String)>, WebDriverErrorResponse> {
+        let registry = self.window.state::<FrameRegistry>().inner().clone();
+        let label = self.window.label().to_string();
+        let (tx, rx) = oneshot::channel();
+        self.window
+            .with_webview(move |_| {
+                let _ = tx.send(unsafe { registry.get(&label, index) });
+            })
+            .map_err(|error| WebDriverErrorResponse::unknown_error(&error.to_string()))?;
+        match tokio::time::timeout(
+            std::time::Duration::from_millis(self.timeouts.script_ms),
+            rx,
+        )
+        .await
+        {
+            Ok(Ok(result)) => result.map_err(|error| WebDriverErrorResponse::unknown_error(&error)),
+            Ok(Err(_)) => Err(WebDriverErrorResponse::unknown_error(
+                "Native frame lookup channel closed",
+            )),
+            Err(_) => Err(WebDriverErrorResponse::script_timeout()),
+        }
     }
 
     /// Run `script` inside a native frame via `ICoreWebView2Frame2::ExecuteScript`.
@@ -375,10 +428,13 @@ impl<R: Runtime + 'static> WindowsExecutor<R> {
                         if let Err(e) =
                             frame2.ExecuteScript(PCWSTR(script_hstring.as_ptr()), &handler)
                         {
-                            tracing::error!("Frame ExecuteScript failed for '{script_preview}...': {e:?}");
+                            tracing::error!(
+                                "Frame ExecuteScript failed for '{script_preview}...': {e:?}"
+                            );
                             if let Ok(mut guard) = tx.lock() {
                                 if let Some(tx) = guard.take() {
-                                    let _ = tx.send(Err(format!("Frame ExecuteScript failed: {e:?}")));
+                                    let _ =
+                                        tx.send(Err(format!("Frame ExecuteScript failed: {e:?}")));
                                 }
                             }
                         }
@@ -387,7 +443,9 @@ impl<R: Runtime + 'static> WindowsExecutor<R> {
                         tracing::error!("Frame does not expose ICoreWebView2Frame2: {e:?}");
                         if let Ok(mut guard) = tx.lock() {
                             if let Some(tx) = guard.take() {
-                                let _ = tx.send(Err("Frame does not expose ICoreWebView2Frame2".to_string()));
+                                let _ = tx.send(Err(
+                                    "Frame does not expose ICoreWebView2Frame2".to_string()
+                                ));
                             }
                         }
                     }
@@ -469,7 +527,11 @@ pub fn register_webview_handlers<R: Runtime>(webview: &tauri::Webview<R>) {
 
     // Native frame handles are captured per window, so the executor can reach into
     // cross-origin frames without the JS `contentWindow.eval` simulation.
-    let registry = webview.app_handle().state::<FrameRegistry>().inner().clone();
+    let registry = webview
+        .app_handle()
+        .state::<FrameRegistry>()
+        .inner()
+        .clone();
     let label = webview.label().to_string();
 
     let _ = webview.with_webview(move |webview| unsafe {
@@ -537,8 +599,7 @@ impl<R: Runtime + 'static> PlatformExecutor<R> for WindowsExecutor<R> {
         // upstream JS wrapper, which is correct (if wasteful) within one origin.
         if self.frame_context.len() == 1 {
             let index = self.resolve_frame_index(&self.frame_context[0]).await?;
-            let registry = self.window.state::<FrameRegistry>();
-            if let Some((frame_ptr, name)) = registry.get(self.window.label(), index) {
+            if let Some((frame_ptr, name)) = self.native_frame(index).await? {
                 tracing::debug!("Running script in native frame #{index} (name='{name}')");
                 return self.evaluate_js_in_frame(frame_ptr, script).await;
             }

@@ -55,6 +55,31 @@ describe('Windows WebDriver script integration', () => {
     }
   })
 
+  it('replaced native frames execute scripts in the replacement document', async () => {
+    const selector = '[data-testid="dsh-e2e-driver-replacement"]'
+    try {
+      for (const text of ['first frame', 'replacement frame']) {
+        await browser.switchFrame(null)
+        await browser.execute((selector, text) => {
+          document.querySelector(selector)?.remove()
+          const frame = document.createElement('iframe')
+          frame.dataset.testid = 'dsh-e2e-driver-replacement'
+          frame.srcdoc = `<p>${text}</p>`
+          document.body.append(frame)
+        }, selector, text)
+        await browser.switchFrame(await browser.$(selector))
+        await browser.waitUntil(() => browser.execute(() => document.readyState === 'complete'))
+        expect(await browser.execute(() => document.body.textContent?.trim()), '原生脚本必须在当前帧文档执行').toBe(text)
+      }
+    }
+    finally {
+      await browser.switchFrame(null)
+      await browser.execute((selector) => {
+        document.querySelector(selector)?.remove()
+      }, selector)
+    }
+  })
+
   it('element properties containing the old error marker remain successful object results', async () => {
     const selector = '[data-testid="dsh-e2e-driver-property"]'
     await browser.execute(() => {
