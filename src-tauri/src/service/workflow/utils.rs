@@ -227,16 +227,12 @@ fn check_output_reader_spawn() -> io::Result<()> {
     Ok(())
 }
 
-/// 子进程早期退出里可以自愈的那几类：`supervise_harness` 据此决定重试还是交回错误页。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum EarlyExitSignal {
-    /// 上一轮 dsh 在 dispose 时回写了组合后的 entry 树，本轮叠加补丁层产生重复条目。
     DuplicateLoaderEntry,
-    /// 上个会话的监听器在我们判定端口空闲之后才真正开始监听。
     PortConflict,
 }
 
-/// 从单行 stderr 识别早期退出特征；只认第一次命中，后续行不再改写结论。
 fn early_exit_signal(line: &str) -> Option<EarlyExitSignal> {
     if line.contains("duplicate loader entry") {
         return Some(EarlyExitSignal::DuplicateLoaderEntry);
@@ -506,7 +502,6 @@ mod tests {
             duplicate.recv_timeout(timeout).unwrap(),
             EarlyExitSignal::DuplicateLoaderEntry
         );
-        // 每次启动只申报一个结论；EOF 关闭通道，而不是再送一个「无信号」占位。
         assert!(duplicate.recv_timeout(timeout).is_err());
         let content = fs::read_to_string(&log).unwrap();
         assert!(content.contains("last stderr line\n"));
@@ -535,14 +530,13 @@ mod tests {
         assert_eq!(early_exit_signal("Cannot find package '@scope/x'"), None);
     }
 
-    /// 两类特征同时出现时只能申报一个结论，否则重试策略取决于读取线程的调度顺序。
     #[test]
     fn output_readers_report_the_first_matching_signal_only() {
         let root = tempfile::tempdir().unwrap();
         let log = root.path().join("dsh-web.log");
         let mut stderr = b"listen EADDRINUSE: address already in use 127.0.0.1:3080\n".to_vec();
         stderr.extend_from_slice(b"duplicate loader entry id: dsh-tauri-ui\n");
-        let mut receiver = spawn_output_readers(
+        let receiver = spawn_output_readers(
             None::<std::io::Cursor<Vec<u8>>>,
             Some(std::io::Cursor::new(stderr)),
             log,

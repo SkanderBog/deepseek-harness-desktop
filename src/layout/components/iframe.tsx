@@ -341,9 +341,6 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     { immediate: true },
   )
 
-  // 帧内 boot 桥只在官方室面 DOM 精确匹配时才上报 stall；官方换一次排版、或客户端
-  // 插件 entry 卡在 pending，它都一声不响。壳层手里已有「这一代确实跑着 dsh 页面」的
-  // 确认，就按代计时兜底：到点仍没有 `dsh://plugin-boot:ready` 就走同一条有界恢复。
   const clientBootWatch = useTimeoutFn(
     () => { void store.harness.recoverIframeBoot() },
     CLIENT_BOOT_WATCHDOG_TIMEOUT,
@@ -426,6 +423,7 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     // （确认本身已由 `useAppearance` 记录，这里只负责把这一代标记为已确认。）
     if (data.type === 'dsh://appearance:applied') {
       setBootFrame(frameKey)
+      store.harness.markIframeAlive()
       return
     }
     // 能走到这里说明帧内确实跑着 dsh 页面（来源与 origin 已由 hook 校验过），

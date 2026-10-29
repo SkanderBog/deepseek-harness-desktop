@@ -6,7 +6,6 @@ const store = readSource('src/store/modules/harness/store.ts')
 const iframe = readSource('src/layout/components/iframe.tsx')
 
 describe('客户端 boot 停摆的壳层兜底', () => {
-  // 帧内桥只认精确的官方室面 DOM；官方换排版或插件 entry 卡在 pending 时它一声不响。
   it('按 iframe 代计时，不依赖帧内室面识别', () => {
     expect(constants).toMatch(/export const CLIENT_BOOT_WATCHDOG_TIMEOUT = \d+/)
     expect(iframe).toContain('CLIENT_BOOT_WATCHDOG_TIMEOUT')
@@ -22,7 +21,6 @@ describe('客户端 boot 停摆的壳层兜底', () => {
     )
   })
 
-  // 有界重载治不了宿主侧停摆；用户手工解法是重启 Harness，这里只把同一动作自动做一次。
   it('有界重载耗尽后只自动重启一次服务', () => {
     expect(store).toContain('let clientBootRestartSpent = false')
     expect(store).toContain('if (!this.busyAction && consumeClientBootRestart())')

@@ -83,13 +83,6 @@ let pluginActivitySequence = 0
 let pluginActivityReason = ''
 const restartFlight = new SingleFlight<void>()
 const iframeReloadGate = new BoundedReloadGate(IFRAME_RELOAD_MAX_ATTEMPTS)
-/**
- * 客户端 boot 停摆的自动重启预算：整个进程只花一次。
- *
- * 有界重载都救不回来时，唯一有效的动作是换一个宿主进程重来（用户手工操作即菜单里
- * 的「重启 Harness」）。自动重启不能跟失败互相放大，所以只留一次；再次停摆就交回
- * 错误页，由用户决定。
- */
 let clientBootRestartSpent = false
 function consumeClientBootRestart(): boolean {
   if (clientBootRestartSpent)
@@ -140,13 +133,6 @@ export const harness = defineStore({
      * 之后旧文档的迟到消息不能替新文档背书。
      */
     iframeAliveKey: null as number | null,
-    /**
-     * 已确认官方 boot 室面摘掉（`dsh://plugin-boot:ready`）的 iframe 代。
-     *
-     * 室面消不掉有两种：客户端插件 entry 永远等不到依赖（壳层收不到任何 boot
-     * 消息），或者室面 DOM 与壳层的识别契约不一致。前者靠帧内 stall 上报，后者
-     * 只能由壳层按代计时兜底，两者共用同一个恢复入口。
-     */
     iframeBootReadyKey: null as number | null,
     iframeKey: 0,
     serviceHealthy: false,
@@ -325,10 +311,10 @@ export const harness = defineStore({
 
     /** 刷新 iframe：清除加载态并延迟重新挂载 */
     refreshIframe() {
+      this.dropIframeBootConfirmation()
       this.iframeLoaded = false
       this.iframeError = false
       this.iframeAliveKey = null
-      this.iframeBootReadyKey = null
       if (iframeRefreshTimer !== undefined) {
         clearTimeout(iframeRefreshTimer)
       }
@@ -336,6 +322,13 @@ export const harness = defineStore({
         iframeRefreshTimer = undefined
         this.iframeKey++
       }, 800)
+    },
+
+    /** 作废这一代 iframe 的 boot 完成确认；只撤 ready，不退还已花掉的尝试次数 */
+    dropIframeBootConfirmation() {
+      if (this.iframeBootReadyKey !== null)
+        iframeReloadGate.invalidate()
+      this.iframeBootReadyKey = null
     },
 
     /** iframe 加载成功/失败时由视图回调更新状态 */
@@ -362,8 +355,8 @@ export const harness = defineStore({
      * 同时撤回 load 结论：这一代已经没有任何已加载的文档了。
      */
     markIframeLeaving() {
+      this.dropIframeBootConfirmation()
       this.iframeAliveKey = null
-      this.iframeBootReadyKey = null
       this.iframeLoaded = false
     },
 

@@ -55,6 +55,8 @@ pub(super) struct LaunchPlan {
 /// 复用配置端口；到期仍未释放才按“真占用”逐级递增。
 const PORT_RELEASE_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 
+const EARLY_EXIT_SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
+
 #[cfg(target_os = "linux")]
 fn harness_library_path(
     appdir: Option<&std::ffi::OsStr>,
@@ -457,10 +459,7 @@ fn supervise_harness(
                 return Ok(());
             }
         };
-        // 子孙进程可能继承 stderr 写端：只等本轮签名，不能等无界 EOF。
-        let signal = signature
-            .recv_timeout(std::time::Duration::from_millis(250))
-            .ok();
+        let signal = signature.recv_timeout(EARLY_EXIT_SIGNAL_WAIT).ok();
         if code == Some(1) && attempt < 3 {
             match signal {
                 Some(EarlyExitSignal::DuplicateLoaderEntry) => {
@@ -1231,6 +1230,7 @@ pub(super) async fn launch_prepared(
                             &bump_entry,
                         )
                         .ok()?;
+                        bump_port.store(next, Ordering::SeqCst);
                         super::instances::set_port(next);
                         Some(next)
                     },

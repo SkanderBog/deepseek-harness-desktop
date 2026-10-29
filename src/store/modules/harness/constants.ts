@@ -18,13 +18,6 @@ export const IFRAME_LOAD_TIMEOUT = 20000
  */
 export const IFRAME_FRAME_GRACE_TIMEOUT = 5000
 
-/**
- * 已确认帧里跑着 dsh 页面、却迟迟等不到官方 boot 完成（室面未摘）的壳层兜底上限。
- *
- * 帧内 boot 桥只认精确的官方室面 DOM（HARNESS + Loading plugins…），官方改一次排版
- * 就再也匹配不上；客户端插件 entry 等不到依赖时更不会有任何上报。两种情况下室面都
- * 会一直挂着，壳层必须自己按代计时，到点走同一条有界恢复。
- */
 export const CLIENT_BOOT_WATCHDOG_TIMEOUT = 20000
 
 /**
