@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { page } from './setup/shell'
-import { invoke } from '@tauri-apps/api/core'
 
 describe('electron 主窗口', () => {
   it('主窗口渲染出 React 根节点', async () => {
@@ -10,7 +9,7 @@ describe('electron 主窗口', () => {
   })
 
   it('Tauri IPC 往返返回真实命令结果', async () => {
-    const dev = await page.evaluate(() => invoke('is_dev_build'))
+    const dev = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke<boolean>('is_dev_build'))
     expect(dev, 'debug 产物应返回 is_dev_build=true').toBe(true)
   })
 })
