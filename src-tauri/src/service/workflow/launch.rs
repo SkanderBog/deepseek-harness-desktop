@@ -22,7 +22,9 @@ use super::process::{
 use super::status;
 #[cfg(windows)]
 use super::sweep::{dsh_bin_open_error, relaunch_marker_path, relaunch_via_shell_escape};
-use super::utils::{append_log, rotate_service_log, spawn_output_readers, wait_for_port_release};
+use super::utils::{
+    append_log, rotate_service_log, spawn_output_readers, wait_for_port_release, EarlyExitSignal,
+};
 use super::win_inspector;
 
 #[cfg(windows)]
@@ -343,11 +345,12 @@ fn supervise_harness(
         (
             OwnedProcess,
             HarnessChild,
-            std::io::Result<std::sync::mpsc::Receiver<bool>>,
+            std::io::Result<std::sync::mpsc::Receiver<super::utils::EarlyExitSignal>>,
         ),
         String,
     >,
     mut reset: impl FnMut(),
+    mut bump_port: impl FnMut() -> Option<u16>,
     mut persist: impl FnMut(u32),
 ) -> Result<(), String> {
     let mut guards = Some(guards);
@@ -454,19 +457,35 @@ fn supervise_harness(
                 return Ok(());
             }
         };
-        // 子孙进程可能继承 stderr 写端；只等本轮签名，不能等无界 EOF。
-        let duplicate = matches!(
-            signature.recv_timeout(std::time::Duration::from_millis(250)),
-            Ok(true)
-        );
-        if code == Some(1) && duplicate && attempt < 3 {
-            log_fatal_report(log_path, &report_path);
-            log::warn!(
-                "DUPLICATE_LOADER_ENTRY: dsh exited early with duplicate loader entry \
-                 (pid={pid}, code=1); resetting profile root and relaunching (attempt {attempt}/3)"
-            );
-            previous_exit = Some((pid, code));
-            continue;
+        // 子孙进程可能继承 stderr 写端：只等本轮签名，不能等无界 EOF。
+        let signal = signature
+            .recv_timeout(std::time::Duration::from_millis(250))
+            .ok();
+        if code == Some(1) && attempt < 3 {
+            match signal {
+                Some(EarlyExitSignal::DuplicateLoaderEntry) => {
+                    log_fatal_report(log_path, &report_path);
+                    log::warn!(
+                        "DUPLICATE_LOADER_ENTRY: dsh exited early with duplicate loader entry (pid={pid}, code=1); resetting profile root and relaunching (attempt {attempt}/3)"
+                    );
+                    previous_exit = Some((pid, code));
+                    continue;
+                }
+                Some(EarlyExitSignal::PortConflict) => {
+                    if let Some(port) = bump_port() {
+                        log_fatal_report(log_path, &report_path);
+                        log::warn!(
+                            "PORT_CONFLICT_RETRY: dsh exited early with EADDRINUSE (pid={pid}, code=1); relaunching on port {port} (attempt {attempt}/3)"
+                        );
+                        previous_exit = Some((pid, code));
+                        continue;
+                    }
+                    log::error!(
+                        "PORT_CONFLICT_RETRY: EADDRINUSE with no free port left; giving up without a retry"
+                    );
+                }
+                None => {}
+            }
         }
         on_exit(pid, code, Some(&report_path));
         return Ok(());
@@ -895,7 +914,6 @@ pub(super) async fn launch_prepared(
     );
     envs.insert("DSH_TELEMETRY_DISABLED".to_string(), "1".to_string());
     envs.insert("NO_COLOR".to_string(), "1".to_string());
-    envs.insert("DSH_WEB_PORT".to_string(), setting.port.to_string());
     // 把服务实际使用的 node 路径显式交给子进程（pnpm/dsh shim 的 DSH_NODE
     // 优先）：市场（dsh-market）等子进程经 PATH 解析 node 可能与桌面端预检
     // 不一致（相对 PATH 条目 / junction / 子进程 PATH 布局差异），导致 pnpm
@@ -1095,7 +1113,11 @@ pub(super) async fn launch_prepared(
     if let Some(parent) = pid_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let port = setting.port;
+    let port = std::sync::Arc::new(std::sync::atomic::AtomicU16::new(setting.port));
+    let spawn_port = port.clone();
+    let persist_port = port.clone();
+    let bump_port = port.clone();
+    let bump_entry = dsh_binary_path.clone();
     mark_phase("pre_spawn_setup", &mut phase_started);
     super::startup::note_spawn();
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -1130,6 +1152,9 @@ pub(super) async fn launch_prepared(
                     &mut started,
                     guards,
                     |report_path| {
+                        let port = spawn_port.load(Ordering::SeqCst);
+                        let mut envs = envs.clone();
+                        envs.insert("DSH_WEB_PORT".to_string(), port.to_string());
                         let args = build_harness_args(
                             &dsh_binary_path,
                             &active_profile,
@@ -1200,7 +1225,17 @@ pub(super) async fn launch_prepared(
                         }
                     },
                     || reset_active_profile_root(&profile_root),
+                    move || {
+                        let next = find_available_port(
+                            bump_port.load(Ordering::SeqCst).saturating_add(1),
+                            &bump_entry,
+                        )
+                        .ok()?;
+                        super::instances::set_port(next);
+                        Some(next)
+                    },
                     |pid| {
+                        let port = persist_port.load(Ordering::SeqCst);
                         let _ = fs::write(&pid_path, format!("{pid}\n{port}\n"));
                     },
                 );
@@ -1483,6 +1518,7 @@ mod tests {
         attempts: std::sync::Arc<std::sync::atomic::AtomicUsize>,
         spawned: std::sync::Arc<std::sync::Mutex<Option<OwnedProcess>>>,
         resets: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        bumps: std::sync::Arc<std::sync::atomic::AtomicUsize>,
         transition: std::sync::Arc<tokio::sync::Mutex<()>>,
     }
 
@@ -1523,6 +1559,7 @@ mod tests {
             *instance.status.lock().unwrap() = status::Status::Starting;
             let attempts = Arc::new(AtomicUsize::new(0));
             let resets = Arc::new(AtomicUsize::new(0));
+            let bumps = Arc::new(AtomicUsize::new(0));
             let transition = Arc::new(tokio::sync::Mutex::new(()));
             let guards = (
                 LaunchGuard(instance.launching.clone()),
@@ -1534,6 +1571,7 @@ mod tests {
             let spawned_process = spawned.clone();
             let spawn_count = attempts.clone();
             let reset_count = resets.clone();
+            let bump_count = bumps.clone();
             let worker = std::thread::spawn(move || {
                 let log = path.join("dsh-web.log");
                 let mut started = Some(started_tx);
@@ -1626,6 +1664,10 @@ mod tests {
                                 reset_count.fetch_add(1, Ordering::SeqCst);
                                 reset_active_profile_root(&path);
                             },
+                            || {
+                                bump_count.fetch_add(1, Ordering::SeqCst);
+                                Some(0)
+                            },
                             |pid| fs::write(path.join("harness.pid"), pid.to_string()).unwrap(),
                         )
                     })
@@ -1644,6 +1686,7 @@ mod tests {
                 attempts,
                 spawned,
                 resets,
+                bumps,
                 transition,
             }
         }
@@ -1821,17 +1864,18 @@ mod tests {
     }
 
     #[test]
-    fn supervisor_retries_only_duplicate_code_one_at_most_twice() {
-        for (script, attempts, resets) in [
-            ("require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(1)", 3, 2),
-            ("require('fs').writeSync(2,'Error: EADDRINUSE\\n');process.exit(1)", 1, 0),
-            ("require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(0)", 1, 0),
+    fn supervisor_retries_self_healing_early_exits_at_most_twice() {
+        for (script, attempts, resets, bumps) in [
+            ("require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(1)", 3, 2, 0),
+            ("require('fs').writeSync(2,'Error: listen EADDRINUSE: address already in use 127.0.0.1:3080\\n');process.exit(1)", 3, 2, 2),
+            ("require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(0)", 1, 0, 0),
         ] {
             let mut fixture = SupervisedNode::new(script);
             fixture.acknowledge();
             fixture.finish().unwrap();
             assert_eq!(fixture.attempts.load(Ordering::SeqCst), attempts, "{script}");
             assert_eq!(fixture.resets.load(Ordering::SeqCst), resets, "{script}");
+            assert_eq!(fixture.bumps.load(Ordering::SeqCst), bumps, "{script}");
             assert!(fixture.instance.process.lock().unwrap().is_none());
             assert!(!fixture.instance.launching.load(Ordering::SeqCst));
             assert_eq!(*fixture.instance.status.lock().unwrap(), status::Status::Stopped);
