@@ -56,9 +56,8 @@
     }
   },
   "scripts": {
-    "build": "tsx scripts/taiwindcss.ts --minify && tsdown && tsx scripts/taiwindcss.ts",
-    "dev": "tsx scripts/taiwindcss.ts --watch & tsdown --watch",
-    "generate": "tsx scripts/taiwindcss.ts",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "prepublishOnly": "nr build",
     "start": "tsx src/index.ts",
     "typecheck": "tsc"
@@ -71,10 +70,8 @@
   "devDependencies": {
     "@css-render/plugin-bem": "catalog:ui",
     "@gravity-ui/icons": "catalog:runtime",
-    "@tailwindcss/postcss": "catalog:build",
     "css-render": "catalog:ui",
     "dsh-tauri-config": "workspace:*",
-    "postcss": "catalog:build",
     "tsdown": "catalog:cli"
   }
 }
