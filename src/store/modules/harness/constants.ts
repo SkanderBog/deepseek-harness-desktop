@@ -18,6 +18,8 @@ export const IFRAME_LOAD_TIMEOUT = 20000
  */
 export const IFRAME_FRAME_GRACE_TIMEOUT = 5000
 
+export const CLIENT_BOOT_WATCHDOG_TIMEOUT = 20000
+
 /**
  * 服务就绪探测间隔。
  *

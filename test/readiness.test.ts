@@ -387,4 +387,20 @@ describe('bounded reload gate', () => {
     gate.reset()
     expect(gate.request(0)).toBe('reload')
   })
+
+  it('reopens recovery for a new generation without refunding spent attempts', () => {
+    const gate = new BoundedReloadGate(2)
+
+    expect(gate.request(0)).toBe('reload')
+    expect(gate.request(1)).toBe('reload')
+    gate.markReady()
+    expect(gate.request(2)).toBe('ready')
+
+    gate.invalidate()
+    expect(gate.request(2)).toBe('exhausted')
+
+    gate.invalidate()
+    gate.reset()
+    expect(gate.request(0)).toBe('reload')
+  })
 })

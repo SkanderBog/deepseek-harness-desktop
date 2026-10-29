@@ -227,11 +227,27 @@ fn check_output_reader_spawn() -> io::Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum EarlyExitSignal {
+    DuplicateLoaderEntry,
+    PortConflict,
+}
+
+fn early_exit_signal(line: &str) -> Option<EarlyExitSignal> {
+    if line.contains("duplicate loader entry") {
+        return Some(EarlyExitSignal::DuplicateLoaderEntry);
+    }
+    if line.contains("EADDRINUSE") {
+        return Some(EarlyExitSignal::PortConflict);
+    }
+    None
+}
+
 pub fn spawn_output_readers<R1, R2>(
     stdout: Option<R1>,
     stderr: Option<R2>,
     log_path: PathBuf,
-) -> io::Result<mpsc::Receiver<bool>>
+) -> io::Result<mpsc::Receiver<EarlyExitSignal>>
 where
     R1: Read + Send + 'static,
     R2: Read + Send + 'static,
@@ -252,12 +268,14 @@ where
         thread::Builder::new().spawn(move || {
             let mut reported = false;
             drain_subprocess_output(BufReader::new(stderr), log_path, log::Level::Warn, |line| {
-                if !reported && line.contains("duplicate loader entry") {
+                if reported {
+                    return;
+                }
+                if let Some(signal) = early_exit_signal(line) {
                     reported = true;
-                    let _ = signature.send(true);
+                    let _ = signature.send(signal);
                 }
             });
-            let _ = signature.send(false);
         })?;
     }
     Ok(receiver)
@@ -480,8 +498,11 @@ mod tests {
         )
         .unwrap();
         let timeout = Duration::from_secs(5);
-        assert!(duplicate.recv_timeout(timeout).unwrap());
-        assert!(!duplicate.recv_timeout(timeout).unwrap());
+        assert_eq!(
+            duplicate.recv_timeout(timeout).unwrap(),
+            EarlyExitSignal::DuplicateLoaderEntry
+        );
+        assert!(duplicate.recv_timeout(timeout).is_err());
         let content = fs::read_to_string(&log).unwrap();
         assert!(content.contains("last stderr line\n"));
 
@@ -491,7 +512,41 @@ mod tests {
             log,
         )
         .unwrap();
-        assert!(!clean.recv_timeout(timeout).unwrap());
+        assert!(clean.recv_timeout(timeout).is_err());
+    }
+
+    #[test]
+    fn stderr_signature_separates_port_conflict_from_loader_duplication() {
+        assert_eq!(
+            early_exit_signal(
+                "    Error: listen EADDRINUSE: address already in use 127.0.0.1:3080"
+            ),
+            Some(EarlyExitSignal::PortConflict)
+        );
+        assert_eq!(
+            early_exit_signal("failed to apply patch: duplicate loader entry id: dsh-tauri-ui"),
+            Some(EarlyExitSignal::DuplicateLoaderEntry)
+        );
+        assert_eq!(early_exit_signal("Cannot find package '@scope/x'"), None);
+    }
+
+    #[test]
+    fn output_readers_report_the_first_matching_signal_only() {
+        let root = tempfile::tempdir().unwrap();
+        let log = root.path().join("dsh-web.log");
+        let mut stderr = b"listen EADDRINUSE: address already in use 127.0.0.1:3080\n".to_vec();
+        stderr.extend_from_slice(b"duplicate loader entry id: dsh-tauri-ui\n");
+        let receiver = spawn_output_readers(
+            None::<std::io::Cursor<Vec<u8>>>,
+            Some(std::io::Cursor::new(stderr)),
+            log,
+        )
+        .unwrap();
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(5)).unwrap(),
+            EarlyExitSignal::PortConflict
+        );
+        assert!(receiver.recv_timeout(Duration::from_millis(200)).is_err());
     }
 
     #[test]

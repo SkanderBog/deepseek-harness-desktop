@@ -29,6 +29,7 @@ import { useNotificationClicked } from '@/hooks/use-notification-clicked'
 import { useSyncVisibility } from '@/hooks/use-sync-visibility'
 import { useZoomFactor } from '@/hooks/use-zoom-factor'
 import { store } from '@/store'
+import { CLIENT_BOOT_WATCHDOG_TIMEOUT } from '@/store/modules/harness/constants'
 import { ConfigDialog } from '@/ui/dialog/config'
 import { zoomActionFromBridgeMessage, zoomActionFromShortcut } from '@/utils/zoom'
 import { appearanceBootCss, appearanceTranslucent, normalizeAppearance } from '../../../packages/dsh-tauri/src/shared/appearance'
@@ -328,6 +329,15 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     else
       stopAppearanceFallback()
   }, { immediate: true })
+  // 换帧即换文档：旧文档的自报不能替新帧背书。远端↔本地切换会换 `frameKey` 而
+  // `harness.iframeKey` 不变，那种替换只能由这里作废旧确认。
+  const settledFrameKeyRef = useRef(frameKey)
+  useWatch(frameKey, () => {
+    if (settledFrameKeyRef.current === frameKey)
+      return
+    settledFrameKeyRef.current = frameKey
+    store.harness.markIframeLeaving()
+  }, { immediate: true })
   // iframe 与外观投影同一次提交挂载：src 落定后立刻把启动期 CSS 交给帧内接收器
   // （帧内自己也会 document-start 主动请求一次，两条通路互为兜底）。
   useWatch(
@@ -336,6 +346,33 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       if (!src)
         return
       post({ type: 'dsh://appearance', bootCss: css })
+    },
+    { immediate: true },
+  )
+
+  const clientBootWatch = useTimeoutFn(
+    () => { void store.harness.recoverIframeBoot() },
+    CLIENT_BOOT_WATCHDOG_TIMEOUT,
+    { immediate: false },
+  )
+  useWatch(
+    [
+      mounted,
+      remoteMode,
+      showIframeError,
+      harness.serviceHealthy,
+      harness.iframeAliveKey,
+      harness.iframeBootReadyKey,
+      harness.iframeKey,
+    ],
+    () => {
+      if (!remoteMode && mounted && harness.serviceHealthy && harness.iframeAlive
+        && !harness.iframeBootReady && !showIframeError) {
+        clientBootWatch.start()
+      }
+      else {
+        clientBootWatch.stop()
+      }
     },
     { immediate: true },
   )
@@ -388,18 +425,23 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
     if (data.type === 'dsh://plugin-boot:leaving') {
       setBootFrame(null)
       armAppearanceFallback()
-      store.harness.markIframeLeaving()
+      if (!remoteMode)
+        store.harness.markIframeLeaving()
       return
     }
     // 帧内确认启动期外观已落盘：此刻可以安全揭开 iframe，不会闪出不透明 boot 页。
     // （确认本身已由 `useAppearance` 记录，这里只负责把这一代标记为已确认。）
     if (data.type === 'dsh://appearance:applied') {
       setBootFrame(frameKey)
+      if (!remoteMode)
+        store.harness.markIframeAlive()
       return
     }
     // 能走到这里说明帧内确实跑着 dsh 页面（来源与 origin 已由 hook 校验过），
     // 与具体桥无关——据此确认 iframe 不是一张浏览器内部错误页（issue #705）。
-    store.harness.markIframeAlive()
+    // 远端帧里跑的是对面那台机器的文档，不能替本机这一代背书。
+    if (!remoteMode)
+      store.harness.markIframeAlive()
     switch (data.type) {
       case 'dsh://desktop-settings:open':
         void openConfigDialog({ tab: 'application' }).catch((error: unknown) => {
@@ -431,9 +473,12 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
         break
       // 插件 boot 状态：failed 携带官方失败页文本（如 web boot: 1 entry did not activate）
       case 'dsh://plugin-boot:ready':
-        store.harness.markIframeBootReady()
+        if (!remoteMode)
+          store.harness.markIframeBootReady()
         break
       case 'dsh://plugin-boot:stalled':
+        if (remoteMode)
+          break
         if (activePreload && !activePreload.applied) {
           if (harness.serviceHealthy)
             fallbackPreload()
@@ -442,7 +487,8 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
         void store.harness.recoverIframeBoot()
         break
       case 'dsh://plugin-boot:failed':
-        void store.harness.handleIframeBootFailure(data.detail)
+        if (!remoteMode)
+          void store.harness.handleIframeBootFailure(data.detail)
         break
       // 缩放快捷键：跨源 iframe 内的 Ctrl/Cmd +/-/0 不会冒泡到壳层，由 dsh-tauri 插件的
       case 'dsh://zoom-shortcut':

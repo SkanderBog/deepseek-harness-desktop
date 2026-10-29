@@ -83,7 +83,16 @@ let pluginActivitySequence = 0
 let pluginActivityReason = ''
 const restartFlight = new SingleFlight<void>()
 const iframeReloadGate = new BoundedReloadGate(IFRAME_RELOAD_MAX_ATTEMPTS)
+let clientBootRestartSpent = false
+function consumeClientBootRestart(): boolean {
+  if (clientBootRestartSpent)
+    return false
+  clientBootRestartSpent = true
+  return true
+}
 let iframeRefreshTimer: ReturnType<typeof setTimeout> | undefined
+/** 当前承载 dsh 页面的文档代；帧内导航与重挂都会推进它（见 `dropIframeBootConfirmation`） */
+let iframeDocumentSeq = 0
 let policyApprovalKey: string | undefined
 
 /**
@@ -126,6 +135,7 @@ export const harness = defineStore({
      * 之后旧文档的迟到消息不能替新文档背书。
      */
     iframeAliveKey: null as number | null,
+    iframeBootReadyKey: null as number | null,
     iframeKey: 0,
     serviceHealthy: false,
     serviceRunning: false,
@@ -145,6 +155,10 @@ export const harness = defineStore({
     /** 当前这一代 iframe 是否已自报承载 dsh 文档（重挂即失效，见 `iframeAliveKey`） */
     iframeAlive(): boolean {
       return this.iframeAliveKey === this.iframeKey
+    },
+    /** 当前这一代 iframe 是否已跑完官方 boot（重挂或帧内导航即失效） */
+    iframeBootReady(): boolean {
+      return this.iframeBootReadyKey === this.iframeKey
     },
     /**
      * 内嵌页面加载失败的补充说明：服务已就绪却没有任何帧内消息，说明帧里根本没
@@ -241,6 +255,7 @@ export const harness = defineStore({
       this.iframeLoaded = false
       this.iframeError = false
       this.iframeAliveKey = null
+      this.iframeBootReadyKey = null
 
       const error = await attachStartupDiagnostics(new Error(message), true)
       if (exitToken !== bootToken)
@@ -298,6 +313,7 @@ export const harness = defineStore({
 
     /** 刷新 iframe：清除加载态并延迟重新挂载 */
     refreshIframe() {
+      this.dropIframeBootConfirmation()
       this.iframeLoaded = false
       this.iframeError = false
       this.iframeAliveKey = null
@@ -308,6 +324,14 @@ export const harness = defineStore({
         iframeRefreshTimer = undefined
         this.iframeKey++
       }, 800)
+    },
+
+    /** 判断这一代文档作废：只撤 ready，不退还已花掉的尝试次数 */
+    dropIframeBootConfirmation() {
+      iframeDocumentSeq++
+      if (this.iframeBootReadyKey !== null)
+        iframeReloadGate.invalidate()
+      this.iframeBootReadyKey = null
     },
 
     /** iframe 加载成功/失败时由视图回调更新状态 */
@@ -334,11 +358,13 @@ export const harness = defineStore({
      * 同时撤回 load 结论：这一代已经没有任何已加载的文档了。
      */
     markIframeLeaving() {
+      this.dropIframeBootConfirmation()
       this.iframeAliveKey = null
       this.iframeLoaded = false
     },
 
     markIframeBootReady() {
+      this.iframeBootReadyKey = this.iframeKey
       iframeReloadGate.markReady()
       if (iframeRefreshTimer !== undefined) {
         clearTimeout(iframeRefreshTimer)
@@ -348,10 +374,23 @@ export const harness = defineStore({
 
     async recoverIframeBoot() {
       const generation = this.iframeKey
+      const documentSeq = iframeDocumentSeq
+      const token = bootToken
+      const stillNeeded = () => generation === this.iframeKey
+        && documentSeq === iframeDocumentSeq
+        && token === bootToken
+        && !this.iframeBootReady
+        && this.serviceRunning
+        && this.status === 'ready'
       const decision = iframeReloadGate.request(generation)
       if (decision === 'duplicate' || decision === 'ready')
         return
       if (decision === 'exhausted') {
+        if (!this.busyAction && consumeClientBootRestart()) {
+          console.warn('[Harness] client boot stalled after every bounded reload; restarting the service once')
+          await this.restart()
+          return
+        }
         const reason = i18next.t('errors.client_boot_stalled')
         const error = startupError('client-modules', reason, 'absolute')
         this.fail(error.message, undefined, undefined, undefined, this.serviceRunning)
@@ -360,9 +399,18 @@ export const harness = defineStore({
 
       const result = await pollHarnessReadiness(
         IFRAME_RECOVERY_ABSOLUTE_TIMEOUT,
-        () => generation === this.iframeKey && this.serviceRunning,
+        stillNeeded,
       )
-      if (generation !== this.iframeKey || !this.serviceRunning)
+      // 换帧、帧内导航与重新启动都会替换文档：结论属于旧文档，不能再重挂或失败新文档
+      if (generation !== this.iframeKey || documentSeq !== iframeDocumentSeq || token !== bootToken)
+        return
+      if (result.notOwned) {
+        const reason = result.reason ?? i18next.t('errors.no_readiness_reason')
+        const error = startupError(result.phase ?? 'process-boot', reason, 'exited')
+        this.fail(error.message, undefined, undefined, undefined, false)
+        return
+      }
+      if (!stillNeeded())
         return
       if (result.healthy) {
         this.refreshIframe()
@@ -371,9 +419,8 @@ export const harness = defineStore({
 
       const phase = result.phase ?? 'client-modules'
       const reason = result.reason ?? i18next.t('errors.no_readiness_reason')
-      const kind = result.notOwned ? 'exited' : result.timeout ?? 'failed'
-      const error = startupError(phase, reason, kind)
-      this.fail(error.message, undefined, undefined, undefined, !result.notOwned)
+      const error = startupError(phase, reason, result.timeout ?? 'failed')
+      this.fail(error.message, undefined, undefined, undefined, true)
     },
 
     /**
@@ -445,13 +492,35 @@ export const harness = defineStore({
         throw startupError('process-boot', ownershipFailure, 'exited')
       }
 
-      const readyInfo = await invoke<{ service_url: string }>('get_runtime_info')
+      let readyInfo = await invoke<{ service_url: string }>('get_runtime_info')
       if (token !== bootToken)
         return false
 
+      // `launch_harness` 返回后 supervisor 仍可能改写端口，探测落在旧端口时按新地址重试两次
+      let readinessProbe = probe
+      for (let requeued = 0; requeued < 2; requeued++) {
+        if (!readinessProbe?.bootOrigin || readinessProbe.bootOrigin === readyInfo.service_url)
+          break
+        const retried = await pollHarnessReadiness(STARTUP_ABSOLUTE_TIMEOUT, () => token === bootToken)
+        if (token !== bootToken)
+          return false
+        if (!retried.healthy) {
+          const reason = retried.reason ?? i18next.t('errors.no_readiness_reason')
+          if (retried.notOwned) {
+            this.serviceRunning = false
+            throw startupError('process-boot', reason, 'exited')
+          }
+          throw startupError(retried.phase ?? 'client-modules', reason, retried.timeout ?? 'failed')
+        }
+        readinessProbe = retried
+        readyInfo = await invoke<{ service_url: string }>('get_runtime_info')
+        if (token !== bootToken)
+          return false
+      }
+
       this.serviceUrl = readyInfo.service_url
       this.iframeSrc = generateTimestampedUrl(readyInfo.service_url)
-      this.frontendBootHtml = probe?.bootOrigin === readyInfo.service_url ? probe.bootHtml ?? null : null
+      this.frontendBootHtml = readinessProbe?.bootOrigin === readyInfo.service_url ? readinessProbe.bootHtml ?? null : null
       resetPortConflictRestarts()
       this.serviceHealthy = true
       this.serviceRunning = true
@@ -503,6 +572,7 @@ export const harness = defineStore({
       this.iframeLoaded = false
       this.iframeError = false
       this.iframeAliveKey = null
+      this.iframeBootReadyKey = null
       this.startupPhase = 'process-boot'
       this.startupReason = i18next.t('status.loading_process')
       try {
@@ -583,6 +653,7 @@ export const harness = defineStore({
       this.iframeLoaded = false
       this.iframeError = false
       this.iframeAliveKey = null
+      this.iframeBootReadyKey = null
       // 重新启动/进入启动流程时先退出上一轮的错误与修复态（重启可能由插件修复、
       // 配置切换触发），避免旧的「启动失败 / Preview」等信息在启动期间闪现。
       // 注意：保留 attempts 计数，连续失败仍能命中「频繁失败」提示。

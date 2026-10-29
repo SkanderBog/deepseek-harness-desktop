@@ -309,6 +309,12 @@ export class BoundedReloadGate {
     this.ready = true
   }
 
+  /** 撤销「已就绪」，让同一代也能重新申请恢复；已花掉的尝试次数不退 */
+  invalidate(): void {
+    this.ready = false
+    this.lastGeneration = -1
+  }
+
   reset(): void {
     this.attempts = 0
     this.lastGeneration = -1
