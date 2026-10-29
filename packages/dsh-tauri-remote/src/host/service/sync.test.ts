@@ -230,6 +230,7 @@ describe('syncEngine.apply', () => {
     const pending = sync.apply(machineId, [], [{ name: 'alpha', root: 'dsh' }])
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce())
     try {
+      expect(machine.status(machineId).progress).toEqual({ phase: 'syncing', attempt: 0, total: 1 })
       await expect(sync.apply(machineId, [], [{ name: 'beta', root: 'dsh' }])).rejects.toThrow('sync already running')
     }
     finally {
@@ -243,7 +244,11 @@ describe('syncEngine.apply', () => {
     const refresh = vi.spyOn(machine, 'syncProfiles').mockRejectedValueOnce(new Error('profile unavailable'))
     const connect = vi.fn(async () => fakeSession(() => ok()))
     seed({ connect })
+    const progress = vi.spyOn(machine, 'setProgress')
     await expect(sync.apply(machineId, [], [{ name: 'alpha', root: 'dsh' }])).rejects.toThrow('profile unavailable')
+    expect(progress).toHaveBeenCalledWith(machineId, { phase: 'syncing', attempt: 0, total: 1 })
+    expect(progress).toHaveBeenLastCalledWith(machineId)
+    expect(machine.status(machineId).progress).toBeUndefined()
     await expect(sync.apply(machineId, [], [{ name: 'alpha', root: 'dsh' }])).resolves.toEqual({ items: [] })
     expect(refresh).toHaveBeenCalledTimes(2)
     expect(connect).toHaveBeenCalledTimes(1)

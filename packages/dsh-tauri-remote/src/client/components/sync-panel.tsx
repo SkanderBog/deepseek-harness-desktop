@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react'
 import * as machinesService from '../service/machines'
 import * as syncService from '../service/sync'
 import { store } from '../store/index'
-import { syncKeyOf, toggleSelection } from '../store/modules/sync.utils'
+import { sameSyncTarget, syncKeyOf, toggleSelection } from '../store/modules/sync.utils'
 import { errorTextOf } from '../utils/error'
 
 interface SyncPanelProps {
@@ -45,12 +45,13 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
   const target = connected.find(machine => machine.id === targetId)
     ?? connected.find(machine => machine.id === syncState.machineId)
     ?? connected[0]
-  const progress = target === undefined ? undefined : machinesState.statuses[target.id]?.progress
+  const runningTarget = connected.find(machine => machinesState.statuses[machine.id]?.progress?.phase === 'syncing')
+  const shownTarget = runningTarget ?? target
+  const progress = shownTarget === undefined ? undefined : machinesState.statuses[shownTarget.id]?.progress
   const syncing = progress?.phase === 'syncing' ? progress : undefined
   const hostSyncing = Object.values(machinesState.statuses).some(status => status.progress?.phase === 'syncing')
   const applying = syncState.applying || hostSyncing
-  const resultsMatchTarget = syncState.machineId === null || syncState.machineId === target?.id
-  const resultTarget = [...machinesState.machines, ...machinesState.discovered].find(machine => machine.id === syncState.machineId)
+  const resultsMatchTarget = sameSyncTarget(syncState.target, target)
   const pluginRows: SelectableRow[] = (preview?.plugins ?? []).map(plugin => ({
     key: syncKeyOf({ kind: 'plugin', name: plugin.name }),
     name: plugin.name,
@@ -187,6 +188,7 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
                   {syncing !== undefined
                     ? (
                         <div className="flex min-w-[220px] flex-1 items-center gap-[8px]" data-testid="sync-progress">
+                          <span className="shrink-0 text-[12px] leading-[18px] text-secondary">{shownTarget?.name}</span>
                           <span className="block h-[4px] flex-1 overflow-hidden rounded-[2px] bg-border-l2" aria-hidden="true">
                             <span
                               className="block h-full rounded-[2px] bg-brand [transition:width_200ms_ease]"
@@ -224,7 +226,7 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
           )
         : null}
       {syncState.results !== null
-        ? <SyncResults results={syncState.results} applying={applying || target === undefined || !resultsMatchTarget || syncState.error !== null} targetName={resultTarget?.name ?? syncState.machineId} t={t} onRetry={retryFailed} />
+        ? <SyncResults results={syncState.results} applying={applying || target === undefined || !resultsMatchTarget || syncState.error !== null} targetName={syncState.target?.name ?? syncState.machineId} t={t} onRetry={retryFailed} />
         : null}
     </section>
   )

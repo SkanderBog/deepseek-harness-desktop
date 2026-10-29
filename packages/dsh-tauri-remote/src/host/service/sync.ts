@@ -26,7 +26,9 @@ export const sync = defineService({
       throw new Error('sync already running for this remote profile')
     const task = Symbol(machineId)
     activeSyncs.set(machineId, { target: undefined, task })
+    const progress: SyncProgress = { settled: 0, total: uniquePlugins.length + uniqueSkills.length }
     try {
+      machine.setProgress(machineId, { phase: 'syncing', attempt: 0, total: progress.total })
       await machine.syncProfiles()
       const profile = machineProfiles.get(machineId)
       const profileName = machine.profileName(machineId)
@@ -35,10 +37,8 @@ export const sync = defineService({
       if (target !== undefined && [...activeSyncs.values()].some(active => active.task !== task && active.target === target))
         throw new Error('sync already running for this remote profile')
       activeSyncs.set(machineId, { target, task })
-      const progress: SyncProgress = { settled: 0, total: uniquePlugins.length + uniqueSkills.length }
       let session: RemoteSession | undefined
       try {
-        machine.setProgress(machineId, { phase: 'syncing', attempt: 0, total: progress.total })
         session = await machine.openSession(machineId)
         if (uniquePlugins.length > 0)
           await carryWorkspaceAllowlist(session, profileName, machine.localAllowlist()).then(() => undefined).catch(() => undefined)
@@ -47,13 +47,13 @@ export const sync = defineService({
       }
       finally {
         await session?.close().catch(() => undefined)
-        if (activeSyncs.get(machineId)?.task === task)
-          machine.setProgress(machineId)
       }
     }
     finally {
-      if (activeSyncs.get(machineId)?.task === task)
+      if (activeSyncs.get(machineId)?.task === task) {
+        machine.setProgress(machineId)
         activeSyncs.delete(machineId)
+      }
     }
     return { items }
   },

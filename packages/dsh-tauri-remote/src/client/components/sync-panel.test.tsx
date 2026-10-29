@@ -6,6 +6,7 @@ import { cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { en } from '../locales/index'
+import { applySync } from '../service/sync'
 import { store } from '../store/index'
 import { answer, replies, resetWire, sent } from '../test-utils/client-mock'
 import { SyncPanel } from './sync-panel'
@@ -133,7 +134,7 @@ describe('syncPanel', () => {
   it('restores the running target after remount and blocks a second submission', async () => {
     routeWire({})
     seedConnected()
-    store.sync.beginApply('a')
+    store.sync.beginApply('a', machineA)
     store.machines.commitList({
       machines: [machineA],
       discovered: [],
@@ -162,6 +163,58 @@ describe('syncPanel', () => {
     expect(applyCalls()).toHaveLength(0)
   })
 
+  it('labels live progress with the running machine when another target is selected', async () => {
+    routeWire({})
+    const other = { ...machineA, id: 'b', name: 'beta' }
+    store.machines.commitList({ machines: [machineA, other], discovered: [], statuses: { a: connectedStatus, b: connectedStatus } })
+    store.sync.commitPreview(preview)
+    const view = render(<SyncPanel t={t} />)
+    fireEvent.click(screen.getByTestId('sync-target-a'))
+    store.machines.commitList({
+      machines: [machineA, other],
+      discovered: [],
+      statuses: { a: connectedStatus, b: { ...connectedStatus, progress: { phase: 'syncing', attempt: 2, total: 3, item: 'plugin-b' } } },
+    })
+    view.rerender(<SyncPanel t={t} />)
+    expect(screen.getByTestId('sync-target-a').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('sync-progress').textContent).toContain('beta')
+    expect(screen.getByTestId('sync-progress').textContent).toContain('2/3')
+    expect(screen.getByTestId('sync-progress').textContent).toContain('plugin-b')
+  })
+
+  it.each([
+    { name: 'renamed' },
+    { host: '10.0.0.2' },
+    { port: 2222 },
+    { user: 'deploy' },
+    { profileName: 'work' },
+  ])('blocks stale retries after a same-ID target edit %j', async (edit) => {
+    routeWire({ [`${baseURL}/sync/apply`]: { items: [{ kind: 'skill', name: 'alpha', root: 'dsh', ok: false, error: 'old failure' }] } })
+    seedConnected()
+    await applySync({ machineId: 'a', plugins: [], skills: preview.skills })
+    const view = render(<SyncPanel t={t} />)
+    expect(screen.getByTestId('sync-retry').hasAttribute('disabled')).toBe(false)
+    store.machines.commitList({ machines: [{ ...machineA, ...edit }], discovered: [], statuses: { a: connectedStatus } })
+    view.rerender(<SyncPanel t={t} />)
+    expect(screen.getByTestId('sync-retry').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTestId('sync-results').textContent).toContain('Sync results for alpha')
+    fireEvent.click(screen.getByTestId('sync-retry'))
+    expect(applyCalls()).toHaveLength(1)
+  })
+
+  it('keeps the applied name when a target is renamed during a sync', async () => {
+    const response = Promise.withResolvers<ReturnType<typeof replies.ok>>()
+    answer(() => response.promise)
+    seedConnected()
+    const pending = applySync({ machineId: 'a', plugins: [], skills: preview.skills })
+    store.machines.commitList({ machines: [{ ...machineA, name: 'renamed' }], discovered: [], statuses: { a: connectedStatus } })
+    response.resolve(replies.ok({ items: [{ kind: 'skill', name: 'alpha', root: 'dsh', ok: false }] }))
+    await pending
+    render(<SyncPanel t={t} />)
+    expect(screen.getByTestId('sync-results').textContent).toContain('Sync results for alpha')
+    expect(screen.getByTestId('sync-retry').hasAttribute('disabled')).toBe(true)
+  })
+
   it('labels results by machine and prevents retry on another target', async () => {
     routeWire({})
     const other = { ...machineA, id: 'b', name: 'beta' }
@@ -171,7 +224,7 @@ describe('syncPanel', () => {
       statuses: { a: connectedStatus, b: connectedStatus },
     })
     store.sync.commitPreview(preview)
-    store.sync.beginApply('a')
+    store.sync.beginApply('a', machineA)
     store.sync.endApply()
     store.sync.mergeResults([{ kind: 'skill', name: 'alpha', root: 'dsh', ok: false, error: 'missing' }])
     render(<SyncPanel t={t} />)
@@ -195,7 +248,7 @@ describe('syncPanel', () => {
     })
     store.sync.commitPreview(preview)
     if (source === 'remembered') {
-      store.sync.beginApply('b')
+      store.sync.beginApply('b', other)
       store.sync.endApply()
     }
     const view = render(<SyncPanel t={t} />)
@@ -222,7 +275,7 @@ describe('syncPanel', () => {
       statuses: { a: connectedStatus, b: connectedStatus },
     })
     store.sync.commitPreview(preview)
-    store.sync.beginApply('b')
+    store.sync.beginApply('b', other)
     render(<SyncPanel t={t} />)
     await waitFor(() => expect(screen.getByTestId('sync-target-a')).toBeTruthy())
     fireEvent.click(screen.getByTestId('sync-target-a'))
@@ -234,6 +287,8 @@ describe('syncPanel', () => {
   it('renders partial failures per item with reasons and a retry that re-sends only them', async () => {
     routeWire({ [`${baseURL}/sync/apply`]: { items: [] }, [`${baseURL}/machines`]: { items: [] } })
     seedConnected()
+    store.sync.beginApply('a', machineA)
+    store.sync.endApply()
     store.sync.mergeResults([
       { kind: 'plugin', name: 'dsh-market', ok: true },
       { kind: 'skill', name: 'alpha', root: 'dsh', ok: false, error: 'exit 1: read-only file system' },
@@ -296,7 +351,7 @@ describe('syncPanel', () => {
   it('invalidates stale retry results after an unconfirmed apply even when the preview refreshes', async () => {
     routeWire({ [`${baseURL}/sync/preview`]: preview }, [`${baseURL}/sync/apply`])
     seedConnected()
-    store.sync.beginApply('a')
+    store.sync.beginApply('a', machineA)
     store.sync.endApply()
     store.sync.mergeResults([{ kind: 'plugin', name: 'dsh-market', ok: false, error: 'earlier failure' }])
     render(<SyncPanel t={t} />)

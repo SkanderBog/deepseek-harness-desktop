@@ -1,3 +1,4 @@
+import type { MachineRow } from '../types/index'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { store } from '../store/index'
@@ -15,9 +16,22 @@ const preview = {
   skills: [{ name: 's', root: 'dsh' }],
 }
 
+const machineA: MachineRow = {
+  id: 'a',
+  name: 'alpha',
+  host: '10.0.0.1',
+  port: 22,
+  user: 'root',
+  hasPassword: false,
+  hasPassphrase: false,
+  remotePort: 3080,
+}
+
 beforeEach(() => {
   resetWire()
   store.sync.reset()
+  store.machines.reset()
+  store.machines.commitList({ machines: [machineA], discovered: [], statuses: {} })
 })
 
 describe('loadSyncPreview', () => {
@@ -67,6 +81,16 @@ describe('applySync', () => {
     answer(() => replies.ok({ items: [{ kind: 'skill', name: 's', root: 'dsh', ok: true }] }))
     await service.applySync({ machineId: 'b', plugins: [], skills: [] })
     expect(store.sync.machineId).toBe('b')
+    expect(store.sync.results).toEqual([{ kind: 'skill', name: 's', root: 'dsh', ok: true }])
+  })
+
+  it('starts fresh results when a same-ID endpoint changes before a new apply', async () => {
+    answer(() => replies.ok({ items: [{ kind: 'plugin', name: 'p', ok: false, error: 'old endpoint' }] }))
+    await service.applySync({ machineId: 'a', plugins: [], skills: [] })
+    store.machines.commitList({ machines: [{ ...machineA, host: '10.0.0.2' }], discovered: [], statuses: {} })
+    answer(() => replies.ok({ items: [{ kind: 'skill', name: 's', root: 'dsh', ok: true }] }))
+    await service.applySync({ machineId: 'a', plugins: [], skills: [] })
+    expect(store.sync.target).toMatchObject({ id: 'a', host: '10.0.0.2' })
     expect(store.sync.results).toEqual([{ kind: 'skill', name: 's', root: 'dsh', ok: true }])
   })
 

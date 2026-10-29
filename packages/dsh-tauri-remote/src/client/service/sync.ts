@@ -20,7 +20,8 @@ export async function loadSyncPreview(): Promise<void> {
 export async function applySync(input: SyncApplyInput): Promise<ServiceResult> {
   if (store.sync.applying)
     return { ok: false, error: 'sync already running' }
-  store.sync.beginApply(input.machineId)
+  const target = [...store.machines.machines, ...store.machines.discovered].find(machine => machine.id === input.machineId)
+  store.sync.beginApply(input.machineId, target ?? null)
   try {
     const result = syncApplyResultOf(await api.postSyncApply({
       machineId: input.machineId,

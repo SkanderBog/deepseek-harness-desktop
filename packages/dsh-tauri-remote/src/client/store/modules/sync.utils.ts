@@ -1,4 +1,11 @@
 import type { SyncItemResult } from '../../types/index'
+import type { SyncTarget } from './sync.types'
+
+export function sameSyncTarget(a: SyncTarget | null | undefined, b: SyncTarget | null | undefined): boolean {
+  return a != null && b != null
+    && a.id === b.id && a.name === b.name && a.host === b.host
+    && a.port === b.port && a.user === b.user && a.profileName === b.profileName
+}
 
 export function syncKeyOf(item: { kind: string, name: string, root?: string }): string {
   return `${item.kind}:${item.root ?? ''}:${item.name}`
