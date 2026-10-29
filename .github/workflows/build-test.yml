@@ -16,7 +16,11 @@ on:
           - macos
           - linux
           - windows
-
+      nightly:
+        description: 验证独立夜间构建身份及资产名称
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -63,8 +67,18 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Stamp nightly version
+        if: inputs.nightly
+        shell: bash
+        run: node scripts/stamp-version.mjs 0.0.0-nightly.test
+
+      # 不注入任何签名/公证 secrets，产出未签名（unsigned/no-notarized）bundle，
+      # 依然完整走一遍 beforeBuildCommand（build:plugins + 前端）+ cargo release 构建。
       - name: Build package
-        run: pnpm tauri build --features tauri/custom-protocol --no-sign --target ${{ matrix.target }}
+        run: pnpm tauri build --target ${{ matrix.target }} ${{ inputs.nightly && '--config src-tauri/tauri.nightly.conf.json' || '' }}
+
+      - name: Normalize release asset names
+        run: node scripts/rename-release-assets.mjs apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6
@@ -111,8 +125,13 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Stamp nightly version
+        if: inputs.nightly
+        shell: bash
+        run: node scripts/stamp-version.mjs 0.0.0-nightly.test
+
       - name: Build packages
-        run: pnpm tauri build --features tauri/custom-protocol --no-sign --bundles appimage,deb
+        run: pnpm tauri build --bundles appimage,deb ${{ inputs.nightly && '--config src-tauri/tauri.nightly.conf.json' || '' }}
 
       - name: Fix AppImage host libraries and GTK backend
         shell: bash
@@ -122,6 +141,9 @@ jobs:
           for appimage in "${appimages[@]}"; do
             bash scripts/fix-appimage-host-libs.sh --require-removal "$appimage"
           done
+
+      - name: Normalize release asset names
+        run: node scripts/rename-release-assets.mjs apps/desktop/src-tauri/target/release/bundle/appimage apps/desktop/src-tauri/target/release/bundle/deb
 
       - name: Verify arm64 glibc ABI
         if: matrix.arch == 'arm64'
@@ -163,19 +185,28 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Stamp nightly version
+        if: inputs.nightly
+        shell: bash
+        run: node scripts/stamp-version.mjs 0.0.0-nightly.test
+
+      # WiX 只接受纯数字版本；NSIS 仍使用完整 SemVer。
       - name: Prepare MSI version override
         shell: bash
         run: |
           node -e "
             const fs = require('fs');
             const rawVer = require('./apps/desktop/src-tauri/tauri.conf.json').version;
-            const cleanVer = rawVer.replace(/[-+].*$/, '');
-            fs.writeFileSync('apps/desktop/src-tauri/ci-bundle.json', JSON.stringify({ bundle: { createUpdaterArtifacts: false, windows: { webviewInstallMode: { type: 'skip' }, wix: { version: cleanVer } } } }));
+            const cleanVer = rawVer.replace(/[-+].*\$/, '');
+            fs.writeFileSync('apps/desktop/release-msi-version.tmp.json', JSON.stringify({ bundle: { windows: { wix: { version: cleanVer } } } }));
             console.log('MSI version override ->', cleanVer);
           "
 
       - name: Build packages
-        run: pnpm tauri build --features tauri/custom-protocol --no-sign --bundles nsis,msi --config src-tauri/ci-bundle.json
+        run: pnpm tauri build ${{ inputs.nightly && '--config src-tauri/tauri.nightly.conf.json' || '' }} --config release-msi-version.tmp.json
+
+      - name: Normalize release asset names
+        run: node scripts/rename-release-assets.mjs apps/desktop/src-tauri/target/release/bundle/nsis apps/desktop/src-tauri/target/release/bundle/msi
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6

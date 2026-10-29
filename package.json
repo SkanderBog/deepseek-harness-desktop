@@ -30,7 +30,8 @@
     "typecheck": "tsc --noEmit",
     "typecheck:native": "pnpm --filter dsh-native typecheck",
     "genapi": "pnpm --filter dsh-tauri-config run genapi",
-    "release": "bumpp"
+    "release": "bumpp",
+    "build:plugins": "tsx scripts/build-plugins.ts"
   },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:lint",

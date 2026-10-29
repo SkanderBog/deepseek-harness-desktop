@@ -1,6 +1,6 @@
 [package]
 name = "deepseek-harness-desktop"
-version = "0.1.0"
+version = "0.25.0"
 description = "DeepSeek Harness desktop shell"
 authors = ["DeepSeek Harness contributors"]
 edition = "2024"

@@ -67,7 +67,7 @@ jobs:
           NODE
 
       - name: Generate iOS project
-        run: pnpm --dir apps/native exec expo prebuild --platform ios --no-install
+        run: pnpm run prebuild:ios
 
       - name: Install CocoaPods dependencies
         working-directory: apps/native/ios
