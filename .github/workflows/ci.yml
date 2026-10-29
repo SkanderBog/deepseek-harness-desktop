@@ -336,8 +336,8 @@ jobs:
 
       - name: Run Windows native notification tests
         if: runner.os == 'Windows'
-        run: cargo test -p tauri-plugin-notifications --lib --no-default-features --locked
-        working-directory: apps/desktop/src-tauri
+        run: cargo test --manifest-path crates/tauri-plugin-notifications/Cargo.toml --lib --no-default-features
+        working-directory: .
 
       - name: Run tests
         run: cargo test --all-features --locked
