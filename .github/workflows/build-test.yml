@@ -106,13 +106,22 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf squashfs-tools
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf squashfs-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build packages
         run: pnpm tauri build --features tauri/custom-protocol --no-sign --bundles appimage,deb
+
+      - name: Fix AppImage host libraries and GTK backend
+        shell: bash
+        run: |
+          mapfile -d '' appimages < <(find apps/desktop/src-tauri/target/release/bundle/appimage -name '*.AppImage' -print0)
+          [ "${#appimages[@]}" -gt 0 ] || { echo '::error::no AppImage was produced'; exit 1; }
+          for appimage in "${appimages[@]}"; do
+            bash scripts/fix-appimage-host-libs.sh --require-removal "$appimage"
+          done
 
       - name: Verify arm64 glibc ABI
         if: matrix.arch == 'arm64'
@@ -154,8 +163,19 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prepare MSI version override
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const rawVer = require('./apps/desktop/src-tauri/tauri.conf.json').version;
+            const cleanVer = rawVer.replace(/[-+].*$/, '');
+            fs.writeFileSync('apps/desktop/src-tauri/ci-bundle.json', JSON.stringify({ bundle: { createUpdaterArtifacts: false, windows: { webviewInstallMode: { type: 'skip' }, wix: { version: cleanVer } } } }));
+            console.log('MSI version override ->', cleanVer);
+          "
+
       - name: Build packages
-        run: pnpm tauri build --features tauri/custom-protocol --no-sign --bundles nsis,msi --config apps/desktop/src-tauri/ci-bundle.json
+        run: pnpm tauri build --features tauri/custom-protocol --no-sign --bundles nsis,msi --config src-tauri/ci-bundle.json
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6
