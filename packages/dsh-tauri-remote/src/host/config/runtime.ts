@@ -33,6 +33,8 @@ export const machineProfiles = new Map<MachineId, MachineProfile>()
 
 export const machineStates = new Map<MachineId, MachineState>()
 
+export const activeSyncs = new Map<MachineId, { target: string | undefined, task: symbol }>()
+
 export const machineTable: { enabled: boolean, machines: Map<MachineId, MachineProfile> } = {
   enabled: false,
   machines: new Map(),
@@ -255,6 +257,7 @@ export function clearHostRuntime(): void {
   sourceSession = ''
   machineProfiles.clear()
   machineStates.clear()
+  activeSyncs.clear()
   machineTable.enabled = false
   machineTable.machines.clear()
   eventBuffers.clear()

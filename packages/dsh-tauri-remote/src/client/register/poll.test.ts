@@ -80,6 +80,21 @@ describe('pollFeature', () => {
     stop()
   })
 
+  it('polls an already running host sync after the panel remounts', async () => {
+    vi.useFakeTimers()
+    const stop = pollFeature.call({} as unknown as ClientContext)
+    store.machines.status = 'ready'
+    store.machines.machines = [machineA]
+    store.machines.statuses = { a: { state: 'connected', progress: { phase: 'syncing', attempt: 0, total: 2 } } }
+    try {
+      await vi.advanceTimersByTimeAsync(MACHINES_INTERVAL_MS + 50)
+      expect(urls()).toEqual([`${baseURL}/machines`, `${baseURL}/machines/events`])
+    }
+    finally {
+      stop()
+    }
+  })
+
   it('polls access during the first long tunnel mutation even when the saved snapshot is still stopped', async () => {
     vi.useFakeTimers()
     const mutation = Promise.withResolvers<ReturnType<typeof replies.ok>>()

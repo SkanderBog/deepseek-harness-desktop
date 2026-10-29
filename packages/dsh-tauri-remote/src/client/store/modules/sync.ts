@@ -1,10 +1,10 @@
 import type { SyncItemResult, SyncPreview } from '../../types/index'
-import type { SyncState } from './sync.types'
+import type { SyncState, SyncTarget } from './sync.types'
 import { defineStore } from 'dsh-tauri/client'
-import { mergeSyncResults } from './sync.utils'
+import { mergeSyncResults, sameSyncTarget } from './sync.utils'
 
 function initialState(): SyncState {
-  return { status: 'idle', error: null, preview: null, applying: false, results: null }
+  return { status: 'idle', error: null, preview: null, applying: false, machineId: null, target: null, results: null }
 }
 
 export const sync = defineStore({
@@ -28,8 +28,13 @@ export const sync = defineStore({
     },
     fail(error: string): void {
       this.error = error
+      this.results = null
     },
-    beginApply(): void {
+    beginApply(machineId: string | null = null, target: SyncTarget | null = null): void {
+      if (this.machineId !== machineId || !sameSyncTarget(this.target, target))
+        this.results = null
+      this.machineId = machineId
+      this.target = target === null ? null : { ...target }
       this.applying = true
       this.error = null
     },

@@ -1,3 +1,4 @@
+import type { MachineRow } from '../types/index'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { store } from '../store/index'
@@ -15,9 +16,22 @@ const preview = {
   skills: [{ name: 's', root: 'dsh' }],
 }
 
+const machineA: MachineRow = {
+  id: 'a',
+  name: 'alpha',
+  host: '10.0.0.1',
+  port: 22,
+  user: 'root',
+  hasPassword: false,
+  hasPassphrase: false,
+  remotePort: 3080,
+}
+
 beforeEach(() => {
   resetWire()
   store.sync.reset()
+  store.machines.reset()
+  store.machines.commitList({ machines: [machineA], discovered: [], statuses: {} })
 })
 
 describe('loadSyncPreview', () => {
@@ -44,6 +58,42 @@ describe('loadSyncPreview', () => {
 })
 
 describe('applySync', () => {
+  it('rejects a second submission without clearing the running state', async () => {
+    const response = Promise.withResolvers<ReturnType<typeof replies.ok>>()
+    let requests = 0
+    answer(() => ++requests === 1 ? response.promise : replies.fail('duplicate request'))
+    const pending = service.applySync({ machineId: 'a', plugins: [], skills: [] })
+    try {
+      await expect(service.applySync({ machineId: 'a', plugins: [], skills: [] })).resolves.toMatchObject({ ok: false })
+      expect(sent).toHaveLength(1)
+      expect(store.sync.applying).toBe(true)
+      expect(store.sync.error).toBeNull()
+    }
+    finally {
+      response.resolve(replies.ok({ items: [] }))
+      await pending
+    }
+  })
+
+  it('does not merge results from different target machines', async () => {
+    answer(() => replies.ok({ items: [{ kind: 'plugin', name: 'p', ok: false, error: 'failed on a' }] }))
+    await service.applySync({ machineId: 'a', plugins: [], skills: [] })
+    answer(() => replies.ok({ items: [{ kind: 'skill', name: 's', root: 'dsh', ok: true }] }))
+    await service.applySync({ machineId: 'b', plugins: [], skills: [] })
+    expect(store.sync.machineId).toBe('b')
+    expect(store.sync.results).toEqual([{ kind: 'skill', name: 's', root: 'dsh', ok: true }])
+  })
+
+  it('starts fresh results when a same-ID endpoint changes before a new apply', async () => {
+    answer(() => replies.ok({ items: [{ kind: 'plugin', name: 'p', ok: false, error: 'old endpoint' }] }))
+    await service.applySync({ machineId: 'a', plugins: [], skills: [] })
+    store.machines.commitList({ machines: [{ ...machineA, host: '10.0.0.2' }], discovered: [], statuses: {} })
+    answer(() => replies.ok({ items: [{ kind: 'skill', name: 's', root: 'dsh', ok: true }] }))
+    await service.applySync({ machineId: 'a', plugins: [], skills: [] })
+    expect(store.sync.target).toMatchObject({ id: 'a', host: '10.0.0.2' })
+    expect(store.sync.results).toEqual([{ kind: 'skill', name: 's', root: 'dsh', ok: true }])
+  })
+
   it('sends the selected items and lands the per-item results', async () => {
     answer(() => replies.ok({ items: [
       { kind: 'plugin', name: 'p', ok: true },

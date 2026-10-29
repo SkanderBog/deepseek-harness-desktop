@@ -23,7 +23,7 @@ export const pollFeature = defineRegister((controller) => {
       return
     if (accessInFlight())
       void refreshAccess()
-    if (machinesInFlight() || store.sync.applying)
+    if (machinesInFlight() || store.sync.applying || Object.values(store.machines.statuses).some(status => status.progress?.phase === 'syncing'))
       void poll()
   }, MACHINES_POLL_INTERVAL_MS)
 })
