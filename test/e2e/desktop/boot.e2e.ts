@@ -134,7 +134,7 @@ describe('桌面端启动冒烟', () => {
           }
         }
         catch (error) {
-          if (!(error instanceof Error) || !/no such frame|stale element reference/i.test(`${error.name}: ${error.message}`))
+          if (!(error instanceof Error) || (!/no such frame|stale element reference/i.test(`${error.name}: ${error.message}`) && error.message !== `Can't switch to frame with selector ${SHELL_IFRAME} because it doesn't exist`))
             throw error
         }
         await browser.pause(250)

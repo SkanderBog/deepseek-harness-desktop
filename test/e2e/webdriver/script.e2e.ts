@@ -126,7 +126,7 @@ describe('Windows WebDriver script integration', () => {
           document.body.append(frame)
         }, selector, text)
         await browser.switchFrame(await browser.$(selector))
-        await browser.waitUntil(() => browser.execute(() => document.readyState === 'complete'))
+        await browser.waitUntil(() => browser.execute(expected => document.body?.textContent?.trim() === expected, text))
         expect(await browser.execute(() => document.body.textContent?.trim()), '原生脚本必须在当前帧文档执行').toBe(text)
       }
     }
