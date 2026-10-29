@@ -1823,13 +1823,13 @@ pub trait PlatformExecutor<R: Runtime>: Send + Sync {
                         if (!el || !el.isConnected) {{
                             throw new Error('stale element reference');
                         }}
-                        if (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME') {{
-                            throw new Error('element is not a frame');
-                        }}
-                        return true;
+                        return el.tagName === 'IFRAME' || el.tagName === 'FRAME';
                     }})()"
                 );
-                self.evaluate_js(&script).await?;
+                let result = self.evaluate_js(&script).await?;
+                if !extract_bool_value(&result)? {
+                    return Err(WebDriverErrorResponse::no_such_frame());
+                }
                 Ok(())
             }
         }

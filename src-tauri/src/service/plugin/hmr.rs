@@ -328,13 +328,33 @@ fn render_layer(roots: &[PathBuf]) -> Option<String> {
         "
     ignored:",
     );
-    for pattern in ignore_patterns() {
-        yaml.push_str(
-            "
-      - '",
-        );
-        yaml.push_str(&pattern);
-        yaml.push('\'');
+    for root in roots {
+        let relative = root_value(&base, root);
+        let mut escaped = String::new();
+        for ch in relative.chars() {
+            if "\\*?[]{}()!+@".contains(ch) {
+                escaped.push('\\');
+            }
+            escaped.push(ch);
+        }
+        let prefix = if relative == "." { "" } else { &escaped };
+        let native_prefix = prefix.replace('/', "[/\\\\]");
+        let mut patterns = ignore_patterns();
+        if !prefix.is_empty() {
+            patterns.extend(["node_modules".to_string(), ".*".to_string()]);
+        }
+        for pattern in patterns {
+            let pattern = if prefix.is_empty() {
+                pattern
+            } else if pattern.starts_with("**/") {
+                format!("{prefix}/{pattern}")
+            } else {
+                format!("{native_prefix}[/\\\\]{pattern}")
+            };
+            yaml.push_str("\n      - '");
+            yaml.push_str(&pattern.replace('\'', "''"));
+            yaml.push('\'');
+        }
     }
     yaml.push_str(
         "
@@ -354,32 +374,19 @@ fn root_value(base: &Path, root: &Path) -> String {
     }
 }
 
-/// 监听根下必须剪掉的子树，按 picomatch 语法写成纯 POSIX 形态的通配串。
-///
-/// 两个实测结论决定了这里的写法（踩过一次坑）：
-///
-/// 1. chokidar 交给 `ignored` 谓词的路径已经做过 `\` → `/` 归一化（`normalizePathToUnix`），
-///    所以模式里不需要任何 `[/\]` 反斜杠分支，写纯 `/` 即可跨平台生效。
-/// 2. 更要紧的是 `**` 的语义：picomatch 只在 `**` 后面紧跟 `/` 时才把它当 globstar，
-///    紧跟字符类（`[/\]`）会被降级成普通的 `*`。此前写成 `**[/\]node_modules`
-///    实际等价于 `*/node_modules`——只能匹配「恰好一层父目录 + node_modules」，
-///    于是**监听根自己的 `node_modules`**、根级 `.git` / `.worktrees` 一律没被剪掉；
-///    chokidar 便把整个依赖树都挂了监听器（macOS 上一个被监听文件一个 fd），
-///    进程 fd 数在几秒内就能涨到上万，超过 macOS `OPEN_MAX`(10240) 后
-///    所有需要管道的子进程 spawn 都以 `EBADF` 失败（bash / grep / glob / PTC worker
-///    全挂，而纯读写文件的工具仍正常）。
-///
-/// 所以这里保留 `**/…` 的 globstar 语义：`**/x` 同时覆盖根级与任意深度的 `x`，
-/// 内容再用 `/**` 铺满；点开头的目录（`.git`、`.worktrees`、`.cache` …）同样处理。
+/// 核心在匹配前调用 `path.relative()`，Windows 会重新产生反斜杠；仅 POSIX 规则会
+/// 漏掉依赖树并耗尽监听资源，因此两种分隔符都要覆盖，POSIX 仍保留 globstar 语义。
 fn ignore_patterns() -> Vec<String> {
     vec![
-        // 依赖树：根级 / 任意深度的 node_modules 及其中的全部文件。
         "**/node_modules".to_string(),
         "**/node_modules/**".to_string(),
-        // 点开头的条目（.git、.worktrees、.cache …）及其内容。
         "**/.*".to_string(),
         "**/.*/**".to_string(),
-        // 核心默认规则里的工程内临时目录。
+        "**[/\\\\]node_modules".to_string(),
+        "**[/\\\\]node_modules[/\\\\]**".to_string(),
+        "node_modules[/\\\\]**".to_string(),
+        "**[/\\\\].*".to_string(),
+        ".*[/\\\\]**".to_string(),
         "cache".to_string(),
         "data".to_string(),
     ]
@@ -450,30 +457,6 @@ mod tests {
             return;
         };
         std::fs::write(Path::new(&dir).join(name), yaml).unwrap();
-    }
-
-    #[test]
-    fn ignore_patterns_keep_globstar_semantics() {
-        let patterns = ignore_patterns();
-        assert_eq!(
-            patterns,
-            vec![
-                "**/node_modules".to_string(),
-                "**/node_modules/**".to_string(),
-                "**/.*".to_string(),
-                "**/.*/**".to_string(),
-                "cache".to_string(),
-                "data".to_string(),
-            ]
-        );
-        // 两条硬约束：chokidar 已把路径归一化成 `/`，模式里不该再有反斜杠或字符类；
-        // 而 `**` 后面必须紧跟 `/` 才不会在 picomatch 里被降级成 `*`——降级后
-        // `**[/\]node_modules` 只等价于 `*/node_modules`，根级的 `node_modules`、
-        // `.git`、`.worktrees` 都不会被剪枝（详见 `ignore_patterns` 的文档注释）。
-        for pattern in &patterns {
-            assert!(!pattern.contains('\\'), "{pattern}");
-            assert!(!pattern.contains('['), "{pattern}");
-        }
     }
 
     #[test]
@@ -641,7 +624,10 @@ mod tests {
         // 目录的形态，不硬编码平台），其余字节逐字固定。
         let root = tmp_dir("render").join("plugins");
         std::fs::create_dir_all(&root).unwrap();
-        let roots = vec![root.join("mine"), root.join("other").join("sub")];
+        let roots = vec![
+            root.join("repo").join(".worktrees").join("feature"),
+            root.join("other").join("sub"),
+        ];
         let yaml = render_layer(&roots).expect("render");
 
         let entries: Vec<serde_yaml::Value> = serde_yaml::from_str(&yaml).expect("parse");
@@ -653,9 +639,9 @@ mod tests {
         let base = config["base"].as_str().expect("base");
         assert!(base.starts_with("file:///"), "{base}");
         assert_eq!(config["root"].as_sequence().unwrap().len(), 2, "{yaml}");
-        assert_eq!(config["root"][0].as_str(), Some("mine"));
+        assert_eq!(config["root"][0].as_str(), Some("repo/.worktrees/feature"));
         assert_eq!(config["root"][1].as_str(), Some("other/sub"));
-        assert_eq!(config["ignored"].as_sequence().unwrap().len(), 6);
+        assert_eq!(config["ignored"].as_sequence().unwrap().len(), 26);
         assert_eq!(config["debounce"].as_u64(), Some(HMR_DEBOUNCE_MS));
 
         // 逐字固定整份补丁层：核心按 id 整块替换 config，任何字段写错或漏写都会被静默忽略。
@@ -666,15 +652,35 @@ mod tests {
             "  config:",
             base_line.as_str(),
             "    root:",
-            "      - mine",
+            "      - repo/.worktrees/feature",
             "      - other/sub",
             "    ignored:",
-            "      - '**/node_modules'",
-            "      - '**/node_modules/**'",
-            "      - '**/.*'",
-            "      - '**/.*/**'",
-            "      - 'cache'",
-            "      - 'data'",
+            "      - 'repo/.worktrees/feature/**/node_modules'",
+            "      - 'repo/.worktrees/feature/**/node_modules/**'",
+            "      - 'repo/.worktrees/feature/**/.*'",
+            "      - 'repo/.worktrees/feature/**/.*/**'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]**[/\\\\]node_modules'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]**[/\\\\]node_modules[/\\\\]**'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]node_modules[/\\\\]**'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]**[/\\\\].*'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\].*[/\\\\]**'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]cache'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]data'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]node_modules'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\].*'",
+            "      - 'other/sub/**/node_modules'",
+            "      - 'other/sub/**/node_modules/**'",
+            "      - 'other/sub/**/.*'",
+            "      - 'other/sub/**/.*/**'",
+            "      - 'other[/\\\\]sub[/\\\\]**[/\\\\]node_modules'",
+            "      - 'other[/\\\\]sub[/\\\\]**[/\\\\]node_modules[/\\\\]**'",
+            "      - 'other[/\\\\]sub[/\\\\]node_modules[/\\\\]**'",
+            "      - 'other[/\\\\]sub[/\\\\]**[/\\\\].*'",
+            "      - 'other[/\\\\]sub[/\\\\].*[/\\\\]**'",
+            "      - 'other[/\\\\]sub[/\\\\]cache'",
+            "      - 'other[/\\\\]sub[/\\\\]data'",
+            "      - 'other[/\\\\]sub[/\\\\]node_modules'",
+            "      - 'other[/\\\\]sub[/\\\\].*'",
             "    debounce: 100",
         ]
         .join("\n")
