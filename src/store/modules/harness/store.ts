@@ -91,6 +91,8 @@ function consumeClientBootRestart(): boolean {
   return true
 }
 let iframeRefreshTimer: ReturnType<typeof setTimeout> | undefined
+/** 当前承载 dsh 页面的文档代；帧内导航与重挂都会推进它（见 `dropIframeBootConfirmation`） */
+let iframeDocumentSeq = 0
 let policyApprovalKey: string | undefined
 
 /**
@@ -324,8 +326,9 @@ export const harness = defineStore({
       }, 800)
     },
 
-    /** 作废这一代 iframe 的 boot 完成确认；只撤 ready，不退还已花掉的尝试次数 */
+    /** 判断这一代文档作废：只撤 ready，不退还已花掉的尝试次数 */
     dropIframeBootConfirmation() {
+      iframeDocumentSeq++
       if (this.iframeBootReadyKey !== null)
         iframeReloadGate.invalidate()
       this.iframeBootReadyKey = null
@@ -371,6 +374,16 @@ export const harness = defineStore({
 
     async recoverIframeBoot() {
       const generation = this.iframeKey
+      const documentSeq = iframeDocumentSeq
+      const token = bootToken
+      // 这一代兜底是否仍然有效：换帧、帧内导航、重新启动、帧内已自报 boot 完成、
+      // 服务退出都会让它作废
+      const stillNeeded = () => generation === this.iframeKey
+        && documentSeq === iframeDocumentSeq
+        && token === bootToken
+        && !this.iframeBootReady
+        && this.serviceRunning
+        && this.status === 'ready'
       const decision = iframeReloadGate.request(generation)
       if (decision === 'duplicate' || decision === 'ready')
         return
@@ -386,24 +399,32 @@ export const harness = defineStore({
         return
       }
 
+      // `stillNeeded` 兼作轮询的继续条件：帧内一旦自报 boot 完成，尚未返回的探测立刻
+      // 收尾，不会用它的失败结论覆盖已经跑完的文档。
       const result = await pollHarnessReadiness(
         IFRAME_RECOVERY_ABSOLUTE_TIMEOUT,
-        () => generation === this.iframeKey && this.serviceRunning,
+        stillNeeded,
       )
-      if (generation !== this.iframeKey || !this.serviceRunning)
+      // 换帧、帧内导航与重新启动都会替换文档：结论属于旧文档，不能再重挂或失败新文档
+      if (generation !== this.iframeKey || documentSeq !== iframeDocumentSeq || token !== bootToken)
+        return
+      if (result.notOwned) {
+        const reason = result.reason ?? i18next.t('errors.no_readiness_reason')
+        const error = startupError(result.phase ?? 'process-boot', reason, 'exited')
+        this.fail(error.message, undefined, undefined, undefined, false)
+        return
+      }
+      if (!stillNeeded())
         return
       if (result.healthy) {
-        // 探测期间室面自己跑完了就不必再重挂：慢机器上白闪一次室面比多等几秒更糟。
-        if (!this.iframeBootReady)
-          this.refreshIframe()
+        this.refreshIframe()
         return
       }
 
       const phase = result.phase ?? 'client-modules'
       const reason = result.reason ?? i18next.t('errors.no_readiness_reason')
-      const kind = result.notOwned ? 'exited' : result.timeout ?? 'failed'
-      const error = startupError(phase, reason, kind)
-      this.fail(error.message, undefined, undefined, undefined, !result.notOwned)
+      const error = startupError(phase, reason, result.timeout ?? 'failed')
+      this.fail(error.message, undefined, undefined, undefined, true)
     },
 
     /**
@@ -475,13 +496,37 @@ export const harness = defineStore({
         throw startupError('process-boot', ownershipFailure, 'exited')
       }
 
-      const readyInfo = await invoke<{ service_url: string }>('get_runtime_info')
+      let readyInfo = await invoke<{ service_url: string }>('get_runtime_info')
       if (token !== bootToken)
         return false
 
+      // `launch_harness` 在 supervisor 发出 started 后即返回，端口冲突重试却在之后才改写
+      // 端口：探测可能落在旧端口上。旧端口的「就绪」不能替新地址背书，按新端口重跑探测；
+      // 最多两轮（supervisor 的重试预算），仍对不上就按最新地址挂载，由帧内自报兜底。
+      let readinessProbe = probe
+      for (let requeued = 0; requeued < 2; requeued++) {
+        if (!readinessProbe?.bootOrigin || readinessProbe.bootOrigin === readyInfo.service_url)
+          break
+        const retried = await pollHarnessReadiness(STARTUP_ABSOLUTE_TIMEOUT, () => token === bootToken)
+        if (token !== bootToken)
+          return false
+        if (!retried.healthy) {
+          const reason = retried.reason ?? i18next.t('errors.no_readiness_reason')
+          if (retried.notOwned) {
+            this.serviceRunning = false
+            throw startupError('process-boot', reason, 'exited')
+          }
+          throw startupError(retried.phase ?? 'client-modules', reason, retried.timeout ?? 'failed')
+        }
+        readinessProbe = retried
+        readyInfo = await invoke<{ service_url: string }>('get_runtime_info')
+        if (token !== bootToken)
+          return false
+      }
+
       this.serviceUrl = readyInfo.service_url
       this.iframeSrc = generateTimestampedUrl(readyInfo.service_url)
-      this.frontendBootHtml = probe?.bootOrigin === readyInfo.service_url ? probe.bootHtml ?? null : null
+      this.frontendBootHtml = readinessProbe?.bootOrigin === readyInfo.service_url ? readinessProbe.bootHtml ?? null : null
       resetPortConflictRestarts()
       this.serviceHealthy = true
       this.serviceRunning = true
