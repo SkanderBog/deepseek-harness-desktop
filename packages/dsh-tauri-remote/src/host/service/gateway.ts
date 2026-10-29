@@ -499,6 +499,13 @@ function sendUpstream(entry: GatewayEntry, request: IncomingMessage, response: S
       timedOut = true
       upstream.destroy()
     }, isWriteClass(request.method) ? LONG_TIMEOUT_MS : SHORT_TIMEOUT_MS)
+    /** 客户端离开即撤掉上游腿：页面跳转打断在途请求时，继续把上游正文读进已无人接收的响应纯属浪费。 */
+    const abort = (): void => {
+      if (response.writableEnded)
+        return
+      upstream.destroy()
+    }
+    response.on('close', abort)
     upstream.on('response', (upstreamResponse) => {
       clearTimeout(timer)
       entry.requests.delete(upstream)
@@ -506,11 +513,15 @@ function sendUpstream(entry: GatewayEntry, request: IncomingMessage, response: S
         .catch((error) => {
           writeGatewayError(entry, response, 500, `网关响应处理失败：${messageOf(error)}`)
         })
-        .finally(resolve)
+        .finally(() => {
+          response.off('close', abort)
+          resolve()
+        })
     })
     upstream.on('error', (error) => {
       clearTimeout(timer)
       entry.requests.delete(upstream)
+      response.off('close', abort)
       const reason = timedOut
         ? timeoutReasonOf(entry)
         : `上游不可达：${entry.upstream.origin}（${codeOf(error) ?? messageOf(error)}）`
@@ -738,6 +749,10 @@ function rejectFromUpstream(entry: GatewayEntry, socket: Duplex, upstreamRespons
   }
   if (declared !== undefined)
     head.push(`content-length: ${declared}`)
+  if (socket.destroyed || !socket.writable) {
+    upstreamResponse.destroy()
+    return
+  }
   writeSocket(socket, `${head.join('\r\n')}\r\n\r\n`)
   upstreamResponse.pipe(socket)
 }
@@ -959,6 +974,11 @@ async function readFormBody(request: IncomingMessage): Promise<string> {
 }
 
 function writeGatewayError(entry: GatewayEntry, response: ServerResponse, status: number, reason: string): void {
+  /** 客户端已离开时既无人接收这个错误，也不该把它记成上游故障：页面跳转打断在途请求属于正常生命周期。 */
+  if (!response.writableEnded && (response.destroyed || !response.writable)) {
+    response.destroy()
+    return
+  }
   emit(entry, 'upstream', reason)
   if (response.headersSent) {
     response.destroy()
