@@ -8,8 +8,7 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
-use tauri::Manager;
-type AppHandle = tauri::AppHandle<tauri_runtime_electron::ElectronRuntime>;
+use tauri::{Manager};
 use tauri_plugin_deep_link::DeepLink;
 use windows_sys::Win32::{
     Foundation::{
@@ -25,13 +24,13 @@ use windows_sys::Win32::{
         WNDPROC, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
     },
 };
+use crate::{AppHandle};
 
 const MESSAGE_TAG: usize = 1542;
 const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 const SEND_TIMEOUT_MS: u32 = 5000;
 const STOP_TARGET: u32 = WM_APP + 1;
 
-// 直依赖未启用 Gdi/DataExchange；这里只声明协议所需的原生 ABI，不扩大 Cargo 特性。
 #[repr(C)]
 struct WindowClass {
     style: u32,
@@ -122,9 +121,7 @@ fn dispatch(inbox: &Arc<Mutex<Inbox>>, app: &AppHandle) -> Result<(), String> {
     app.run_on_main_thread(move || {
         let pending = std::mem::take(&mut inbox.lock().unwrap_or_else(|e| e.into_inner()).pending);
         for request in pending {
-            if let Some(deep_link) =
-                handle.try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>()
-            {
+            if let Some(deep_link) = handle.try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>() {
                 deep_link.handle_cli_arguments(request.args.iter());
             }
             crate::utils::show_main_window(&handle);
@@ -199,7 +196,6 @@ impl Drop for NativeWindow {
         unsafe {
             if !self.hwnd.is_null() && DestroyWindow(self.hwnd) == 0 {
                 log::error!("{}", win_error("DESTROY_WINDOW"));
-                // 销毁失败时窗口仍可能回调，不能提前释放它的 userdata。
                 if let Some(data) = self.inbox.take() {
                     let _ = Box::into_raw(data);
                 }
@@ -218,17 +214,16 @@ unsafe extern "system" fn window_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        WM_NCCREATE => unsafe {
+        WM_NCCREATE => {
             let create = &*(lparam as *const CREATESTRUCTW);
             SetLastError(0);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as _);
             if GetLastError() != 0 {
                 return 0;
             }
-            // 默认处理初始化窗口标题，旧协议依赖它按 class/title 查找。
             DefWindowProcW(hwnd, msg, wparam, lparam)
-        },
-        WM_COPYDATA => unsafe {
+        }
+        WM_COPYDATA => {
             if lparam == 0 {
                 return 0;
             }
@@ -259,17 +254,17 @@ unsafe extern "system" fn window_proc(
                 }
             }
             1
-        },
+        }
         STOP_TARGET => {
-            unsafe { PostQuitMessage(0) };
+            PostQuitMessage(0);
             1
         }
         WM_CLOSE => 0,
-        WM_NCDESTROY => unsafe {
+        WM_NCDESTROY => {
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             DefWindowProcW(hwnd, msg, wparam, lparam)
-        },
-        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
 
@@ -358,9 +353,7 @@ pub struct SingleInstance {
 impl SingleInstance {
     pub fn attach(&self, app: &AppHandle) -> Result<(), String> {
         if crate::utils::shell_window(app).is_none()
-            || app
-                .try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>()
-                .is_none()
+            || app.try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>().is_none()
         {
             return Err("SINGLE_INSTANCE_NOT_READY: attach after the main window and deep-link plugin are ready".into());
         }
@@ -385,10 +378,8 @@ pub fn claim(identifier: &str) -> Result<Option<SingleInstance>, String> {
     if identifier.is_empty() || identifier.contains('\0') {
         return Err("SINGLE_INSTANCE_INVALID_IDENTIFIER".into());
     }
-    // 先发布 target，旧插件在 CreateMutex 之后立即 FindWindow，反序会放过第二个 owner。
     let mut target = Target::start(identifier)?;
     let name = wide(&format!("{identifier}-sim"));
-    // 旧协议只检查命名对象是否已存在，不等待 mutex；无需持有线程所有权。
     let mutex = unsafe { CreateMutexW(null(), 0, name.as_ptr()) };
     let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
     if mutex.is_null() {
@@ -483,7 +474,6 @@ fn find_owner(identifier: &str, excluded_pid: u32) -> Result<Option<HWND>, Strin
             if GetLastError() != 0 {
                 return Err(win_error("TARGET_CLASS"));
             }
-            // 新 target 的 slot 0 未置位时仍在选举；不能转给另一个 follower，旧插件没有 extra。
             if extra >= 4 {
                 SetLastError(0);
                 let owner = GetWindowLongW(window, 0);

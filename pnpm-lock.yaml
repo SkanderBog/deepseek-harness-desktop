@@ -316,6 +316,9 @@ catalogs:
     '@tanstack/react-query':
       specifier: ^5.101.4
       version: 5.101.4
+    dsh-pet-component:
+      specifier: ^0.2.5
+      version: 0.2.5
     i18next:
       specifier: ^26.3.6
       version: 26.3.6
@@ -348,8 +351,8 @@ catalogs:
       specifier: ^2.12.2
       version: 2.12.2
     '@tauri-apps/plugin-http':
-      specifier: ^2.6.0
-      version: 2.8.3
+      specifier: 2.6.0
+      version: 2.6.0
   testing:
     '@shikijs/langs':
       specifier: 4.3.1
@@ -478,7 +481,9 @@ overrides:
   expo-linking: 57.0.11
 
 patchedDependencies:
+  '@tauri-apps/plugin-http@2.6.0': 6bbec7f8a8e969a867d222e8b2b542d2dbd639ffbaf2184a4df47f330b6ad431
   bumpp: ea42dd1273f65a02e22aa9c25e39361c8dac2320ed2fbff9c58d2bd3f46a40a3
+  dsh-pet-component@0.2.5: bc78110c62c900ae95f521e415f4c491503e89d69d81406def275b0566cfdfee
 
 importers:
 
@@ -750,13 +755,16 @@ importers:
         version: 2.12.3
       '@tauri-apps/plugin-http':
         specifier: catalog:tauri
-        version: 2.8.3
+        version: 2.6.0(patch_hash=6bbec7f8a8e969a867d222e8b2b542d2dbd639ffbaf2184a4df47f330b6ad431)
       '@tauri-apps/plugin-os':
         specifier: 'catalog:'
         version: 2.4.0
       '@tauri-apps/plugin-store':
         specifier: 'catalog:'
         version: 2.5.0
+      dsh-pet-component:
+        specifier: catalog:runtime
+        version: 0.2.5(patch_hash=bc78110c62c900ae95f521e415f4c491503e89d69d81406def275b0566cfdfee)(change-case@5.4.4)(qrcode@1.5.4)(react@19.2.8)
       i18next:
         specifier: catalog:runtime
         version: 26.3.6(typescript@5.8.3)
@@ -797,6 +805,9 @@ importers:
       '@types/react-dom':
         specifier: catalog:types
         version: 19.2.4(@types/react@19.2.18)
+      '@types/semver':
+        specifier: catalog:types
+        version: 7.8.0
       '@vitejs/plugin-react':
         specifier: catalog:build
         version: 4.7.0(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(tsx@4.23.12)(yaml@2.9.0))
@@ -1403,18 +1414,12 @@ importers:
       '@gravity-ui/icons':
         specifier: catalog:runtime
         version: 2.21.0(react@19.2.8)
-      '@tailwindcss/postcss':
-        specifier: catalog:build
-        version: 4.1.11
       css-render:
         specifier: catalog:ui
         version: 0.15.14
       dsh-tauri-config:
         specifier: workspace:*
         version: link:../builtin-plugin-config
-      postcss:
-        specifier: catalog:build
-        version: 8.5.26
       tsdown:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
@@ -3824,8 +3829,60 @@ packages:
     peerDependencies:
       react: '>=18'
 
+  '@reause/core@0.1.9':
+    resolution: {integrity: sha512-WFt2HZ7kAS92S1DrjxWcamryfOd3zRaML8jkT1Bf/Y9TEG9+iLQuJqZ4eWRNxhrY66sRf37CFP75nRjofilVdQ==}
+    peerDependencies:
+      react: '>=18'
+
+  '@reause/integrations@0.1.9':
+    resolution: {integrity: sha512-nh1zkXa3cLq2kqxrX2k1HP2WQT4rn5UshOLlSZhLt/NUrs3NAxOpJdq9PxZSyLnR63FpuyWUIMBaJU6BuV+rXg==}
+    peerDependencies:
+      async-validator: ^4
+      axios: ^1
+      change-case: ^5
+      drauu: ^1
+      focus-trap: ^7 || ^8
+      fuse.js: ^7
+      idb-keyval: ^6
+      jwt-decode: ^4
+      nprogress: ^0.2
+      qrcode: ^1.5
+      react: '>=18'
+      sortablejs: ^1
+      universal-cookie: ^7 || ^8
+    peerDependenciesMeta:
+      async-validator:
+        optional: true
+      axios:
+        optional: true
+      change-case:
+        optional: true
+      drauu:
+        optional: true
+      focus-trap:
+        optional: true
+      fuse.js:
+        optional: true
+      idb-keyval:
+        optional: true
+      jwt-decode:
+        optional: true
+      nprogress:
+        optional: true
+      qrcode:
+        optional: true
+      sortablejs:
+        optional: true
+      universal-cookie:
+        optional: true
+
   '@reause/shared@0.1.7':
     resolution: {integrity: sha512-jEXG3fQEfbZp5H3P3JAeWuorESmrYmFlrTo7OzkNGLIrLr9cAu26O6eOMU6nYl/rQP/cJ8FZ48yR+vnI12ORPQ==}
+    peerDependencies:
+      react: '>=18'
+
+  '@reause/shared@0.1.9':
+    resolution: {integrity: sha512-o41IHYd7KdBdm7hEWTxJ3bBXHbeNps4G/Kp3u7PZn2445cuAs5xnhVc82e1KLCAVTXiawJWmPgnnN0AdMh4ffg==}
     peerDependencies:
       react: '>=18'
 
@@ -4489,8 +4546,8 @@ packages:
     engines: {node: '>= 10'}
     hasBin: true
 
-  '@tauri-apps/plugin-http@2.8.3':
-    resolution: {integrity: sha512-MrgCnnxSnzxkMX+Tk1XXB8rSI9hfhUHQmtbn0EpflEDcSx04K1BDfrv51tcK27SCuU/B1j8sNHL0UZur/1iqKA==}
+  '@tauri-apps/plugin-http@2.6.0':
+    resolution: {integrity: sha512-QYXwbGb4hQ9/8Riv/ejU/kPFFnbBIrBcWwV1LIXv2xBKfoj8lkWfGkd9pkCSsBI/pljPtz+IPqfrE3t3bVl3mg==}
 
   '@tauri-apps/plugin-os@2.4.0':
     resolution: {integrity: sha512-XFQjntNNI3Vlqdy4WUGwiXX8DByzKVvoemAcUVkBm9NJPGmoDtII5i+vfuAzWaJfOE5cUJJLUDqXBnd4reSAIA==}
@@ -5467,6 +5524,11 @@ packages:
         optional: true
       typescript:
         optional: true
+
+  dsh-pet-component@0.2.5:
+    resolution: {integrity: sha512-7uaVJfEC0o9tT2+ZeUiNHUwpa7He3q1TWdCwUu/snAus4z9WDUxKiLFracUugvlsCvJru785KKXmGKjgogAAXA==}
+    peerDependencies:
+      react: ^19.0.0
 
   dts-resolver@2.1.3:
     resolution: {integrity: sha512-bihc7jPC90VrosXNzK0LTE2cuLP6jr0Ro8jk+kMugHReJVLIpHz/xadeq3MhuwyO4TD4OA3L1Q8pBBFRc08Tsw==}
@@ -11699,7 +11761,26 @@ snapshots:
       '@reause/shared': 0.1.7(react@19.2.8)
       react: 19.2.8
 
+  '@reause/core@0.1.9(react@19.2.8)':
+    dependencies:
+      '@reause/shared': 0.1.9(react@19.2.8)
+      react: 19.2.8
+
+  '@reause/integrations@0.1.9(change-case@5.4.4)(idb-keyval@6.3.0)(qrcode@1.5.4)(react@19.2.8)':
+    dependencies:
+      '@reause/core': 0.1.9(react@19.2.8)
+      '@reause/shared': 0.1.9(react@19.2.8)
+      react: 19.2.8
+    optionalDependencies:
+      change-case: 5.4.4
+      idb-keyval: 6.3.0
+      qrcode: 1.5.4
+
   '@reause/shared@0.1.7(react@19.2.8)':
+    dependencies:
+      react: 19.2.8
+
+  '@reause/shared@0.1.9(react@19.2.8)':
     dependencies:
       react: 19.2.8
 
@@ -12150,7 +12231,7 @@ snapshots:
       '@tauri-apps/cli-win32-ia32-msvc': 2.12.2
       '@tauri-apps/cli-win32-x64-msvc': 2.12.2
 
-  '@tauri-apps/plugin-http@2.8.3':
+  '@tauri-apps/plugin-http@2.6.0(patch_hash=6bbec7f8a8e969a867d222e8b2b542d2dbd639ffbaf2184a4df47f330b6ad431)':
     dependencies:
       '@tauri-apps/api': 2.12.3
 
@@ -13231,6 +13312,27 @@ snapshots:
       - crossws
       - ocache
 
+  dsh-pet-component@0.2.5(patch_hash=bc78110c62c900ae95f521e415f4c491503e89d69d81406def275b0566cfdfee)(change-case@5.4.4)(qrcode@1.5.4)(react@19.2.8):
+    dependencies:
+      '@gravity-ui/icons': 2.21.0(react@19.2.8)
+      '@reause/core': 0.1.7(react@19.2.8)
+      '@reause/integrations': 0.1.9(change-case@5.4.4)(idb-keyval@6.3.0)(qrcode@1.5.4)(react@19.2.8)
+      css-render: 0.15.14
+      idb-keyval: 6.3.0
+      react: 19.2.8
+    transitivePeerDependencies:
+      - async-validator
+      - axios
+      - change-case
+      - drauu
+      - focus-trap
+      - fuse.js
+      - jwt-decode
+      - nprogress
+      - qrcode
+      - sortablejs
+      - universal-cookie
+
   dts-resolver@2.1.3(oxc-resolver@11.24.2):
     optionalDependencies:
       oxc-resolver: 11.24.2
@@ -14285,8 +14387,7 @@ snapshots:
     dependencies:
       safer-buffer: 2.1.2
 
-  idb-keyval@6.3.0:
-    optional: true
+  idb-keyval@6.3.0: {}
 
   identifier-regex@1.1.0:
     dependencies:

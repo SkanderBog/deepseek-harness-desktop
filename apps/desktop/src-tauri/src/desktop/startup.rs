@@ -70,7 +70,6 @@ fn process_integrity_level() -> std::io::Result<u32> {
         if required < std::mem::size_of::<TOKEN_MANDATORY_LABEL>() as u32 {
             return Err(std::io::Error::last_os_error());
         }
-        // TOKEN_MANDATORY_LABEL 含指针，缓冲区必须满足其对齐要求。
         let mut buffer = vec![0usize; (required as usize).div_ceil(std::mem::size_of::<usize>())];
         if GetTokenInformation(
             token.as_raw_handle(),
@@ -210,6 +209,7 @@ mod tests {
                 "STARTUP_E2E_HOME_INVALID: DSH_E2E_HOME must be a non-empty absolute path"
             );
             assert_eq!(crate::logger::identifier_dir(), None);
+            assert!(!crate::config::force_xwayland_setting());
             assert!(!expected.exists());
         } else {
             use tauri::Manager;
@@ -221,15 +221,16 @@ mod tests {
             assert_eq!(crate::logger::identifier_dir(), Some(expected.clone()));
             assert_eq!(crate::config::store_dat_file_name(), ".store.test.dat");
             std::fs::create_dir_all(&expected).unwrap();
-            let user_store = br#"{"setting":{"auto_start":false}}"#;
+            let user_store = br#"{"setting":{"force_xwayland":false}}"#;
             for name in [".store.dat", ".store.dev.dat"] {
                 std::fs::write(expected.join(name), user_store).unwrap();
             }
             std::fs::write(
                 expected.join(".store.test.dat"),
-                br#"{"setting":{"auto_start":true}}"#,
+                br#"{"setting":{"force_xwayland":true}}"#,
             )
             .unwrap();
+            assert!(crate::config::force_xwayland_setting());
             let mut context = mock_context(noop_assets());
             context.config_mut().app.app_directories_override = Some(
                 tauri::utils::config::AppDirectoriesOverride::Root(directory),
@@ -279,16 +280,15 @@ mod tests {
         };
 
         unsafe extern "system" fn dismiss_error(window: HWND, parameter: LPARAM) -> BOOL {
-            let probe = unsafe { &mut *(parameter as *mut (u32, bool)) };
+            let probe = &mut *(parameter as *mut (u32, bool));
             let mut process = 0;
-            unsafe { GetWindowThreadProcessId(window, &mut process) };
-            if process == probe.0 && unsafe { IsWindowVisible(window) } != 0 {
+            GetWindowThreadProcessId(window, &mut process);
+            if process == probe.0 && IsWindowVisible(window) != 0 {
                 let mut title = [0u16; 256];
-                let length =
-                    unsafe { GetWindowTextW(window, title.as_mut_ptr(), title.len() as i32) };
+                let length = GetWindowTextW(window, title.as_mut_ptr(), title.len() as i32);
                 let title = String::from_utf16_lossy(&title[..length as usize]);
                 if title.contains(env!("DSH_PRODUCT_NAME")) && title.contains("Startup failed") {
-                    probe.1 = unsafe { PostMessageW(window, WM_CLOSE, 0, 0) } != 0;
+                    probe.1 = PostMessageW(window, WM_CLOSE, 0, 0) != 0;
                     return 0;
                 }
             }

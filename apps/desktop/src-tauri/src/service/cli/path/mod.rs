@@ -1,0 +1,259 @@
+
+#[cfg(not(windows))]
+use std::fs;
+use std::path::{Path, PathBuf};
+use tauri::{Manager};
+
+#[cfg(windows)]
+use super::shim::SHIM_CMD_NAME;
+#[cfg(unix)]
+use super::shim::SHIM_SH_NAME;
+#[cfg(windows)]
+use crate::config::CLI_ROOT_DEV_DIR_NAME;
+
+#[cfg(not(windows))]
+use rc::{inject_shell_rc, strip_shell_rc, RC_FILES, RC_MARK_START};
+#[cfg(windows)]
+use registry::{path_contains_token, read_user_path, remove_path_token, write_user_path};
+
+mod pnpm;
+mod rc;
+#[cfg(windows)]
+mod registry;
+use crate::{AppHandle};
+
+#[cfg(windows)]
+pub(crate) use pnpm::find_user_pnpm_executable;
+#[cfg(windows)]
+pub(crate) use registry::{
+    delete_user_env, expand_env, notify_environment_change, read_user_env, write_user_env,
+};
+// 数据目录（issue #871）在 Unix 上复用 rc 的「标记块 + 备份写回」原语，
+pub(crate) use pnpm::find_user_pnpm_from;
+pub use pnpm::{find_user_pnpm, pnpm_env_value};
+#[cfg(unix)]
+pub(crate) use rc::{strip_rc_block, upsert_rc_block, write_rc_with_backup};
+
+#[cfg_attr(not(windows), allow(dead_code))] // 仅 Windows 的 bin 目录计算使用
+const CLI_ROOT_DIR_NAME: &str = "deepseek-harness";
+
+#[cfg(unix)]
+const UNIX_BIN_DIR: &str = ".local/bin";
+
+pub fn get_bin_dir(app_handle: &AppHandle) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let local_data_dir = std::env::var_os("LOCALAPPDATA")
+            .is_none()
+            .then(|| app_handle.path().local_data_dir().ok())
+            .flatten();
+        get_bin_dir_from(local_data_dir.as_deref(), None)
+    }
+    #[cfg(not(windows))]
+    {
+        get_bin_dir_from(None, app_handle.path().home_dir().ok().as_deref())
+    }
+}
+
+pub(crate) fn get_bin_dir_from(
+    _local_data_dir: Option<&Path>,
+    _home_dir: Option<&Path>,
+) -> PathBuf {
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .or_else(|| {
+                _local_data_dir
+                    .and_then(Path::parent)
+                    .map(Path::to_path_buf)
+            })
+            .unwrap_or_else(std::env::temp_dir)
+            .join(if cfg!(debug_assertions) {
+                CLI_ROOT_DEV_DIR_NAME
+            } else {
+                CLI_ROOT_DIR_NAME
+            })
+            .join("bin")
+    }
+    #[cfg(not(windows))]
+    {
+        let home = _home_dir.unwrap_or_else(|| Path::new("."));
+        if cfg!(debug_assertions) {
+            home.join(".local/bin/dev")
+        } else {
+            home.join(UNIX_BIN_DIR)
+        }
+    }
+}
+
+pub fn get_shim_path(app_handle: &AppHandle) -> PathBuf {
+    let bin_dir = get_bin_dir(app_handle);
+    #[cfg(windows)]
+    {
+        bin_dir.join(SHIM_CMD_NAME)
+    }
+    #[cfg(not(windows))]
+    {
+        bin_dir.join(SHIM_SH_NAME)
+    }
+}
+
+pub fn path_registered(app_handle: &AppHandle) -> bool {
+    #[cfg(windows)]
+    {
+        let bin_dir = get_bin_dir(app_handle);
+        let Some(bin_str) = bin_dir.to_str() else {
+            return false;
+        };
+        read_user_path()
+            .map(|value| path_contains_token(&value, bin_str))
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        let bin_dir = get_bin_dir(app_handle);
+        if std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .any(|p| p == bin_dir)
+        {
+            return true;
+        }
+        let home = app_handle
+            .path()
+            .home_dir()
+            .unwrap_or_else(|_| PathBuf::from("."));
+        RC_FILES.iter().any(|name| {
+            fs::read_to_string(home.join(name))
+                .map(|content| content.contains(RC_MARK_START))
+                .unwrap_or(false)
+        })
+    }
+}
+
+pub fn register_path(app_handle: &AppHandle) -> Result<(), String> {
+    if path_registered(app_handle) {
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        let bin_dir = get_bin_dir(app_handle);
+        let bin_str = bin_dir
+            .to_str()
+            .ok_or_else(|| "PATH_BIN_DIR_NOT_UTF8: bin dir is not valid UTF-8".to_string())?;
+        let current = read_user_path()
+            .ok_or_else(|| "PATH_REG_READ_FAILED: failed to read user PATH".to_string())?;
+        let new_value = if current.trim().is_empty() {
+            bin_str.to_string()
+        } else {
+            format!("{};{}", current.trim_end_matches(';'), bin_str)
+        };
+        write_user_path(&new_value)?;
+        notify_environment_change();
+        log::info!("Registered dsh bin dir in user PATH: {bin_str}");
+    }
+    #[cfg(not(windows))]
+    {
+        inject_shell_rc(app_handle)?;
+    }
+    Ok(())
+}
+
+pub fn unregister_path(app_handle: &AppHandle) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let bin_dir = get_bin_dir(app_handle);
+        let Some(bin_str) = bin_dir.to_str() else {
+            return Ok(());
+        };
+        if let Some(current) = read_user_path() {
+            if !path_contains_token(&current, bin_str) {
+                return Ok(());
+            }
+            let new_value = remove_path_token(&current, bin_str);
+            write_user_path(&new_value)?;
+            notify_environment_change();
+            log::info!("Removed dsh bin dir from user PATH");
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        strip_shell_rc(app_handle)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bin_directory_preserves_platform_inputs_and_build_split() {
+        #[cfg(windows)]
+        {
+            let local_data = Path::new("local").join("application");
+            let root = std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("local"));
+            let name = if cfg!(debug_assertions) {
+                CLI_ROOT_DEV_DIR_NAME
+            } else {
+                CLI_ROOT_DIR_NAME
+            };
+            assert_eq!(
+                get_bin_dir_from(Some(&local_data), Some(Path::new("unused"))),
+                root.join(name).join("bin")
+            );
+            let fallback = std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            assert_eq!(
+                get_bin_dir_from(None, None),
+                fallback.join(name).join("bin")
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            let suffix = if cfg!(debug_assertions) {
+                ".local/bin/dev"
+            } else {
+                ".local/bin"
+            };
+            assert_eq!(
+                get_bin_dir_from(Some(Path::new("unused")), Some(Path::new("home"))),
+                Path::new("home").join(suffix)
+            );
+            assert_eq!(get_bin_dir_from(None, None), Path::new(".").join(suffix));
+        }
+    }
+}
+
+#[cfg(test)]
+mod test_util {
+    use std::path::Path;
+
+    pub(super) fn make_executable(path: &Path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            permissions.set_mode(0o700);
+            std::fs::set_permissions(path, permissions).unwrap();
+        }
+        #[cfg(not(unix))]
+        let _ = path;
+    }
+
+    pub(super) fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "dsh-rc-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+}

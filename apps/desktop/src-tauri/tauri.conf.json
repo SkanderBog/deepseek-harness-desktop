@@ -10,6 +10,12 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
+    },
     "windows": [
       {
         "title": "DeepSeek Harness",

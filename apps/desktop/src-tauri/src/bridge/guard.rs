@@ -1,8 +1,10 @@
+
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{Manager};
+use crate::{AppHandle};
 
-pub fn allowed_roots<R: Runtime>(app_handle: &AppHandle<R>) -> Vec<PathBuf> {
+pub fn allowed_roots(app_handle: &AppHandle) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Ok(download_dir) = app_handle.path().download_dir() {
         roots.push(download_dir);
@@ -10,17 +12,29 @@ pub fn allowed_roots<R: Runtime>(app_handle: &AppHandle<R>) -> Vec<PathBuf> {
     if let Ok(data_dir) = app_handle.path().app_data_dir() {
         roots.push(data_dir);
     }
+    let dsh_home = crate::config::get_dsh_data_path(app_handle);
+    roots.push(dsh_home);
+    roots.push(crate::config::get_base_dir(app_handle).join("recovery-backups"));
+    if let Some(dir) = crate::service::core::local_core_package_dir(app_handle) {
+        roots.push(dir);
+    }
+    for key in [
+        crate::config::dependencies::DEP_PNPM,
+        crate::config::dependencies::DEP_DSH,
+    ] {
+        roots.push(crate::config::dependencies::active_root(app_handle, key));
+    }
     roots
 }
 
-fn existing_roots<R: Runtime>(app_handle: &AppHandle<R>) -> Vec<PathBuf> {
+fn existing_roots(app_handle: &AppHandle) -> Vec<PathBuf> {
     allowed_roots(app_handle)
         .into_iter()
         .filter(|root| root.is_dir())
         .collect()
 }
 
-pub fn is_allowed_path<R: Runtime>(app_handle: &AppHandle<R>, path: &Path) -> bool {
+pub fn is_allowed_path(app_handle: &AppHandle, path: &Path) -> bool {
     if !path.exists() {
         return false;
     }

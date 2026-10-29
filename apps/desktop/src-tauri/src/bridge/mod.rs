@@ -1,8 +1,31 @@
+
+pub mod backup;
 pub mod clipboard;
 pub mod config;
+pub mod core;
+pub mod data_dir;
 pub mod guard;
+pub mod lifecycle;
+pub mod pet;
+pub mod plugin;
+pub mod preset_pet;
+pub mod profile;
+pub mod remote;
 pub mod system_os;
+pub mod task_manager;
+pub mod updater;
 
+pub use backup::*;
 pub use clipboard::*;
 pub use config::*;
+pub use core::*;
+pub use data_dir::*;
+pub use lifecycle::*;
+pub use pet::*;
+pub use plugin::*;
+pub use preset_pet::*;
+pub use profile::*;
+pub use remote::*;
 pub use system_os::*;
+pub use task_manager::*;
+pub use updater::*;

@@ -1,9 +1,5 @@
-//! 桌面应用的系统登录启动集成。
-//!
-//! 跨平台注册交给 Tauri 官方插件；Windows 只补齐其底层库对缺失注册表键和
-//! 重复禁用不幂等的问题，并清理由任务管理器维护的残留状态。
 
-use tauri::{AppHandle, Runtime};
+use tauri::{Runtime};
 use tauri_plugin_autostart::ManagerExt;
 
 #[cfg(windows)]
@@ -12,6 +8,7 @@ use std::io::ErrorKind;
 use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
 #[cfg(windows)]
 use winreg::RegKey;
+use crate::{AppHandle};
 
 #[cfg(windows)]
 const RUN_REGISTRY_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -19,7 +16,6 @@ const RUN_REGISTRY_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Ru
 const STARTUP_APPROVED_REGISTRY_KEY: &str =
     "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
 
-/// 稳定版保留旧启动项名称，避免改名后丢失已启用状态；夜间版和开发态独立注册。
 pub fn app_name(identifier: &str) -> &'static str {
     match (identifier, cfg!(debug_assertions)) {
         ("dsh-tauri-nightly", true) => "DSH Tauri Nightly Dev",
@@ -29,7 +25,6 @@ pub fn app_name(identifier: &str) -> &'static str {
     }
 }
 
-/// macOS 应用改名会移动可执行文件，启动时仅刷新原已启用的登录启动项。
 pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     app.plugin(
         tauri_plugin_autostart::Builder::new()
@@ -88,7 +83,6 @@ fn remove_windows_startup_approval(name: &str) -> Result<(), String> {
     }
 }
 
-/// 从系统读取当前登录启动状态，允许用户在系统设置中直接修改它。
 pub fn is_enabled<R: Runtime>(app_handle: &AppHandle<R>) -> Result<bool, String> {
     #[cfg(windows)]
     if !windows_run_entry_exists(app_name(&app_handle.config().identifier))? {
@@ -101,7 +95,6 @@ pub fn is_enabled<R: Runtime>(app_handle: &AppHandle<R>) -> Result<bool, String>
         .map_err(|error| format!("AUTOSTART_STATUS_FAILED: {error}"))
 }
 
-/// 写入登录启动状态并复查结果，禁用操作保持幂等。
 pub fn set_enabled<R: Runtime>(app_handle: &AppHandle<R>, enabled: bool) -> Result<bool, String> {
     let manager = app_handle.autolaunch();
     if enabled {
@@ -178,7 +171,6 @@ mod tests {
         (manager, executable)
     }
 
-    /// 系统级测试只在 CI 或显式启用时运行，避免受限环境误报失败。
     fn system_test_enabled() -> bool {
         std::env::var_os("CI").is_some() || std::env::var_os(SYSTEM_TEST_ENV).is_some()
     }
@@ -192,7 +184,6 @@ mod tests {
             || error.contains("os error 13")
     }
 
-    /// 权限受限时跳过系统集成测试，其它错误仍视为真实失败。
     fn system_test_result<T, E: std::fmt::Display>(
         result: Result<T, E>,
         action: &str,

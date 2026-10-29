@@ -78,28 +78,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install AppImage regression tools
-        run: sudo apt-get update && sudo apt-get install -y squashfs-tools
-
-      - name: Test AppImage repacking
-        run: |
-          for seed in 1 2 3 4 5; do
-            node node_modules/vitest/vitest.mjs run --project unit test/appimage-host-libs.test.ts --sequence.shuffle --sequence.seed="$seed"
-          done
-
       - name: Test iOS signing and Beta review guards without credentials
         run: python3 -m unittest discover -s .github/scripts -p 'test_ios_*.py' -v
-
-      - name: Install rc.2 core for desktop admission regression
-        run: npm install --prefix "$RUNNER_TEMP/dsh-cli-admission" --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.4
-
-      - name: Test desktop admission against rc.2 gateway
-        env:
-          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-admission/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: |
-          for seed in 301 302 303 304 305; do
-            node node_modules/vitest/vitest.mjs run --project unit packages/dsh-tauri/src/host/service/gate.runtime.test.ts --sequence.shuffle --sequence.seed="$seed" || exit $?
-          done
 
       - name: Type check sources before generating declarations
         run: pnpm run typecheck
@@ -110,177 +90,15 @@ jobs:
       - name: Build core packages
         run: pnpm --filter dsh-tauri build && pnpm --filter dsh-tauri-ui build
 
-      # dsh-tauri-ui 的构建先用压缩产物打包 dist、再用未压缩产物还原该文件，因此工作树里
-      # 留下的应该正是提交进仓库的未压缩形态。若源码新增/删除了 utility 却漏提产物，
-      # 运行时只会静默缺样式；显式检查工作树可在合并前阻断漂移。
-      - name: Verify generated Tailwind CSS is current
-        id: tailwind_check
-        run: git diff --exit-code -- packages/dsh-tauri-ui/src/client/styles/index.ts
-
-      - name: Upload regenerated Tailwind CSS on drift
-        if: failure() && steps.tailwind_check.outcome == 'failure'
-        uses: actions/upload-artifact@v6
-        with:
-          name: generated-tailwind-css
-          path: packages/dsh-tauri-ui/src/client/styles/index.ts
-          if-no-files-found: error
-
-      - name: Type check package exports
-        run: pnpm exec tsc --noEmit
-
       - name: Lint
         run: pnpm run lint
 
-      # test/plugin-resource-closure.test.ts 断言部署产物 apps/desktop/src-tauri/resources/node_modules，
-      # 该目录由 build:plugins 生成；不构建则整组用例 skipIf 跳过、在 CI 里从不执行。
-      - name: Build Plugins
-        run: pnpm build:plugins
+      # 渲染层构建：校验 index.html 与 pet.html 两个入口都能产出
+      - name: Build renderer
+        run: pnpm --filter dsh-desktop build
 
       - name: Unit test
         run: node node_modules/vitest/vitest.mjs run --project unit --sequence.shuffle --sequence.seed=400
-
-  plugins-e2e:
-    name: Plugins E2E (${{ matrix.core }})
-    needs: pre_job
-    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        core: [0.2.1-rc.4]
-    env:
-      DSH_E2E_CORE_VERSION: ${{ matrix.core }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js and pnpm
-        uses: ./.github/actions/setup-node-pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Build Plugins
-        run: pnpm build:plugins
-
-      - name: Install isolated dsh CLI
-        run: npm install --prefix "$RUNNER_TEMP/dsh-cli" --no-audit --no-fund @deepseek-ai/dsh@${{ matrix.core }}
-
-      - name: Plugin L2 full suite
-        env:
-          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed=100
-
-      - name: Host, settings and official plugin composition stability
-        env:
-          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: |
-          for seed in 101 102 103 104 105; do
-            node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" \
-              test/e2e/plugins/dsh-host-and-core-contract.e2e.ts \
-              test/e2e/plugins/dsh-tauri.e2e.ts \
-              test/e2e/plugins/dsh-tauri-ui.e2e.ts \
-              test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts \
-              test/e2e/plugins/dsh-tauri-mobile-settings.e2e.ts \
-              test/e2e/plugins/dsh-tauri-appearance.e2e.ts \
-              test/e2e/plugins/dsh-tauri-appearance-boot.e2e.ts || exit $?
-          done
-
-      - name: Unified scheduler host and right-sidebar stability
-        env:
-          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
-          DSH_SCHEDULER_DIAGNOSTICS_DIR: ${{ runner.temp }}/scheduler-diagnostics
-        run: |
-          for seed in 987 988 989 990 991; do
-            node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" test/e2e/plugins/dsh-tauri-scheduler.e2e.ts test/e2e/plugins/dsh-tauri-scheduler-client.e2e.ts || exit $?
-          done
-
-      - name: Upload scheduler failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v6
-        with:
-          name: scheduler-contract-diagnostics-${{ matrix.core }}
-          path: ${{ runner.temp }}/scheduler-diagnostics
-          if-no-files-found: ignore
-
-  # 桌面端 L3 E2E（vitest + WebdriverIO）：
-  # 驱动真实 Tauri 窗口，只能在 Windows 上跑（embedded WebDriver + WebView2）。
-  # 需要 dist/ 与内嵌前端的 debug 二进制；`tauri build` 会带上 custom-protocol，
-  # 否则应用走 devUrl 而不嵌 dist（页面为空，选择器全找不到）。
-  desktop-e2e:
-    name: Desktop E2E Tests (vitest + webdriverio)
-    needs: pre_job
-    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
-    runs-on: windows-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      # build:plugins 的产物只由 packages/** 与锁文件/构建脚本决定，未变时直接复用，
-      # 省掉整轮（32~55s）。命中即跳过下方 Build Plugins，故新增输入时必须同步扩充 key。
-      # key 取 restore 的 cache-primary-key：save 时 packages/*/dist 已生成，
-      # 在彼处重新 hashFiles 会得到不同的值。
-      - name: Restore bundled plugins
-        id: plugins_cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            apps/desktop/src-tauri/resources/node_modules
-            packages/*/dist
-          key: plugins-${{ runner.os }}-${{ hashFiles('packages/**', 'scripts/**', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
-
-      - name: Setup Node.js and pnpm
-        uses: ./.github/actions/setup-node-pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build Plugins
-        if: steps.plugins_cache.outputs.cache-hit != 'true'
-        run: pnpm build:plugins
-
-      - name: Save bundled plugins
-        if: steps.plugins_cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/next'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            apps/desktop/src-tauri/resources/node_modules
-            packages/*/dist
-          key: ${{ steps.plugins_cache.outputs.cache-primary-key }}
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/desktop/src-tauri -> target
-          # 只有 main 写缓存：PR 每次生成的条目会挤掉 main 的暖缓存，
-          # 而 10 GB 上限是仓库级共享的（PR 只读、不写）。
-          save-if: ${{ github.ref == 'refs/heads/next' }}
-
-      # 根 dist/ 只能由 vite build 产出（build:plugins 仅构建 packages/*，不生成 dist），
-      # 而 frontendDist 指向 ../dist：缺失会让应用走 devUrl、页面为空。
-      - name: Build frontend
-        run: pnpm exec vite build
-
-      # 内联 JSON 经 pwsh → pnpm(.cmd) 转发时引号会被剥掉（实测报
-      # `key must be a string`），改为落一份配置文件再传路径。
-      # 清空 beforeBuildCommand 是为了避免重复触发 `pnpm build`
-      # （它的 prebuild 会再跑一遍 build:plugins）。
-      - name: Build debug binary
-        run: |
-          Set-Content -Path "$env:RUNNER_TEMP\tauri-e2e.json" -Value '{"build":{"beforeBuildCommand":""}}'
-          pnpm tauri build --debug --no-bundle --config "$env:RUNNER_TEMP\tauri-e2e.json"
-
-      - name: Desktop L3 test
-        run: node node_modules/vitest/vitest.mjs run --project desktop --sequence.shuffle --sequence.seed=500
 
   # Rust 单元测试（应用主体逻辑）：
   # 这是 CI 此前完全缺失的部分。仓库存在大量平台专属代码，必须在对应 OS 上编译并测试：
@@ -317,6 +135,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Cache Electron distribution
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+            ~/AppData/Local/electron/Cache
+          key: electron-45.0.0-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable

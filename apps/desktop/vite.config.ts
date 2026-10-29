@@ -7,6 +7,14 @@ export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   plugins: [react(), tailwindcss()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: '/index.html',
+        pet: '/pet.html',
+      },
+    },
+  },
   clearScreen: false,
   server: {
     port: 1420,

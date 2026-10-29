@@ -1,22 +1,131 @@
-import { useMount } from '@reause/core'
-import { isTauri } from '@tauri-apps/api/core'
+import type { DshPlugin } from '@/types'
+import { useEventListener, useIntervalFn, useMount, useWatch } from '@reause/core'
+import { useQueryClient } from '@tanstack/react-query'
+import { invoke } from '@tauri-apps/api/core'
+import { useRef } from 'react'
+import { useTranslation } from 'react-i18next'
+import { If } from 'react-if-lite'
+import { useStore } from 'valtio-define'
+import { queryKeys } from '@/config/query-keys'
+import { useListen } from '@/hooks/use-listen'
 import { useThemeAdaptive } from '@/hooks/use-theme-adaptive'
-import { store } from '@/store'
+import { useWakelockRelease } from '@/hooks/use-wakelock-release'
+import { toast } from '@/utils/toast'
+import { store } from '../store'
+import { Recovery } from '../ui/plugin/recovery'
 import { Webview } from './components/webview'
 import { useFrameChrome } from './components/window-chrome'
 import '../i18n'
 
+const DESKTOP_UPDATE_POLL_INTERVAL = 10 * 60_000
+
+interface DownloadFinishedPayload {
+  url: string
+  path: string | null
+  success: boolean
+}
+
 export function App() {
+  const queryClient = useQueryClient()
+  useListen<DshPlugin[]>('dsh-plugins-updated', ({ payload }) => {
+    queryClient.setQueryData(queryKeys.plugins, payload)
+  })
+
+  const { t } = useTranslation()
+  const { status } = useStore(store.harness)
+  const { hydrated: settingReady, auto_update: autoUpdate } = useStore(store.setting)
+  const { updateInfo, updating } = useStore(store.harnessUpdater)
+
+  // issue #469：本应用没有常亮需求，唤醒锁一旦生效就立刻释放
+  useWakelockRelease()
   useThemeAdaptive()
   useFrameChrome()
-  useMount(() => {
-    if (isTauri())
-      void store.setting.refresh().catch(error => console.error('[Setting] failed to load native settings:', error))
+
+  useEventListener('keydown', (event: KeyboardEvent) => {
+    if (!import.meta.env.DEV)
+      return
+    if (!event.ctrlKey || !event.shiftKey)
+      return
+    if (event.code === 'Digit1') {
+      event.preventDefault()
+      store.recovery.setRuntimeRecovery({
+        plugins: ['dsh-better-sidebar'],
+        reason: 'slot_conflict',
+        detail: 'sidebar',
+        rawError: 'Preview: dsh-better-sidebar reported a UI slot conflict.',
+      })
+    }
+    else if (event.code === 'Digit2') {
+      event.preventDefault()
+      store.harness.fail('Preview: plugin startup failure')
+      store.recovery.setRuntimeRecovery({
+        plugins: ['dsh-better-sidebar'],
+        reason: 'duplicate_loader_entry',
+        detail: 'dshSidebarApi',
+        rawError: 'Preview: duplicate loader entry id: dshSidebarApi',
+      })
+    }
   })
+
+  useMount(() => store.harness.startup())
+
+  // issue #1132：关闭「自动更新」后不静默下载，也不在退出时装安装包；水合前不检查
+  const autoCheckUpdate = settingReady && autoUpdate
+  function checkDesktopUpdate() {
+    if (!store.setting.hydrated || !store.setting.auto_update)
+      return
+    void store.desktopUpdater.check().catch(() => {})
+  }
+  useWatch([autoCheckUpdate], checkDesktopUpdate, { immediate: true })
+  useIntervalFn(checkDesktopUpdate, DESKTOP_UPDATE_POLL_INTERVAL)
+
+  const toastKeyRef = useRef<string | null>(null)
+  useListen<DownloadFinishedPayload>('harness-download-finished', ({ payload }) => {
+    if (status !== 'ready')
+      return
+    if (toastKeyRef.current)
+      toast.close(toastKeyRef.current)
+    const { success, path } = payload
+    toastKeyRef.current = toast(success ? t('download.saved') : t('download.failed'), {
+      description: success && path
+        ? (
+            <div className="truncate max-w-[300px]">
+              {`${t('download.saved_to')}: ${path}`}
+            </div>
+          )
+        : undefined,
+      placement: 'bottom end',
+      actionProps: success && path
+        ? {
+            children: t('download.show_in_folder'),
+            variant: 'tertiary',
+            onPress: () => {
+              if (toastKeyRef.current)
+                toast.close(toastKeyRef.current)
+              void invoke('reveal_in_folder', { path }).catch((err) => {
+                console.error('[Harness] reveal_in_folder failed:', err)
+              })
+            },
+          }
+        : undefined,
+      onClose: () => {
+        toastKeyRef.current = null
+      },
+    })
+  })
+
+  useWatch([updateInfo, updating], () => {
+    if (!updateInfo || updating)
+      return
+    store.harnessUpdater.showToast(() => store.harnessUpdater.handleUpdate())
+  }, { immediate: true })
 
   return (
     <div className="flex h-screen w-screen" data-testid="dsh-shell-root">
       <Webview />
+      <If cond={status === 'ready'}>
+        <Recovery />
+      </If>
     </div>
   )
 }

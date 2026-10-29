@@ -1,7 +1,6 @@
-//! 正式版使用官方 `dsh://open`；夜间版单独注册 `dsh-nightly`，不覆盖正式版协议。
 
-use tauri::AppHandle;
 use tauri_plugin_deep_link::DeepLinkExt;
+use crate::{AppHandle};
 
 pub fn is_open_request(url: &str) -> bool {
     let scheme = if crate::config::APP_IDENTIFIER == "dsh-tauri-nightly" {
@@ -12,8 +11,7 @@ pub fn is_open_request(url: &str) -> bool {
     url == format!("{scheme}://open") || url == format!("{scheme}://open/")
 }
 
-/// 协议注册失败只告警，不阻断启动。
-pub fn init(app: &AppHandle<tauri_runtime_electron::ElectronRuntime>) {
+pub fn init(app: &AppHandle) {
     #[cfg(any(windows, target_os = "linux"))]
     if let Err(e) = app.deep_link().register_all() {
         log::warn!("deep link register_all failed: {e}");
