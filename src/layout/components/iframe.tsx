@@ -29,6 +29,7 @@ import { useNotificationClicked } from '@/hooks/use-notification-clicked'
 import { useSyncVisibility } from '@/hooks/use-sync-visibility'
 import { useZoomFactor } from '@/hooks/use-zoom-factor'
 import { store } from '@/store'
+import { CLIENT_BOOT_WATCHDOG_TIMEOUT } from '@/store/modules/harness/constants'
 import { ConfigDialog } from '@/ui/dialog/config'
 import { zoomActionFromBridgeMessage, zoomActionFromShortcut } from '@/utils/zoom'
 import { appearanceBootCss, appearanceTranslucent, normalizeAppearance } from '../../../packages/dsh-tauri/src/shared/appearance'
@@ -336,6 +337,36 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
       if (!src)
         return
       post({ type: 'dsh://appearance', bootCss: css })
+    },
+    { immediate: true },
+  )
+
+  // 帧内 boot 桥只在官方室面 DOM 精确匹配时才上报 stall；官方换一次排版、或客户端
+  // 插件 entry 卡在 pending，它都一声不响。壳层手里已有「这一代确实跑着 dsh 页面」的
+  // 确认，就按代计时兜底：到点仍没有 `dsh://plugin-boot:ready` 就走同一条有界恢复。
+  const clientBootWatch = useTimeoutFn(
+    () => { void store.harness.recoverIframeBoot() },
+    CLIENT_BOOT_WATCHDOG_TIMEOUT,
+    { immediate: false },
+  )
+  useWatch(
+    [
+      mounted,
+      remoteMode,
+      showIframeError,
+      harness.serviceHealthy,
+      harness.iframeAliveKey,
+      harness.iframeBootReadyKey,
+      harness.iframeKey,
+    ],
+    () => {
+      if (!remoteMode && mounted && harness.serviceHealthy && harness.iframeAlive
+        && !harness.iframeBootReady && !showIframeError) {
+        clientBootWatch.start()
+      }
+      else {
+        clientBootWatch.stop()
+      }
     },
     { immediate: true },
   )

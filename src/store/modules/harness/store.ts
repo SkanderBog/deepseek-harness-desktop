@@ -83,6 +83,20 @@ let pluginActivitySequence = 0
 let pluginActivityReason = ''
 const restartFlight = new SingleFlight<void>()
 const iframeReloadGate = new BoundedReloadGate(IFRAME_RELOAD_MAX_ATTEMPTS)
+/**
+ * 客户端 boot 停摆的自动重启预算：整个进程只花一次。
+ *
+ * 有界重载都救不回来时，唯一有效的动作是换一个宿主进程重来（用户手工操作即菜单里
+ * 的「重启 Harness」）。自动重启不能跟失败互相放大，所以只留一次；再次停摆就交回
+ * 错误页，由用户决定。
+ */
+let clientBootRestartSpent = false
+function consumeClientBootRestart(): boolean {
+  if (clientBootRestartSpent)
+    return false
+  clientBootRestartSpent = true
+  return true
+}
 let iframeRefreshTimer: ReturnType<typeof setTimeout> | undefined
 let policyApprovalKey: string | undefined
 
@@ -126,6 +140,14 @@ export const harness = defineStore({
      * 之后旧文档的迟到消息不能替新文档背书。
      */
     iframeAliveKey: null as number | null,
+    /**
+     * 已确认官方 boot 室面摘掉（`dsh://plugin-boot:ready`）的 iframe 代。
+     *
+     * 室面消不掉有两种：客户端插件 entry 永远等不到依赖（壳层收不到任何 boot
+     * 消息），或者室面 DOM 与壳层的识别契约不一致。前者靠帧内 stall 上报，后者
+     * 只能由壳层按代计时兜底，两者共用同一个恢复入口。
+     */
+    iframeBootReadyKey: null as number | null,
     iframeKey: 0,
     serviceHealthy: false,
     serviceRunning: false,
@@ -145,6 +167,10 @@ export const harness = defineStore({
     /** 当前这一代 iframe 是否已自报承载 dsh 文档（重挂即失效，见 `iframeAliveKey`） */
     iframeAlive(): boolean {
       return this.iframeAliveKey === this.iframeKey
+    },
+    /** 当前这一代 iframe 是否已跑完官方 boot（重挂或帧内导航即失效） */
+    iframeBootReady(): boolean {
+      return this.iframeBootReadyKey === this.iframeKey
     },
     /**
      * 内嵌页面加载失败的补充说明：服务已就绪却没有任何帧内消息，说明帧里根本没
@@ -241,6 +267,7 @@ export const harness = defineStore({
       this.iframeLoaded = false
       this.iframeError = false
       this.iframeAliveKey = null
+      this.iframeBootReadyKey = null
 
       const error = await attachStartupDiagnostics(new Error(message), true)
       if (exitToken !== bootToken)
@@ -301,6 +328,7 @@ export const harness = defineStore({
       this.iframeLoaded = false
       this.iframeError = false
       this.iframeAliveKey = null
+      this.iframeBootReadyKey = null
       if (iframeRefreshTimer !== undefined) {
         clearTimeout(iframeRefreshTimer)
       }
@@ -335,10 +363,12 @@ export const harness = defineStore({
      */
     markIframeLeaving() {
       this.iframeAliveKey = null
+      this.iframeBootReadyKey = null
       this.iframeLoaded = false
     },
 
     markIframeBootReady() {
+      this.iframeBootReadyKey = this.iframeKey
       iframeReloadGate.markReady()
       if (iframeRefreshTimer !== undefined) {
         clearTimeout(iframeRefreshTimer)
@@ -352,6 +382,11 @@ export const harness = defineStore({
       if (decision === 'duplicate' || decision === 'ready')
         return
       if (decision === 'exhausted') {
+        if (!this.busyAction && consumeClientBootRestart()) {
+          console.warn('[Harness] client boot stalled after every bounded reload; restarting the service once')
+          await this.restart()
+          return
+        }
         const reason = i18next.t('errors.client_boot_stalled')
         const error = startupError('client-modules', reason, 'absolute')
         this.fail(error.message, undefined, undefined, undefined, this.serviceRunning)
@@ -365,7 +400,9 @@ export const harness = defineStore({
       if (generation !== this.iframeKey || !this.serviceRunning)
         return
       if (result.healthy) {
-        this.refreshIframe()
+        // 探测期间室面自己跑完了就不必再重挂：慢机器上白闪一次室面比多等几秒更糟。
+        if (!this.iframeBootReady)
+          this.refreshIframe()
         return
       }
 
@@ -503,6 +540,7 @@ export const harness = defineStore({
       this.iframeLoaded = false
       this.iframeError = false
       this.iframeAliveKey = null
+      this.iframeBootReadyKey = null
       this.startupPhase = 'process-boot'
       this.startupReason = i18next.t('status.loading_process')
       try {
@@ -583,6 +621,7 @@ export const harness = defineStore({
       this.iframeLoaded = false
       this.iframeError = false
       this.iframeAliveKey = null
+      this.iframeBootReadyKey = null
       // 重新启动/进入启动流程时先退出上一轮的错误与修复态（重启可能由插件修复、
       // 配置切换触发），避免旧的「启动失败 / Preview」等信息在启动期间闪现。
       // 注意：保留 attempts 计数，连续失败仍能命中「频繁失败」提示。
