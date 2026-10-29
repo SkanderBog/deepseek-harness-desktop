@@ -487,7 +487,8 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
         void store.harness.recoverIframeBoot()
         break
       case 'dsh://plugin-boot:failed':
-        void store.harness.handleIframeBootFailure(data.detail)
+        if (!remoteMode)
+          void store.harness.handleIframeBootFailure(data.detail)
         break
       // 缩放快捷键：跨源 iframe 内的 Ctrl/Cmd +/-/0 不会冒泡到壳层，由 dsh-tauri 插件的
       case 'dsh://zoom-shortcut':

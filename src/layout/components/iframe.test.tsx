@@ -204,20 +204,35 @@ it.each([
 it('keeps remote frame messages out of the local readiness state', async () => {
   render(<Iframe iframeRef={createRef()} srcOverride="https://example.test/?token=secret" />)
   const frame = screen.getByTestId<HTMLIFrameElement>('dsh-shell-iframe')
-  Object.assign(store.harness, { iframeAliveKey: null, iframeBootReadyKey: null })
-  const recover = vi.spyOn(store.harness, 'recoverIframeBoot')
-  for (const type of ['dsh://appearance:applied', 'dsh://sidebar:collapsed', 'dsh://plugin-boot:ready', 'dsh://plugin-boot:stalled']) {
+  Object.assign(store.harness, { iframeAliveKey: null, iframeBootReadyKey: null, status: 'ready' })
+  for (const type of ['dsh://appearance:applied', 'dsh://sidebar:collapsed', 'dsh://plugin-boot:ready', 'dsh://plugin-boot:stalled', 'dsh://plugin-boot:failed']) {
     await act(async () => {
       window.dispatchEvent(new MessageEvent('message', {
         source: frame.contentWindow,
         origin: 'https://example.test',
-        data: { type },
+        data: { type, detail: 'web boot: 1 entry did not activate' },
       }))
     })
   }
   expect(store.harness.iframeAlive).toBe(false)
   expect(store.harness.iframeBootReady).toBe(false)
-  expect(recover).not.toHaveBeenCalled()
+  expect(store.harness.status).toBe('ready')
+})
+
+it('still fails the shell when a local frame reports a boot failure', async () => {
+  render(<Iframe iframeRef={createRef()} />)
+  await act(async () => {
+    store.harness.serviceHealthy = true
+  })
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent('message', {
+      source: screen.getByTestId<HTMLIFrameElement>('dsh-shell-iframe').contentWindow,
+      origin: 'http://127.0.0.1:3081',
+      data: { type: 'dsh://plugin-boot:failed', detail: 'web boot: 1 entry did not activate' },
+    }))
+    await vi.advanceTimersByTimeAsync(50)
+  })
+  expect(store.harness.status).toBe('error')
 })
 
 it('diagnoses remote frame visibility across local health and error transitions without hiding the remote document', async () => {
