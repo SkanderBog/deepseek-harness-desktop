@@ -115,21 +115,33 @@ describe('桌面端启动冒烟', () => {
     let rendered = ''
     let frameErrors: string[] = []
 
-    await browser.switchFrame(iframe)
+    const deadline = Date.now() + 60_000
+    const retryCount = browser.options.connectionRetryCount
+    browser.options.connectionRetryCount = 0
     try {
-      await browser.execute(collectPageErrors)
-      await browser.waitUntil(
-        () => browser.execute(dshRootRendered, DSH_ROOT),
-        { timeout: 60_000, timeoutMsg: 'dsh 页面未渲染（#root 无子节点）' },
-      )
-
-      // 页面渲染后仍有插件在异步加载，留一个观察窗口再取快照
-      await browser.pause(SETTLE_MS)
-      rendered = await browser.execute(dshRootText, DSH_ROOT)
-      frameErrors = await browser.execute(readPageErrors)
+      while (Date.now() < deadline) {
+        await browser.switchFrame(null)
+        try {
+          await browser.switchFrame(await browser.$(SHELL_IFRAME))
+          await browser.execute(collectPageErrors)
+          if (await browser.execute(dshRootRendered, DSH_ROOT)) {
+            await browser.pause(SETTLE_MS)
+            const text = await browser.execute(dshRootText, DSH_ROOT)
+            const errors = await browser.execute(readPageErrors)
+            rendered = text
+            frameErrors = errors
+            break
+          }
+        }
+        catch (error) {
+          if (!(error instanceof Error) || !/no such frame|stale element reference/i.test(`${error.name}: ${error.message}`))
+            throw error
+        }
+        await browser.pause(250)
+      }
     }
     finally {
-      // 无论成功与否都退回顶层，避免后续断言运行在错误的帧上下文中
+      browser.options.connectionRetryCount = retryCount
       await browser.switchFrame(null)
     }
 

@@ -1,9 +1,8 @@
 # Vendored patch: cross-origin frame execution (Windows)
 
-`tauri-plugin-wdio-webdriver` **1.4.0**, copied verbatim from crates.io and wired in via
-`[patch.crates-io]` in `src-tauri/Cargo.toml`. Exactly one behaviour is changed, and only
-under `#[cfg(target_os = "windows")]`. Everything else is upstream and should be kept that
-way, so dropping this directory is a one-line revert when upstream ships the feature.
+`tauri-plugin-wdio-webdriver` **1.4.0**, vendored from crates.io and wired in via
+`[patch.crates-io]` in `src-tauri/Cargo.toml`. Windows changes cover native frame execution,
+frame replacement and JavaScript error reporting; other platforms retain upstream behavior.
 
 ## Why
 
@@ -24,8 +23,10 @@ surfaces one call later — on the first `execute` inside the frame.
 
 - `src/platform/windows.rs`
   - `FrameRegistry` — captures `ICoreWebView2Frame` handles from `FrameCreated`
-    (`ICoreWebView2_4::add_FrameCreated`), keyed by window label, in the same order as
-    `document.querySelectorAll('iframe, frame')` so indices line up with upstream's wrapper.
+    (`ICoreWebView2_4::add_FrameCreated`), keyed by window label and creation order.
+    Before lookup, `IsDestroyed` removes and releases stale handles on the webview's COM
+    thread; acquiring the selected handle also stays on that thread. This covers shell
+    frame replacement by remove/append. Arbitrary DOM reordering needs identity binding.
     Holds one COM reference per frame behind `SendableComPtr`.
   - `register_frame_handler()` — registered from the existing `register_webview_handlers()`
     hook (`on_webview_ready`).
