@@ -3,7 +3,6 @@ import type { Duplex, Readable, Transform, Writable } from 'node:stream'
 import type { RemoteAuthFailureRecord, RemoteAuthPolicy, RemoteGatewayEntryKind, RemoteGatewayEntryStatus, RemoteGatewayEvent, RemoteGatewayEventKind, RemoteGatewayStartOptions, RemoteGatewayTokenProvider, RemoteSessionTicket, RemoteSourceClass } from '../types/index'
 import { Buffer } from 'node:buffer'
 import { createServer, request as httpRequest } from 'node:http'
-import { pipeline } from 'node:stream'
 import { defineService } from 'dsh-tauri'
 import { messageOf } from '../../shared/error'
 import { ensureSourceSession } from '../config/runtime'
@@ -481,6 +480,32 @@ async function forward(entry: GatewayEntry, request: IncomingMessage, response: 
   await sendUpstream(entry, request, response, headers, { retryable: true, credential: cookie !== undefined }, source)
 }
 
+/**
+ * 一次响应的正文传输只由一个所有者看着：客户端先走还是上游先坏，由先到的事件决定，
+ * 不从错误码反推。所有由网关主动关闭响应的动作都要经过 {@link teardown}，
+ * 这样「客户端离开」永远不会被自己的拆除动作冒充。
+ */
+interface ResponseLeg {
+  clientGone: boolean
+  closedByUs: boolean
+}
+
+const legs = new WeakMap<ServerResponse, ResponseLeg>()
+
+function legOf(response: ServerResponse): ResponseLeg {
+  const existing = legs.get(response)
+  if (existing !== undefined)
+    return existing
+  const created: ResponseLeg = { clientGone: false, closedByUs: false }
+  legs.set(response, created)
+  return created
+}
+
+function teardown(leg: ResponseLeg, response: ServerResponse): void {
+  leg.closedByUs = true
+  response.destroy()
+}
+
 function sendUpstream(entry: GatewayEntry, request: IncomingMessage, response: ServerResponse, headers: OutgoingHttpHeaders, attempt: ForwardAttempt, source: RemoteSourceClass): Promise<void> {
   if (request.socket.destroyed || response.destroyed)
     return Promise.resolve()
@@ -499,10 +524,22 @@ function sendUpstream(entry: GatewayEntry, request: IncomingMessage, response: S
       timedOut = true
       upstream.destroy()
     }, isWriteClass(request.method) ? LONG_TIMEOUT_MS : SHORT_TIMEOUT_MS)
+    /**
+     * 客户端离开即撤掉上游腿：页面跳转打断在途请求时，继续把上游正文读进已无人接收的响应纯属浪费。
+     * 监听器跟随响应对象的整个生命：正文阶段的归属已经在这里，正文管线不再各判一次。
+     */
+    const leg = legOf(response)
+    const abort = (): void => {
+      if (leg.closedByUs || response.writableFinished)
+        return
+      leg.clientGone = true
+      upstream.destroy()
+    }
+    response.on('close', abort)
     upstream.on('response', (upstreamResponse) => {
       clearTimeout(timer)
       entry.requests.delete(upstream)
-      void respondUpstream(entry, request, response, upstreamResponse, headers, attempt, source)
+      void respondUpstream(entry, leg, request, response, upstreamResponse, headers, attempt, source)
         .catch((error) => {
           writeGatewayError(entry, response, 500, `网关响应处理失败：${messageOf(error)}`)
         })
@@ -521,7 +558,7 @@ function sendUpstream(entry: GatewayEntry, request: IncomingMessage, response: S
   })
 }
 
-async function respondUpstream(entry: GatewayEntry, request: IncomingMessage, response: ServerResponse, upstreamResponse: IncomingMessage, headers: OutgoingHttpHeaders, attempt: ForwardAttempt, source: RemoteSourceClass): Promise<void> {
+async function respondUpstream(entry: GatewayEntry, leg: ResponseLeg, request: IncomingMessage, response: ServerResponse, upstreamResponse: IncomingMessage, headers: OutgoingHttpHeaders, attempt: ForwardAttempt, source: RemoteSourceClass): Promise<void> {
   if (upstreamResponse.statusCode === 401 && attempt.retryable && attempt.credential && entry.tokenProvider !== undefined && isReplayable(request.headers)) {
     upstreamResponse.pause()
     mintedCookies.delete(entry.authority)
@@ -534,10 +571,10 @@ async function respondUpstream(entry: GatewayEntry, request: IncomingMessage, re
     }
     upstreamResponse.resume()
   }
-  writeUpstreamBody(entry, request, response, upstreamResponse, source)
+  writeUpstreamBody(entry, leg, request, response, upstreamResponse, source)
 }
 
-function writeUpstreamBody(entry: GatewayEntry, request: IncomingMessage, response: ServerResponse, upstreamResponse: IncomingMessage, source: RemoteSourceClass): void {
+function writeUpstreamBody(entry: GatewayEntry, leg: ResponseLeg, request: IncomingMessage, response: ServerResponse, upstreamResponse: IncomingMessage, source: RemoteSourceClass): void {
   const plan = responsePlanOf({
     acceptEncoding: headerText(request.headers['accept-encoding']),
     contentType: headerText(upstreamResponse.headers['content-type']),
@@ -557,43 +594,64 @@ function writeUpstreamBody(entry: GatewayEntry, request: IncomingMessage, respon
     appendVary(headers)
   if (coding === undefined) {
     if (decompressor === undefined) {
-      pipeThrough(entry, upstreamResponse, response, status, headers, undefined)
+      pipeBody(entry, leg, upstreamResponse, response, status, headers, [])
       return
     }
     delete headers['content-encoding']
     delete headers['content-length']
-    pipeThrough(entry, upstreamResponse, response, status, headers, decompressor)
+    pipeBody(entry, leg, upstreamResponse, response, status, headers, [decompressor])
     return
   }
   delete headers['content-length']
   delete headers['content-encoding']
   headers['content-encoding'] = coding
   if (!plan.buffered) {
-    pipeThrough(entry, upstreamResponse, response, status, headers, decompressor, createCompressor(coding, plan.streaming))
+    const compressor = createCompressor(coding, plan.streaming)
+    pipeBody(entry, leg, upstreamResponse, response, status, headers, decompressor === undefined ? [compressor] : [decompressor, compressor])
     return
   }
-  pipeBuffered(entry, upstreamResponse, response, status, headers, coding)
+  pipeBuffered(entry, leg, upstreamResponse, response, status, headers, coding)
 }
 
-function pipeThrough(entry: GatewayEntry, upstreamResponse: IncomingMessage, response: ServerResponse, status: number, headers: OutgoingHttpHeaders, decompressor?: Transform, compressor?: Transform): void {
+/**
+ * 正文的唯一出口：头部与已缓冲的正文先落地，其余交给链式 pipe。
+ *
+ * 上游先坏由这里记事件并拆响应；客户端先走由 sendUpstream 的 close 监听撤掉上游腿，
+ * 这里只顺着 leg.clientGone 静默收场——不再从错误码反推是谁先走的。
+ */
+function pipeBody(entry: GatewayEntry, leg: ResponseLeg, upstreamResponse: IncomingMessage, response: ServerResponse, status: number, headers: OutgoingHttpHeaders, stages: Transform[], buffered?: Buffer[]): void {
   response.writeHead(status, headers)
-  const stages: (Readable | Writable)[] = [upstreamResponse]
-  if (decompressor !== undefined)
-    stages.push(decompressor)
-  if (compressor !== undefined)
-    stages.push(compressor)
-  stages.push(response)
-  pipeline(stages, (error) => {
-    if (error != null && (!upstreamResponse.complete || codeOf(error) !== 'ERR_STREAM_PREMATURE_CLOSE'))
+  response.flushHeaders()
+  const head: Writable = stages[0] ?? response
+  if (buffered !== undefined) {
+    for (const chunk of buffered)
+      head.write(chunk)
+  }
+  let source: Readable = upstreamResponse
+  for (const stage of stages) {
+    source.pipe(stage)
+    source = stage
+  }
+  source.pipe(response)
+  /** 这一层的失败由自己收尾：拆响应（置 closedByUs）之后连上游腿一起拆，否则 `pipe` 只 unpipe 不销毁源。 */
+  const fail = (error: unknown): void => {
+    if (!leg.clientGone && !leg.closedByUs && !response.writableFinished) {
       emit(entry, 'compression', `响应流中断：${messageOf(error)}（${entry.upstream.origin}）`)
-  })
+      teardown(leg, response)
+    }
+    upstreamResponse.destroy()
+    for (const stage of stages)
+      stage.destroy()
+  }
+  upstreamResponse.on('error', fail)
+  for (const stage of stages)
+    stage.on('error', fail)
 }
 
-function pipeBuffered(entry: GatewayEntry, upstreamResponse: IncomingMessage, response: ServerResponse, status: number, headers: OutgoingHttpHeaders, coding: 'zstd' | 'gzip'): void {
+function pipeBuffered(entry: GatewayEntry, leg: ResponseLeg, upstreamResponse: IncomingMessage, response: ServerResponse, status: number, headers: OutgoingHttpHeaders, coding: 'zstd' | 'gzip'): void {
   const chunks: Buffer[] = []
   let total = 0
   let decided = false
-  let compressor: Transform | undefined
 
   function onData(chunk: Buffer): void {
     chunks.push(chunk)
@@ -607,40 +665,29 @@ function pipeBuffered(entry: GatewayEntry, upstreamResponse: IncomingMessage, re
       return
     decided = true
     upstreamResponse.off('data', onData)
+    upstreamResponse.off('error', fail)
     upstreamResponse.pause()
+    const buffered = chunks.splice(0, chunks.length)
     if (!compress) {
       delete headers['content-encoding']
       headers['content-length'] = String(total)
-      response.writeHead(status, headers)
-      for (const chunk of chunks)
-        response.write(chunk)
-      upstreamResponse.pipe(response)
+      pipeBody(entry, leg, upstreamResponse, response, status, headers, [], buffered)
     }
     else {
-      response.writeHead(status, headers)
-      compressor = createCompressor(coding, false)
-      compressor.pipe(response)
-      for (const chunk of chunks)
-        compressor.write(chunk)
-      upstreamResponse.pipe(compressor)
+      pipeBody(entry, leg, upstreamResponse, response, status, headers, [createCompressor(coding, false)], buffered)
     }
     upstreamResponse.resume()
   }
 
   function fail(error: unknown): void {
-    const reason = messageOf(error)
-    if (!decided) {
-      decided = true
-      upstreamResponse.off('data', onData)
-      upstreamResponse.destroy()
-      emit(entry, 'compression', `上游响应流错误，已终止该响应：${entry.upstream.origin}（${reason}）`)
-      if (!response.headersSent)
-        writeJson(response, 502, `${UPSTREAM_ABORT_REASON}（${entry.upstream.origin}）`, 0)
+    if (leg.clientGone || leg.closedByUs || response.writableFinished)
       return
-    }
-    emit(entry, 'compression', `上游响应流错误，已中止压缩响应：${reason}`)
-    compressor?.destroy()
-    response.destroy()
+    decided = true
+    upstreamResponse.off('data', onData)
+    upstreamResponse.destroy()
+    emit(entry, 'compression', `上游响应流错误，已终止该响应：${entry.upstream.origin}（${messageOf(error)}）`)
+    if (!response.headersSent)
+      writeJson(response, 502, `${UPSTREAM_ABORT_REASON}（${entry.upstream.origin}）`, 0)
   }
 
   upstreamResponse.on('data', onData)
@@ -648,12 +695,6 @@ function pipeBuffered(entry: GatewayEntry, upstreamResponse: IncomingMessage, re
     decide(false)
   })
   upstreamResponse.on('error', fail)
-  response.on('close', () => {
-    if (!decided) {
-      decided = true
-      upstreamResponse.destroy()
-    }
-  })
 }
 
 function handleUpgrade(entry: GatewayEntry, request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
@@ -738,6 +779,10 @@ function rejectFromUpstream(entry: GatewayEntry, socket: Duplex, upstreamRespons
   }
   if (declared !== undefined)
     head.push(`content-length: ${declared}`)
+  if (socket.destroyed || !socket.writable) {
+    upstreamResponse.destroy()
+    return
+  }
   writeSocket(socket, `${head.join('\r\n')}\r\n\r\n`)
   upstreamResponse.pipe(socket)
 }
@@ -959,9 +1004,15 @@ async function readFormBody(request: IncomingMessage): Promise<string> {
 }
 
 function writeGatewayError(entry: GatewayEntry, response: ServerResponse, status: number, reason: string): void {
+  const leg = legOf(response)
+  /** 客户端已离开时既无人接收这个错误，也不该把它记成上游故障：页面跳转打断在途请求属于正常生命周期。 */
+  if (leg.clientGone || (!response.writableEnded && (response.destroyed || !response.writable))) {
+    teardown(leg, response)
+    return
+  }
   emit(entry, 'upstream', reason)
   if (response.headersSent) {
-    response.destroy()
+    teardown(leg, response)
     return
   }
   writeJson(response, status, reason, 0)

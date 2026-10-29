@@ -64,6 +64,7 @@ interface FakeUpstream {
   releaseEvents: () => void
   waitForCall: (url: string) => Promise<void>
   waitForStall: () => Promise<void>
+  openSockets: () => number
   close: () => Promise<void>
 }
 
@@ -206,6 +207,18 @@ function startFakeUpstream(): Promise<FakeUpstream> {
       })
       return
     }
+    if (url.pathname === '/http-stall')
+      return
+    if (url.pathname === '/late') {
+      setTimeout(() => {
+        if (response.destroyed)
+          return
+        const text = 'late'
+        response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'content-length': String(text.length) })
+        response.end(text)
+      }, 60)
+      return
+    }
     if (url.pathname === '/big') {
       const text = 'b'.repeat(MIN_BYTES * 4)
       response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'content-length': String(text.length) })
@@ -286,6 +299,16 @@ function startFakeUpstream(): Promise<FakeUpstream> {
       }, 20)
       return
     }
+    if (url.pathname === '/gz-corrupt-stall') {
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'content-encoding': 'gzip' })
+      response.write(Buffer.from('not a gzip stream at all'))
+      return
+    }
+    if (url.pathname === '/big-stall') {
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+      response.write('b'.repeat(MIN_BYTES * 2))
+      return
+    }
     if (url.pathname === '/stall') {
       state.stalled()
       return
@@ -359,6 +382,7 @@ function startFakeUpstream(): Promise<FakeUpstream> {
         waitForStall: () => new Promise<void>((resolve) => {
           state.stalled = resolve
         }),
+        openSockets: () => sockets.size,
         close: () => new Promise<void>((done) => {
           for (const socket of sockets)
             socket.destroy()
@@ -2131,6 +2155,95 @@ describe('gateway 流中断与泄漏防护', () => {
     const reused = await freePortAt(preferred)
     expect(reused, '关闭后端口应无残留占用').toBeDefined()
     await reused?.release()
+  })
+})
+
+describe('gateway 客户端提前断开', () => {
+  it('响应到达前客户端已断开：不记上游故障，连接数归零', async () => {
+    const events: RemoteGatewayEvent[] = []
+    const unsubscribe = gateway.subscribe(event => events.push(event))
+    try {
+      const status = await startEntry('inbound', upstream, { tokenProvider: upstream.mintUrlFor })
+      const request = httpRequest({ host: '127.0.0.1', port: status.port, path: '/late', headers: { connection: 'close', ...markerHeaders('private') } })
+      request.on('error', () => undefined)
+      request.end()
+      await upstream.waitForCall('/late')
+      request.destroy()
+      await vi.waitFor(() => expect(gateway.status('entry')?.connections).toBe(0))
+      await vi.waitFor(() => expect(upstream.openSockets()).toBe(0))
+    }
+    finally {
+      unsubscribe()
+    }
+    expect(events.filter(event => event.kind === 'upstream' || event.kind === 'compression')).toEqual([])
+  })
+
+  it('上游应答前客户端断开：立刻撤掉上游请求，不占着连接等到超时', async () => {
+    const status = await startEntry('inbound', upstream, { tokenProvider: upstream.mintUrlFor })
+    const request = httpRequest({ host: '127.0.0.1', port: status.port, path: '/http-stall', headers: markerHeaders('private') })
+    request.on('error', () => undefined)
+    request.end()
+    await upstream.waitForCall('/http-stall')
+    await vi.waitFor(() => expect(upstream.openSockets()).toBeGreaterThan(0))
+    request.destroy()
+    await vi.waitFor(() => expect(upstream.openSockets()).toBe(0))
+    await vi.waitFor(() => expect(gateway.status('entry')?.connections).toBe(0))
+  })
+
+  it('响应传输中客户端断开：上游腿随之撤掉，不继续空转', async () => {
+    const events: RemoteGatewayEvent[] = []
+    const unsubscribe = gateway.subscribe(event => events.push(event))
+    const status = await startEntry('inbound', upstream, { tokenProvider: upstream.mintUrlFor })
+    try {
+      const live = await streamed(status.port, '/sse', markerHeaders('private', { 'accept-encoding': 'zstd' }))
+      expect(live.status).toBe(200)
+      await vi.waitFor(() => expect(upstream.openSockets()).toBeGreaterThan(0))
+      live.stream.destroy()
+      await vi.waitFor(() => expect(upstream.openSockets()).toBe(0))
+      await vi.waitFor(() => expect(gateway.status('entry')?.connections).toBe(0))
+    }
+    finally {
+      unsubscribe()
+    }
+    expect(events.filter(event => event.kind === 'upstream' || event.kind === 'compression')).toEqual([])
+    const after = await call(status.port, '/api/ping', { headers: markerHeaders('private') })
+    expect(after.status).toBe(200)
+  })
+
+  it('缓冲转发的正文传输中客户端断开：上游腿照样撤掉，也不记成上游故障', async () => {
+    const events: RemoteGatewayEvent[] = []
+    const unsubscribe = gateway.subscribe(event => events.push(event))
+    const status = await startEntry('inbound', upstream, { tokenProvider: upstream.mintUrlFor })
+    try {
+      const live = await streamed(status.port, '/big-stall', markerHeaders('private', { 'accept-encoding': 'zstd' }))
+      expect(live.status).toBe(200)
+      await vi.waitFor(() => expect(upstream.openSockets()).toBeGreaterThan(0))
+      live.stream.destroy()
+      await vi.waitFor(() => expect(upstream.openSockets()).toBe(0))
+      await vi.waitFor(() => expect(gateway.status('entry')?.connections).toBe(0))
+    }
+    finally {
+      unsubscribe()
+    }
+    expect(events.filter(event => event.kind === 'upstream' || event.kind === 'compression')).toEqual([])
+  })
+})
+
+describe('gateway 压缩流自身出错', () => {
+  it('解压失败：连同上游腿一起撤掉，不留半开连接', async () => {
+    const events: RemoteGatewayEvent[] = []
+    const unsubscribe = gateway.subscribe(event => events.push(event))
+    const status = await startEntry('inbound', upstream, { tokenProvider: upstream.mintUrlFor })
+    try {
+      const live = await streamed(status.port, '/gz-corrupt-stall', markerHeaders('private'))
+      expect(live.status).toBe(200)
+      await vi.waitFor(() => expect(upstream.openSockets()).toBe(0))
+      await vi.waitFor(() => expect(gateway.status('entry')?.connections).toBe(0))
+    }
+    finally {
+      unsubscribe()
+    }
+    expect(events.filter(event => event.kind === 'compression')).toHaveLength(1)
   })
 })
 
