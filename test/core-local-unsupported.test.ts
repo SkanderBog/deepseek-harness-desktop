@@ -19,13 +19,13 @@ function localPredicateSource(): string {
 }
 
 describe('local core compatibility baseline', () => {
-  it('前端与资源清单的最低支持版本均为 0.2.1-rc.4', () => {
-    expect(MIN_SUPPORTED_CORE_VERSION).toBe('0.2.1-rc.4')
-    expect(manifest.engines.dsh.minimum).toBe('0.2.1-rc.4')
-    expect(manifest.dependencies.dsh.engine.minimum).toBe('0.2.1-rc.4')
+  it('前端与资源清单的最低支持版本均为 0.1.7-rc.1', () => {
+    expect(MIN_SUPPORTED_CORE_VERSION).toBe('0.1.7-rc.1')
+    expect(manifest.engines.dsh.minimum).toBe('0.1.7-rc.1')
+    expect(manifest.dependencies.dsh.engine.minimum).toBe('0.1.7-rc.1')
   })
 
-  it('推荐版本为 0.2.1-rc.4，与最低支持门槛同值', () => {
+  it('推荐版本为 0.2.1-rc.4，高于最低支持门槛', () => {
     expect(manifest.engines.dsh.recommend).toBe('0.2.1-rc.4')
     expect(manifest.dependencies.dsh.engine.recommend).toBe('0.2.1-rc.4')
     expect(isCoreUnsupported('0.2.1-rc.4')).toBe(false)
@@ -36,8 +36,12 @@ describe('local core compatibility baseline', () => {
     expect(isCoreUnsupported(version)).toBe(false)
   })
 
-  it.each(['0.1.7-rc.1', '0.2.0-rc.2', '0.2.1-rc.1', '0.2.1-rc.2', '0.2.1-rc.3'])('本地核心 %s 低于 rc.4 下限，判为不兼容', (version) => {
+  it.each(['0.1.6', '0.1.7-rc.0', '0.1.7-alpha.1', '0.1.5-rc.3'])('本地核心 %s 低于 0.1.7-rc.1 下限，判为不兼容', (version) => {
     expect(isCoreUnsupported(version)).toBe(true)
+  })
+
+  it.each(['0.1.7-rc.1', '0.1.8-alpha.1', '0.2.0-rc.2'])('本地核心 %s 达到最低支持版本，仍受支持', (version) => {
+    expect(isCoreUnsupported(version)).toBe(false)
   })
 })
 

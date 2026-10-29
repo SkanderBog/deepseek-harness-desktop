@@ -39,12 +39,12 @@ describe('独立 CLI 与用户目录隔离', () => {
     expect(() => resolveDshCommand(), '缺入口不得回退到其他核心').toThrow('绝对路径')
   })
 
-  it.each(['0.1.7-rc.1', '0.2.1-rc.3', 'unknown'])('拒绝最低基线之前或非法的版本：%s', (version) => {
+  it.each(['0.1.5-rc.2', '0.1.7-rc.0', 'unknown'])('拒绝最低基线之前或非法的版本：%s', (version) => {
     vi.stubEnv('DSH_E2E_DSH_BIN', cli(version))
-    expect(() => resolveDshCommand(), '老核心不得继续作为适配基线').toThrow('最低版本为 0.2.1-rc.4')
+    expect(() => resolveDshCommand(), '老核心不得继续作为适配基线').toThrow('最低版本为 0.1.7-rc.1')
   })
 
-  it.each(['0.2.1-rc.4', '0.2.1-rc.5', '0.2.2-alpha.2'])('独立实物 CLI 精确匹配时放行：%s', (version) => {
+  it.each(['0.1.7-rc.1', '0.2.1-rc.3', '0.2.1-rc.4'])('独立实物 CLI 精确匹配时放行：%s', (version) => {
     const entry = cli(version)
     vi.stubEnv('DSH_E2E_DSH_BIN', entry)
     vi.stubEnv('DSH_E2E_CORE_VERSION', version)

@@ -35,8 +35,8 @@ describe('compareVersions', () => {
 })
 
 describe('isCoreUnsupported', () => {
-  it('最低支持版本固定为 0.2.1-rc.4', () => {
-    expect(MIN_SUPPORTED_CORE_VERSION).toBe('0.2.1-rc.4')
+  it('最低支持版本固定为 0.1.7-rc.1', () => {
+    expect(MIN_SUPPORTED_CORE_VERSION).toBe('0.1.7-rc.1')
   })
 
   it.each([
@@ -45,22 +45,22 @@ describe('isCoreUnsupported', () => {
     '0.1.5-rc.1',
     '0.1.5-rc.3',
     '0.1.6',
-    '0.1.7-rc.1',
-    '0.2.1-rc.1',
-    '0.2.1-rc.3',
-    '0.2.1-rc.0',
-    '0.2.1-alpha.5',
-    'dsh-0.2.1-rc.3-40000000000',
-    'dsh-src-0.2.1-rc.3-40000000000',
-    'src-0.2.1-rc.3',
-    'src-0.2.1-alpha.1',
+    '0.1.7-rc.0',
+    '0.1.7-alpha.1',
+    'dsh-0.1.6-rc.3-40000000000',
+    'dsh-src-0.1.6-rc.3-40000000000',
+    'src-0.1.6',
   ])('%s 低于最低支持版本，判为不兼容', (version) => {
     expect(isCoreUnsupported(version)).toBe(true)
   })
 
   it.each([
+    '0.1.7-rc.1',
+    '0.1.7',
+    '0.1.8-alpha.1',
+    '0.2.1-rc.1',
+    '0.2.1-rc.2',
     '0.2.1-rc.4',
-    '0.2.1-rc.5',
     '0.2.1',
     '0.2.2-alpha.2',
     'src-0.2.1-rc.4',
