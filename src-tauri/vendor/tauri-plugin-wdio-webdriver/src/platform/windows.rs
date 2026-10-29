@@ -968,7 +968,10 @@ impl<R: Runtime + 'static> PlatformExecutor<R> for WindowsExecutor<R> {
         let _guard = lock.lock().await;
 
         // Execute the wrapper using the unlocked inner method (we already hold the lock).
-        self.evaluate_js_top_level(&wrapper).await?;
+        if let Err(error) = self.evaluate_js_top_level(&wrapper).await {
+            async_state.cancel(&async_id);
+            return Err(error);
+        }
 
         // Wait for result with timeout (lock is still held; released when _guard drops).
         let timeout_ms = self.timeouts.script_ms;

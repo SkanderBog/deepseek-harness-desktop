@@ -328,13 +328,33 @@ fn render_layer(roots: &[PathBuf]) -> Option<String> {
         "
     ignored:",
     );
-    for pattern in ignore_patterns() {
-        yaml.push_str(
-            "
-      - '",
-        );
-        yaml.push_str(&pattern);
-        yaml.push('\'');
+    for root in roots {
+        let relative = root_value(&base, root);
+        let mut escaped = String::new();
+        for ch in relative.chars() {
+            if "\\*?[]{}()!+@".contains(ch) {
+                escaped.push('\\');
+            }
+            escaped.push(ch);
+        }
+        let prefix = if relative == "." { "" } else { &escaped };
+        let native_prefix = prefix.replace('/', "[/\\\\]");
+        let mut patterns = ignore_patterns();
+        if !prefix.is_empty() {
+            patterns.extend(["node_modules".to_string(), ".*".to_string()]);
+        }
+        for pattern in patterns {
+            let pattern = if prefix.is_empty() {
+                pattern
+            } else if pattern.starts_with("**/") {
+                format!("{prefix}/{pattern}")
+            } else {
+                format!("{native_prefix}[/\\\\]{pattern}")
+            };
+            yaml.push_str("\n      - '");
+            yaml.push_str(&pattern.replace('\'', "''"));
+            yaml.push('\'');
+        }
     }
     yaml.push_str(
         "
@@ -604,7 +624,10 @@ mod tests {
         // 目录的形态，不硬编码平台），其余字节逐字固定。
         let root = tmp_dir("render").join("plugins");
         std::fs::create_dir_all(&root).unwrap();
-        let roots = vec![root.join("mine"), root.join("other").join("sub")];
+        let roots = vec![
+            root.join("repo").join(".worktrees").join("feature"),
+            root.join("other").join("sub"),
+        ];
         let yaml = render_layer(&roots).expect("render");
 
         let entries: Vec<serde_yaml::Value> = serde_yaml::from_str(&yaml).expect("parse");
@@ -616,9 +639,9 @@ mod tests {
         let base = config["base"].as_str().expect("base");
         assert!(base.starts_with("file:///"), "{base}");
         assert_eq!(config["root"].as_sequence().unwrap().len(), 2, "{yaml}");
-        assert_eq!(config["root"][0].as_str(), Some("mine"));
+        assert_eq!(config["root"][0].as_str(), Some("repo/.worktrees/feature"));
         assert_eq!(config["root"][1].as_str(), Some("other/sub"));
-        assert_eq!(config["ignored"].as_sequence().unwrap().len(), 11);
+        assert_eq!(config["ignored"].as_sequence().unwrap().len(), 26);
         assert_eq!(config["debounce"].as_u64(), Some(HMR_DEBOUNCE_MS));
 
         // 逐字固定整份补丁层：核心按 id 整块替换 config，任何字段写错或漏写都会被静默忽略。
@@ -629,20 +652,35 @@ mod tests {
             "  config:",
             base_line.as_str(),
             "    root:",
-            "      - mine",
+            "      - repo/.worktrees/feature",
             "      - other/sub",
             "    ignored:",
-            "      - '**/node_modules'",
-            "      - '**/node_modules/**'",
-            "      - '**/.*'",
-            "      - '**/.*/**'",
-            "      - '**[/\\\\]node_modules'",
-            "      - '**[/\\\\]node_modules[/\\\\]**'",
-            "      - 'node_modules[/\\\\]**'",
-            "      - '**[/\\\\].*'",
-            "      - '.*[/\\\\]**'",
-            "      - 'cache'",
-            "      - 'data'",
+            "      - 'repo/.worktrees/feature/**/node_modules'",
+            "      - 'repo/.worktrees/feature/**/node_modules/**'",
+            "      - 'repo/.worktrees/feature/**/.*'",
+            "      - 'repo/.worktrees/feature/**/.*/**'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]**[/\\\\]node_modules'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]**[/\\\\]node_modules[/\\\\]**'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]node_modules[/\\\\]**'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]**[/\\\\].*'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\].*[/\\\\]**'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]cache'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]data'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]node_modules'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\].*'",
+            "      - 'other/sub/**/node_modules'",
+            "      - 'other/sub/**/node_modules/**'",
+            "      - 'other/sub/**/.*'",
+            "      - 'other/sub/**/.*/**'",
+            "      - 'other[/\\\\]sub[/\\\\]**[/\\\\]node_modules'",
+            "      - 'other[/\\\\]sub[/\\\\]**[/\\\\]node_modules[/\\\\]**'",
+            "      - 'other[/\\\\]sub[/\\\\]node_modules[/\\\\]**'",
+            "      - 'other[/\\\\]sub[/\\\\]**[/\\\\].*'",
+            "      - 'other[/\\\\]sub[/\\\\].*[/\\\\]**'",
+            "      - 'other[/\\\\]sub[/\\\\]cache'",
+            "      - 'other[/\\\\]sub[/\\\\]data'",
+            "      - 'other[/\\\\]sub[/\\\\]node_modules'",
+            "      - 'other[/\\\\]sub[/\\\\].*'",
             "    debounce: 100",
         ]
         .join("\n")
