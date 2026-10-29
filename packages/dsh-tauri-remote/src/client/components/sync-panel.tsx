@@ -41,17 +41,20 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
   }, [machinesState.status])
 
   const preview = syncState.preview
-  const connected = [...machinesState.machines, ...machinesState.discovered].filter(machine => machinesState.statuses[machine.id]?.state === 'connected')
-  const target = connected.find(machine => machine.id === targetId)
+  const machines = [...machinesState.machines, ...machinesState.discovered]
+  const connected = machines.filter(machine => machinesState.statuses[machine.id]?.state === 'connected')
+  const selectedTarget = connected.find(machine => machine.id === targetId)
+  const target = selectedTarget
     ?? connected.find(machine => machine.id === syncState.machineId)
     ?? connected[0]
-  const runningTarget = connected.find(machine => machinesState.statuses[machine.id]?.progress?.phase === 'syncing')
+  const runningTarget = machines.find(machine => machinesState.statuses[machine.id]?.progress?.phase === 'syncing')
   const shownTarget = runningTarget ?? target
   const progress = shownTarget === undefined ? undefined : machinesState.statuses[shownTarget.id]?.progress
   const syncing = progress?.phase === 'syncing' ? progress : undefined
   const hostSyncing = Object.values(machinesState.statuses).some(status => status.progress?.phase === 'syncing')
   const applying = syncState.applying || hostSyncing
   const resultsMatchTarget = sameSyncTarget(syncState.target, target)
+  const errorMatchesTarget = selectedTarget === undefined || sameSyncTarget(syncState.target, selectedTarget)
   const pluginRows: SelectableRow[] = (preview?.plugins ?? []).map(plugin => ({
     key: syncKeyOf({ kind: 'plugin', name: plugin.name }),
     name: plugin.name,
@@ -177,38 +180,42 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
                           </>
                         )
                       : null)}
-                <div className="flex flex-wrap items-center gap-[10px] pt-[2px]">
-                  <Button variant="primary" size="sm" disabled={!canApply} data-testid="sync-apply" onClick={apply}>
-                    {applying
-                      ? t('sync.applying')
-                      : target === undefined
-                        ? t('sync.apply')
-                        : t('sync.applyTo').replace('{name}', target.name)}
-                  </Button>
-                  {syncing !== undefined
-                    ? (
-                        <div className="flex min-w-[220px] flex-1 items-center gap-[8px]" data-testid="sync-progress">
-                          <span className="shrink-0 text-[12px] leading-[18px] text-secondary">{shownTarget?.name}</span>
-                          <span className="block h-[4px] flex-1 overflow-hidden rounded-[2px] bg-border-l2" aria-hidden="true">
-                            <span
-                              className="block h-full rounded-[2px] bg-brand [transition:width_200ms_ease]"
-                              style={{ width: `${barPercentOf(syncing.attempt, syncing.total)}%` }}
-                            />
-                          </span>
-                          <span className="shrink-0 text-[12px] leading-[18px] text-secondary">
-                            {syncing.attempt === 0
-                              ? t('sync.preparing')
-                              : t('sync.progress')
-                                  .replace('{done}', String(syncing.attempt ?? 0))
-                                  .replace('{total}', String(syncing.total ?? 0))
-                                  .replace('{item}', syncing.item ?? '')}
-                          </span>
-                        </div>
-                      )
-                    : null}
-                </div>
               </>
             )}
+      {machinesState.role?.remote !== true && (target !== undefined || syncing !== undefined)
+        ? (
+            <div className="flex flex-wrap items-center gap-[10px] pt-[2px]">
+              {target === undefined
+                ? null
+                : (
+                    <Button variant="primary" size="sm" disabled={!canApply} data-testid="sync-apply" onClick={apply}>
+                      {applying ? t('sync.applying') : t('sync.applyTo').replace('{name}', target.name)}
+                    </Button>
+                  )}
+              {syncing === undefined
+                ? null
+                : (
+                    <div className="flex min-w-[220px] flex-1 items-center gap-[8px]" data-testid="sync-progress">
+                      <span className="shrink-0 text-[12px] leading-[18px] text-secondary">{shownTarget?.name}</span>
+                      <span className="block h-[4px] flex-1 overflow-hidden rounded-[2px] bg-border-l2" aria-hidden="true">
+                        <span
+                          className="block h-full rounded-[2px] bg-brand [transition:width_200ms_ease]"
+                          style={{ width: `${barPercentOf(syncing.attempt, syncing.total)}%` }}
+                        />
+                      </span>
+                      <span className="shrink-0 text-[12px] leading-[18px] text-secondary">
+                        {syncing.attempt === 0
+                          ? t('sync.preparing')
+                          : t('sync.progress')
+                              .replace('{done}', String(syncing.attempt ?? 0))
+                              .replace('{total}', String(syncing.total ?? 0))
+                              .replace('{item}', syncing.item ?? '')}
+                      </span>
+                    </div>
+                  )}
+            </div>
+          )
+        : null}
       {syncState.status === 'error'
         ? (
             <p className="m-0 text-[12px] leading-[18px] text-error" role="alert">
@@ -217,9 +224,10 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
             </p>
           )
         : null}
-      {syncState.error !== null && syncState.status !== 'error' && resultsMatchTarget
+      {syncState.error !== null && syncState.status !== 'error' && errorMatchesTarget
         ? (
             <p className="m-0 text-[12px] leading-[18px] text-error" role="alert">
+              {syncState.target === null ? null : `${syncState.target.name}: `}
               {t('sync.applyFailed')}
               {errorTextOf(syncState.error, t)}
             </p>

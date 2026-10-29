@@ -182,6 +182,29 @@ describe('syncPanel', () => {
     expect(screen.getByTestId('sync-progress').textContent).toContain('plugin-b')
   })
 
+  it.each([false, true])('shows disconnected machine progress when another connected machine exists: %s', (hasConnected) => {
+    routeWire({})
+    const other = { ...machineA, id: 'b', name: 'beta' }
+    store.machines.commitList({
+      machines: hasConnected ? [other] : [],
+      discovered: [machineA],
+      statuses: {
+        a: { state: 'disconnected', progress: { phase: 'syncing', attempt: 2, total: 3, item: 'plugin-a' } },
+        ...hasConnected ? { b: connectedStatus } : {},
+      },
+    })
+    store.sync.commitPreview(preview)
+    render(<SyncPanel t={t} />)
+    expect(screen.getByTestId('sync-progress').textContent).toContain('alpha')
+    expect(screen.getByTestId('sync-progress').textContent).toContain('2/3')
+    expect(screen.getByTestId('sync-progress').textContent).toContain('plugin-a')
+    expect(applyCalls()).toHaveLength(0)
+    if (hasConnected)
+      expect(screen.getByTestId('sync-apply').hasAttribute('disabled')).toBe(true)
+    else
+      expect(screen.queryByTestId('sync-apply')).toBeNull()
+  })
+
   it.each([
     { name: 'renamed' },
     { host: '10.0.0.2' },
@@ -346,6 +369,45 @@ describe('syncPanel', () => {
     expect(screen.getByText(/0 succeeded, 2 failed/)).toBeTruthy()
     expect(screen.getByTestId('sync-result-dsh-market').textContent).toContain('ERR_PNPM_NO_MATCH')
     expect(screen.getByTestId('sync-result-alpha').textContent).toContain('read-only file system')
+  })
+
+  it.each([false, true])('keeps an apply failure after its target disconnects with another connected machine: %s', async (hasConnected) => {
+    routeWire({}, [`${baseURL}/sync/apply`])
+    seedConnected()
+    const other = { ...machineA, id: 'b', name: 'beta' }
+    if (hasConnected)
+      store.machines.commitList({ machines: [machineA, other], discovered: [], statuses: { a: connectedStatus, b: connectedStatus } })
+    const view = render(<SyncPanel t={t} />)
+    fireEvent.click(screen.getByTestId('sync-apply'))
+    await waitFor(() => expect(store.sync.error).toBe(`${baseURL}/sync/apply broke`))
+    store.machines.commitList({
+      machines: hasConnected ? [machineA, other] : [machineA],
+      discovered: [],
+      statuses: { a: { state: 'disconnected' }, ...hasConnected ? { b: connectedStatus } : {} },
+    })
+    view.rerender(<SyncPanel t={t} />)
+    expect(screen.getByRole('alert').textContent).toContain('alpha')
+    expect(screen.getByRole('alert').textContent).toContain('Sync completion is unconfirmed')
+    expect(screen.getByRole('alert').textContent).toContain(`${baseURL}/sync/apply broke`)
+    if (hasConnected) {
+      fireEvent.click(screen.getByTestId('sync-target-b'))
+      expect(screen.queryByRole('alert')).toBeNull()
+    }
+    expect(applyCalls()).toHaveLength(1)
+  })
+
+  it('hides an apply failure when the user selects a different connected target', async () => {
+    routeWire({}, [`${baseURL}/sync/apply`])
+    const other = { ...machineA, id: 'b', name: 'beta' }
+    store.machines.commitList({ machines: [machineA, other], discovered: [], statuses: { a: connectedStatus, b: connectedStatus } })
+    store.sync.commitPreview(preview)
+    render(<SyncPanel t={t} />)
+    fireEvent.click(screen.getByTestId('sync-apply'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain(`${baseURL}/sync/apply broke`))
+    fireEvent.click(screen.getByTestId('sync-target-b'))
+    expect(screen.queryByRole('alert')).toBeNull()
+    fireEvent.click(screen.getByTestId('sync-target-a'))
+    expect(screen.getByRole('alert').textContent).toContain(`${baseURL}/sync/apply broke`)
   })
 
   it('invalidates stale retry results after an unconfirmed apply even when the preview refreshes', async () => {
