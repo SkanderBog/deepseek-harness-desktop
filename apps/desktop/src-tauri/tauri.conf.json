@@ -15,17 +15,7 @@
         "enable": true,
         "scope": []
       }
-    },
-    "windows": [
-      {
-        "title": "DeepSeek Harness",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 860,
-        "minHeight": 620,
-        "decorations": false
-      }
-    ]
+    }
   },
   "plugins": {
     "deep-link": {
