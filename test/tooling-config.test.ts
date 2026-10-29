@@ -8,6 +8,7 @@ import rootConfig from '../vitest.config'
 import desktopConfig from '../vitest.desktop.config'
 import pluginConfig from '../vitest.plugin.config'
 import unitConfig from '../vitest.unit.config'
+import webdriverConfig from '../vitest.webdriver.config'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 let runtime: Awaited<ReturnType<typeof createVitest>>
@@ -84,7 +85,16 @@ describe('tooling configuration contracts', () => {
       testTimeout: 180_000,
       hookTimeout: 180_000,
     })
-    expect(runtime.projects.map(project => project.name)).toEqual(['unit', 'plugin', 'desktop'])
+    expect(webdriverConfig.test).toEqual({
+      name: 'webdriver',
+      include: ['test/e2e/webdriver/*.e2e.ts'],
+      globalSetup: ['./test/e2e/setup-desktop.ts'],
+      environment: 'node',
+      fileParallelism: false,
+      testTimeout: 180_000,
+      hookTimeout: 180_000,
+    })
+    expect(runtime.projects.map(project => project.name)).toEqual(['unit', 'plugin', 'desktop', 'webdriver'])
     expect(runtime.projects.map(project => ({
       name: project.name,
       environment: project.config.environment,
@@ -95,6 +105,7 @@ describe('tooling configuration contracts', () => {
       { name: 'unit', environment: 'node', maxWorkers: 4, testTimeout: 30_000, hookTimeout: 30_000 },
       { name: 'plugin', environment: 'node', maxWorkers: 1, testTimeout: 120_000, hookTimeout: 120_000 },
       { name: 'desktop', environment: 'node', maxWorkers: 1, testTimeout: 180_000, hookTimeout: 180_000 },
+      { name: 'webdriver', environment: 'node', maxWorkers: 1, testTimeout: 180_000, hookTimeout: 180_000 },
     ])
   })
 
@@ -106,6 +117,8 @@ describe('tooling configuration contracts', () => {
       ['test/e2e/plugins/dsh-tauri.e2e.ts', ['plugin']],
       ['test/e2e/plugins/nested/contract.e2e.ts', ['plugin']],
       ['test/e2e/desktop/boot.e2e.ts', ['desktop']],
+      ['test/e2e/webdriver/script.e2e.ts', ['webdriver']],
+      ['test/e2e/webdriver/nested/contract.e2e.ts', []],
       ['test/e2e/desktop/nested/contract.e2e.ts', []],
       ['test/archive/contract.test.ts', []],
       ['archive/contract.test.ts', []],
@@ -122,6 +135,7 @@ describe('tooling configuration contracts', () => {
     const specs = await runtime.globTestSpecifications()
     expect(specs.filter(spec => spec.moduleId.endsWith('/test/tooling-config.test.ts')).map(spec => spec.project.name)).toEqual(['unit'])
     expect(specs.filter(spec => spec.moduleId.endsWith('/test/e2e/desktop/boot.e2e.ts')).map(spec => spec.project.name)).toEqual(['desktop'])
+    expect(specs.filter(spec => spec.moduleId.endsWith('/test/e2e/webdriver/script.e2e.ts')).map(spec => spec.project.name)).toEqual(['webdriver'])
     expect(specs.filter(spec => spec.moduleId.endsWith('/test/e2e/plugins/dsh-tauri.e2e.ts')).map(spec => spec.project.name)).toEqual(['plugin'])
     for (const file of [
       'packages/dsh-tauri-remote/src/client/components/machines-section.test.tsx',
@@ -139,7 +153,7 @@ describe('tooling configuration contracts', () => {
   })
 
   it('coverage remains root-only with all existing exclusions and no thresholds', () => {
-    expect(rootConfig.test?.projects).toEqual(['./vitest.unit.config.ts', './vitest.plugin.config.ts', './vitest.desktop.config.ts'])
+    expect(rootConfig.test?.projects).toEqual(['./vitest.unit.config.ts', './vitest.plugin.config.ts', './vitest.desktop.config.ts', './vitest.webdriver.config.ts'])
     expect(rootConfig.test?.coverage).toEqual({
       provider: 'v8',
       exclude: [
@@ -154,7 +168,7 @@ describe('tooling configuration contracts', () => {
       ],
     })
     expect(rootConfig.test).not.toHaveProperty('include')
-    for (const config of [unitConfig, pluginConfig, desktopConfig]) {
+    for (const config of [unitConfig, pluginConfig, desktopConfig, webdriverConfig]) {
       expect(config.test).not.toHaveProperty('coverage')
       expect(config.test).not.toHaveProperty('globals')
     }
@@ -183,6 +197,7 @@ describe('tooling configuration contracts', () => {
       'vitest.unit.config.ts',
       'vitest.plugin.config.ts',
       'vitest.desktop.config.ts',
+      'vitest.webdriver.config.ts',
       'tooling.config.ts',
       'bump.config.ts',
       'genapi.config.ts',

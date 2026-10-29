@@ -279,6 +279,9 @@ jobs:
           Set-Content -Path "$env:RUNNER_TEMP\tauri-e2e.json" -Value '{"build":{"beforeBuildCommand":""}}'
           pnpm tauri build --debug --no-bundle --config "$env:RUNNER_TEMP\tauri-e2e.json"
 
+      - name: Windows WebDriver integration test
+        run: node node_modules/vitest/vitest.mjs run --project webdriver --sequence.shuffle --sequence.seed=501
+
       - name: Desktop L3 test
         run: node node_modules/vitest/vitest.mjs run --project desktop --sequence.shuffle --sequence.seed=500
 

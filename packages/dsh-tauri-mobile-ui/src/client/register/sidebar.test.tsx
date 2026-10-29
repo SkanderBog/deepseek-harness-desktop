@@ -38,7 +38,7 @@ vi.mock('dsh-tauri/client', () => ({
     registerLocale: vi.fn(),
     ...dictionaries,
   }),
-  MOBILE_MEDIA_QUERIES: ['(hover: none)', '(any-pointer: coarse)', '(any-hover: none)', '(max-width: 1023px)'],
+  MOBILE_MEDIA_QUERIES: ['(pointer: coarse)', '(any-pointer: coarse)', '(max-width: 1023px)'],
   MOBILE_BREAKPOINT: 1024,
   detectMobileDevice: () => mocks.mobile,
   invokeParent: mocks.invokeParent,
