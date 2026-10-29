@@ -1,12 +1,12 @@
 [package]
-name = "tauri-app"
+name = "deepseek-harness-desktop"
 version = "0.1.0"
 description = "DeepSeek Harness desktop shell"
 authors = ["DeepSeek Harness contributors"]
 edition = "2024"
 
 [lib]
-name = "tauri_app_lib"
+name = "main"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

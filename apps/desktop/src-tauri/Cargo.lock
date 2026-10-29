@@ -815,6 +815,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "deepseek-harness-desktop"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "auto-launch 0.5.0",
+ "dunce",
+ "fix-path-env",
+ "json-patch 3.0.1",
+ "libc",
+ "log",
+ "reqwest 0.12.28",
+ "rfd",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-http",
+ "tauri-plugin-notifications",
+ "tauri-plugin-opener",
+ "tauri-plugin-os",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-store",
+ "tauri-runtime",
+ "tauri-runtime-electron",
+ "tauri-utils",
+ "tempfile",
+ "time",
+ "tokio",
+ "tracing-appender",
+ "tracing-log",
+ "tracing-subscriber",
+ "windows-sys 0.61.2",
+ "winreg 0.55.0",
+]
+
+[[package]]
 name = "defmt"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4641,44 +4679,6 @@ dependencies = [
  "webview2-com",
  "window-vibrancy",
  "windows 0.62.2",
-]
-
-[[package]]
-name = "tauri-app"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "auto-launch 0.5.0",
- "dunce",
- "fix-path-env",
- "json-patch 3.0.1",
- "libc",
- "log",
- "reqwest 0.12.28",
- "rfd",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-deep-link",
- "tauri-plugin-http",
- "tauri-plugin-notifications",
- "tauri-plugin-opener",
- "tauri-plugin-os",
- "tauri-plugin-single-instance",
- "tauri-plugin-store",
- "tauri-runtime",
- "tauri-runtime-electron",
- "tauri-utils",
- "tempfile",
- "time",
- "tokio",
- "tracing-appender",
- "tracing-log",
- "tracing-subscriber",
- "windows-sys 0.61.2",
- "winreg 0.55.0",
 ]
 
 [[package]]
