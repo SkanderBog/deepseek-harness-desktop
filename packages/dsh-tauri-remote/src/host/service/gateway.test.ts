@@ -299,6 +299,11 @@ function startFakeUpstream(): Promise<FakeUpstream> {
       }, 20)
       return
     }
+    if (url.pathname === '/big-stall') {
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+      response.write('b'.repeat(MIN_BYTES * 2))
+      return
+    }
     if (url.pathname === '/stall') {
       state.stalled()
       return
@@ -2181,15 +2186,41 @@ describe('gateway 客户端提前断开', () => {
   })
 
   it('响应传输中客户端断开：上游腿随之撤掉，不继续空转', async () => {
+    const events: RemoteGatewayEvent[] = []
+    const unsubscribe = gateway.subscribe(event => events.push(event))
     const status = await startEntry('inbound', upstream, { tokenProvider: upstream.mintUrlFor })
-    const live = await streamed(status.port, '/sse', markerHeaders('private', { 'accept-encoding': 'zstd' }))
-    expect(live.status).toBe(200)
-    await vi.waitFor(() => expect(upstream.openSockets()).toBeGreaterThan(0))
-    live.stream.destroy()
-    await vi.waitFor(() => expect(upstream.openSockets()).toBe(0))
-    await vi.waitFor(() => expect(gateway.status('entry')?.connections).toBe(0))
+    try {
+      const live = await streamed(status.port, '/sse', markerHeaders('private', { 'accept-encoding': 'zstd' }))
+      expect(live.status).toBe(200)
+      await vi.waitFor(() => expect(upstream.openSockets()).toBeGreaterThan(0))
+      live.stream.destroy()
+      await vi.waitFor(() => expect(upstream.openSockets()).toBe(0))
+      await vi.waitFor(() => expect(gateway.status('entry')?.connections).toBe(0))
+    }
+    finally {
+      unsubscribe()
+    }
+    expect(events.filter(event => event.kind === 'upstream' || event.kind === 'compression')).toEqual([])
     const after = await call(status.port, '/api/ping', { headers: markerHeaders('private') })
     expect(after.status).toBe(200)
+  })
+
+  it('缓冲转发的正文传输中客户端断开：上游腿照样撤掉，也不记成上游故障', async () => {
+    const events: RemoteGatewayEvent[] = []
+    const unsubscribe = gateway.subscribe(event => events.push(event))
+    const status = await startEntry('inbound', upstream, { tokenProvider: upstream.mintUrlFor })
+    try {
+      const live = await streamed(status.port, '/big-stall', markerHeaders('private', { 'accept-encoding': 'zstd' }))
+      expect(live.status).toBe(200)
+      await vi.waitFor(() => expect(upstream.openSockets()).toBeGreaterThan(0))
+      live.stream.destroy()
+      await vi.waitFor(() => expect(upstream.openSockets()).toBe(0))
+      await vi.waitFor(() => expect(gateway.status('entry')?.connections).toBe(0))
+    }
+    finally {
+      unsubscribe()
+    }
+    expect(events.filter(event => event.kind === 'upstream' || event.kind === 'compression')).toEqual([])
   })
 })
 
