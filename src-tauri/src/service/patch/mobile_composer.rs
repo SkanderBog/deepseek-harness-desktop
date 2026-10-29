@@ -9,8 +9,6 @@ const LEGACY_MOBILE: &str = r#"function isDshMobileComposer() {
 }
 "#;
 /// issue #1128：指针查询在触屏桌面上同样成立，必须叠加与官方布局一致的 1024px 门槛。
-/// 上一版 `MOBILE` 的判据含 `(hover: none)`/`(any-hover: none)`，在 vivo V2353A（Android 14 /
-/// Chrome 116）上恒 false，导致回车换行、跳过自动聚焦、跳过 DOM selection 三项全部静默失效。
 /// 保留原文仅用于升级已经打过上一版补丁的运行时。
 const MOBILE_V1: &str = r#"function isDshMobileComposer() {
     return typeof document !== "undefined" && document.documentElement.hasAttribute("data-dsh-mobile-ui") && typeof window.matchMedia === "function" && window.innerWidth < 1024 && ["(hover: none)", "(any-pointer: coarse)", "(any-hover: none)"].every(query => window.matchMedia(query).matches);
@@ -149,8 +147,6 @@ mod tests {
         );
     }
 
-    /// 真机回归：上一版判据含 hover 查询，在 vivo V2353A 上恒 false，回车换行/
-    /// 跳过自动聚焦/跳过 DOM selection 三项全部静默失效。
     #[test]
     fn drops_hover_queries_from_the_runtime_predicate() {
         assert!(!MOBILE.contains("(hover: none)"));
