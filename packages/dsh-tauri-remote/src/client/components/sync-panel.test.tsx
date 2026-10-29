@@ -185,6 +185,34 @@ describe('syncPanel', () => {
     expect(screen.getByTestId('sync-retry').hasAttribute('disabled')).toBe(false)
   })
 
+  it.each(['remembered', 'selected'])('falls back after the %s target disconnects', async (source) => {
+    routeWire({ [`${baseURL}/sync/apply`]: { items: [] } })
+    const other = { ...machineA, id: 'b', name: 'beta' }
+    store.machines.commitList({
+      machines: [machineA, other],
+      discovered: [],
+      statuses: { a: connectedStatus, b: connectedStatus },
+    })
+    store.sync.commitPreview(preview)
+    if (source === 'remembered') {
+      store.sync.beginApply('b')
+      store.sync.endApply()
+    }
+    const view = render(<SyncPanel t={t} />)
+    if (source === 'selected')
+      fireEvent.click(screen.getByTestId('sync-target-b'))
+    store.machines.commitList({
+      machines: [machineA, other],
+      discovered: [],
+      statuses: { a: connectedStatus, b: { state: 'disconnected' } },
+    })
+    view.rerender(<SyncPanel t={t} />)
+    expect(screen.getByTestId('sync-target-a').getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByTestId('sync-apply'))
+    await waitFor(() => expect(applyCalls()).toHaveLength(1))
+    expect(applyCalls()[0]?.machineId).toBe('a')
+  })
+
   it('blocks target switching while another sync is active', async () => {
     routeWire({})
     const other = { ...machineA, id: 'b', name: 'beta' }
@@ -265,8 +293,8 @@ describe('syncPanel', () => {
     expect(screen.getByTestId('sync-result-alpha').textContent).toContain('read-only file system')
   })
 
-  it('surfaces a request-level failure without swallowing previous results', async () => {
-    routeWire({ [`${baseURL}/sync/apply`]: { items: [] } }, [`${baseURL}/sync/apply`])
+  it('invalidates stale retry results after an unconfirmed apply even when the preview refreshes', async () => {
+    routeWire({ [`${baseURL}/sync/preview`]: preview }, [`${baseURL}/sync/apply`])
     seedConnected()
     store.sync.beginApply('a')
     store.sync.endApply()
@@ -275,9 +303,11 @@ describe('syncPanel', () => {
     await waitFor(() => expect(screen.getByTestId('sync-apply')).toBeTruthy())
     fireEvent.click(screen.getByTestId('sync-apply'))
     await waitFor(() => expect(screen.getByText(regexOf(`Sync completion is unconfirmed; check the remote before retrying: ${baseURL}/sync/apply broke`))).toBeTruthy())
-    expect(screen.getByTestId('sync-result-dsh-market')).toBeTruthy()
-    expect(screen.getByTestId('sync-retry').hasAttribute('disabled')).toBe(true)
-    fireEvent.click(screen.getByTestId('sync-retry'))
+    fireEvent.click(screen.getByText('Refresh list'))
+    await waitFor(() => expect(apiMethods()).toContain(`${baseURL}/sync/preview`))
+    await waitFor(() => expect(store.sync.status).toBe('ready'))
+    expect(screen.queryByTestId('sync-result-dsh-market')).toBeNull()
+    expect(screen.queryByTestId('sync-retry')).toBeNull()
     expect(applyCalls()).toHaveLength(1)
   })
 

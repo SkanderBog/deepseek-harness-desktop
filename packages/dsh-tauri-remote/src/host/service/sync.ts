@@ -2,8 +2,9 @@ import type { Buffer } from 'node:buffer'
 import type { MachineId, RemoteSession, SyncApplyResult, SyncItemResult, SyncPluginRef, SyncPreview, SyncSkillRef, SyncSkillRoot } from '../types/index'
 import type { SyncDeps } from './sync.types'
 import { defineService } from 'dsh-tauri'
-import { activeSyncs, machineProfiles, syncRuntimeDeps } from '../config/runtime'
+import { activeSyncs, homeDirPath, machineProfiles, sshDirPath, syncRuntimeDeps } from '../config/runtime'
 import { carryWorkspaceAllowlist, parseBuildAllowKeys } from '../utils/allowlist'
+import { resolveSshAuth } from '../utils/ssh-config'
 import { assertRemoteDshVersion, dshEntryProbeCommand, firstLineOf } from './bootstrap.utils'
 import { machine } from './machine'
 import { buildPreview, dedupeBy, describeFailure, failureLogOf, installSpecOf, pluginAddCommand, skillExtractCommand } from './sync.utils'
@@ -29,7 +30,8 @@ export const sync = defineService({
       await machine.syncProfiles()
       const profile = machineProfiles.get(machineId)
       const profileName = machine.profileName(machineId)
-      const target = profile === undefined ? undefined : `${profile.host}:${profile.port}:${profile.user}:${profileName}`
+      const endpoint = profile === undefined ? undefined : await resolveSshAuth(profile, sshDirPath(), homeDirPath())
+      const target = endpoint === undefined ? undefined : JSON.stringify([endpoint.host, endpoint.port, endpoint.username, profileName])
       if (target !== undefined && [...activeSyncs.values()].some(active => active.task !== task && active.target === target))
         throw new Error('sync already running for this remote profile')
       activeSyncs.set(machineId, { target, task })

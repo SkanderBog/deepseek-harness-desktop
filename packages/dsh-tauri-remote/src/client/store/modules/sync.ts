@@ -28,6 +28,7 @@ export const sync = defineStore({
     },
     fail(error: string): void {
       this.error = error
+      this.results = null
     },
     beginApply(machineId: string | null = null): void {
       if (this.machineId !== machineId)

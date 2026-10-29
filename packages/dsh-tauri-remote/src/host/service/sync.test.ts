@@ -2,6 +2,7 @@ import type { Config } from '../config/schema'
 import type { RemoteExecResult, RemoteSession } from '../types/index'
 import type { SyncSkillScan } from './sync.types'
 import { Buffer } from 'node:buffer'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -267,6 +268,36 @@ describe('syncEngine.apply', () => {
       await pending
     }
     expect(connect).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects concurrent syncs through aliases of the same SSH endpoint', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-sync-alias-'))
+    const sshDir = join(home, '.ssh')
+    const opening = Promise.withResolvers<RemoteSession>()
+    const connect = vi.fn<() => Promise<RemoteSession>>()
+      .mockImplementationOnce(() => opening.promise)
+      .mockRejectedValue(new Error('duplicate SSH session'))
+    seed({ connect })
+    try {
+      await mkdir(sshDir)
+      await writeFile(join(sshDir, 'config'), 'Host alias-a alias-b\n  HostName example.test\n  User deploy\n  Port 2222\n')
+      setHostConfig({ ...HOST_CONFIG, sshDir })
+      const first = MachineId('alias-a')
+      const second = MachineId('alias-b')
+      const pending = sync.apply(first, [], [{ name: 'alpha', root: 'dsh' }])
+      try {
+        await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1))
+        await expect(sync.apply(second, [], [{ name: 'beta', root: 'dsh' }])).rejects.toThrow('sync already running')
+      }
+      finally {
+        opening.resolve(fakeSession(() => ok()))
+        await pending
+      }
+      expect(connect).toHaveBeenCalledTimes(1)
+    }
+    finally {
+      await rm(home, { recursive: true, force: true })
+    }
   })
 
   it('allows independent targets to sync in parallel', async () => {

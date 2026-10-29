@@ -42,7 +42,9 @@ export function SyncPanel({ t }: SyncPanelProps): ReactNode {
 
   const preview = syncState.preview
   const connected = [...machinesState.machines, ...machinesState.discovered].filter(machine => machinesState.statuses[machine.id]?.state === 'connected')
-  const target = connected.find(machine => machine.id === (targetId ?? syncState.machineId ?? connected[0]?.id))
+  const target = connected.find(machine => machine.id === targetId)
+    ?? connected.find(machine => machine.id === syncState.machineId)
+    ?? connected[0]
   const progress = target === undefined ? undefined : machinesState.statuses[target.id]?.progress
   const syncing = progress?.phase === 'syncing' ? progress : undefined
   const hostSyncing = Object.values(machinesState.statuses).some(status => status.progress?.phase === 'syncing')
