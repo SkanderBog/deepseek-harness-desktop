@@ -1,0 +1,20 @@
+{
+  "app.wordmark": "HARNESS",
+  "app.retry": "Retry",
+  "status.loading_plugins": "Loading plugins…",
+  "plugins.loading": "Loading plugins…",
+  "plugins.error": "Failed to load plugins",
+  "ui.waiting_logs": "Waiting for installation logs...",
+  "ui.install_log": "Installation log",
+  "nav.minimize": "Minimize",
+  "nav.maximize": "Maximize",
+  "nav.restore": "Restore",
+  "nav.background": "Background",
+  "nav.close": "Close window",
+  "navbar.child_window": "Child window",
+  "app.dev_env": "Development",
+  "buttons.cancel": "Cancel",
+  "buttons.confirm": "Confirm",
+  "messages.clipboard_copied": "Copied to clipboard",
+  "messages.clipboard_failed": "Copy failed"
+}

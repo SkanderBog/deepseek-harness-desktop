@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [next]
+  pull_request:
+    branches: [next]
+
+permissions:
+  contents: read
+  # skip-duplicate-actions 要查询 Workflow Runs API（actions 作用域），
+  # 缺它会 403/超时；仅 contents: read 会被 GitHub 解释为无 actions 权限。
+  actions: read
+
+# 同一分支/PR 的新提交会取消上次仍在运行的 CI，避免浪费 runner 时间。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # doc 下的 debug 符号只会膨胀 target 目录、降低缓存命中率，测试不需要。
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  pre_job:
+    name: Pre-job (Skip Duplicate Actions)
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.skip_check.outputs.should_skip }}
+    steps:
+      - id: skip_check
+        uses: fkirc/skip-duplicate-actions@v5.3.2
+        with:
+          concurrent_skipping: same_content
+          skip_after_successful_duplicate: true
+          paths_ignore: '["**/docs/**", "**/*.md"]'
+
+  native:
+    name: Native typecheck and unit tests
+    needs: pre_job
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check native subproject
+        run: pnpm run typecheck:native
+
+      - name: Native unit test
+        run: pnpm run test:native
+
+  # 单元测试（vitest）+ 类型检查 + lint：
+  unit:
+    name: Unit Tests (vitest)
+    needs: pre_job
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --no-experimental-webstorage
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check sources before generating declarations
+        run: pnpm run typecheck
+
+      - name: Type check package exports
+        run: pnpm exec tsc --noEmit
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Unit test
+        run: node node_modules/vitest/vitest.mjs run --project unit --sequence.shuffle --sequence.seed=400
+
+  rust-test:
+    name: Rust tests
+    needs: pre_job
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux 用与 release workflow 相同的 ubuntu-22.04 + 同一套 apt 包，
+        # 保证首次跑 CI 就能编译（tauri 的 webkit/appindicator 原生依赖对齐已知可用环境）。
+        # macOS 用官方矩阵的 macos-14（Apple Silicon）。
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Setup Xcode
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/setup-xcode
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          # 同上：PR 只读缓存，避免每轮生成新条目挤掉 main 的暖缓存。
+          save-if: ${{ github.ref == 'refs/heads/next' }}
+
+      - name: Run Windows native notification tests
+        if: runner.os == 'Windows'
+        run: cargo test --manifest-path crates/tauri-plugin-notifications/Cargo.toml --lib --no-default-features
+        working-directory: .
+
+      - name: Run tests
+        run: cargo test --all-features --locked
+        working-directory: apps/desktop/src-tauri

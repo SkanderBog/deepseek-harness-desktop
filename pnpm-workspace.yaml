@@ -106,6 +106,10 @@ minimumReleaseAgeExclude:
 shellEmulator: true
 
 trustPolicy: no-downgrade
+packages:
+  - packages/*
+  - apps/*
+
 overrides:
   '@expo/config': 57.0.9
   '@expo/config-plugins': 57.0.9
@@ -113,10 +117,6 @@ overrides:
   expo-asset: 57.0.18
   expo-constants: 57.0.20
   expo-linking: 57.0.11
-packages:
-  - packages/*
-  - apps/*
-
 patchedDependencies:
   bumpp: patches/bumpp.patch
 
@@ -125,7 +125,6 @@ catalog:
   '@genapi/core': ^4.1.4
   '@genapi/pipeline': ^4.1.4
   '@genapi/presets': ^4.1.4
-  '@genapi/shared': ^4.1.4
   '@modelcontextprotocol/client': 2.2.0
   '@tauri-apps/plugin-os': ^2.3.2
   '@tauri-apps/plugin-store': ^2.4.4
@@ -234,7 +233,6 @@ catalogs:
     '@overlastic/react': ^0.9.0
     '@reause/core': ^0.1.7
     '@tanstack/react-query': ^5.101.4
-    dsh-pet-component: ^0.2.5
     i18next: ^26.3.6
     react: ^19.2.8
     react-dom: ^19.2.8

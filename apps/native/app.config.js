@@ -9,13 +9,14 @@ const orientationMembers = '\n  override fun onConfigurationChanged(newConfig: a
 
 export default function appConfig({ config }) {
   const withNotices = { ...config, extra: { ...config.extra, thirdPartyNotices: readFileSync(notices, 'utf8') } }
-  const withManifest = withAndroidManifest(withNotices, value => {
+  const withManifest = withAndroidManifest(withNotices, (value) => {
     AndroidConfig.Manifest.getMainActivityOrThrow(value.modResults).$['android:screenOrientation'] = 'fullUser'
     return value
   })
-  return withMainActivity(withManifest, value => {
+  return withMainActivity(withManifest, (value) => {
     const { contents } = value.modResults
-    if (contents.includes('applyScreenOrientation(')) return value
+    if (contents.includes('applyScreenOrientation('))
+      return value
     if (!contents.includes(mainActivityClass) || !superOnCreate.test(contents))
       throw new Error('MainActivity.kt no longer matches the Expo template that the tablet orientation patch expects')
     value.modResults.contents = contents.replace(superOnCreate, '$1applyScreenOrientation(resources.configuration)\n$1super.onCreate(').replace(mainActivityClass, () => `${mainActivityClass}\n${orientationMembers}`)

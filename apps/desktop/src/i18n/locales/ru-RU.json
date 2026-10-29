@@ -1,0 +1,20 @@
+{
+  "app.wordmark": "HARNESS",
+  "app.retry": "Повторить",
+  "status.loading_plugins": "Загрузка плагинов…",
+  "plugins.loading": "Загрузка плагинов…",
+  "plugins.error": "Не удалось загрузить плагины",
+  "ui.waiting_logs": "Ожидание журналов установки…",
+  "ui.install_log": "Журнал установки",
+  "nav.minimize": "Свернуть",
+  "nav.maximize": "Развернуть",
+  "nav.restore": "Восстановить",
+  "nav.background": "Фон",
+  "nav.close": "Закрыть окно",
+  "navbar.child_window": "Дочернее окно",
+  "app.dev_env": "Разработка",
+  "buttons.cancel": "Отмена",
+  "buttons.confirm": "Подтвердить",
+  "messages.clipboard_copied": "Скопировано в буфер обмена",
+  "messages.clipboard_failed": "Копирование не удалось"
+}

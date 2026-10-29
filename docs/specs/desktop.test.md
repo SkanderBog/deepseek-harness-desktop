@@ -9,4 +9,9 @@
 - `pnpm test:unit`
 - `pnpm test:native`
 - `pnpm typecheck:native`
-- `pnpm --filter dsh-desktop build`（只构建现有 renderer；不代表 Electron shell 已打包）
+- `pnpm --filter dsh-desktop build`（构建 renderer；不代表 Electron shell 已打包）
+- `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets`
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --locked -- --test-threads=1`
+- `pnpm --dir crates/electron-rs run test:checks`（生产 runtime CJS + 原生替身，不等同真实桌面验收）
+
+真实 Electron 验证须使用独立 userData/sessionData，仅关闭测试自身窗口；报告中区分原生 API 还原、输入注入、菜单事件触发与人工任务栏点击。高 DPI、多显示器、macOS/Linux 和托盘生命周期分别验收，不以单平台通过替代。Windows 测试目标通过原版 `windows-app-manifest.xml` 嵌入 Common Controls v6，禁止仅为测试绕过原生依赖或削弱断言。

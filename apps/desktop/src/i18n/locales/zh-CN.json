@@ -1,0 +1,20 @@
+{
+  "app.wordmark": "HARNESS",
+  "app.retry": "重试",
+  "status.loading_plugins": "Loading plugins…",
+  "plugins.loading": "正在读取插件…",
+  "plugins.error": "插件读取失败",
+  "ui.waiting_logs": "等待安装日志...",
+  "ui.install_log": "安装日志",
+  "nav.minimize": "最小化",
+  "nav.maximize": "最大化",
+  "nav.restore": "还原",
+  "nav.background": "后台化",
+  "nav.close": "关闭窗口",
+  "navbar.child_window": "子窗口",
+  "app.dev_env": "开发环境",
+  "buttons.cancel": "取消",
+  "buttons.confirm": "确定",
+  "messages.clipboard_copied": "已复制到剪贴板",
+  "messages.clipboard_failed": "复制失败"
+}

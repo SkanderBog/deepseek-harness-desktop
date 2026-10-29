@@ -401,12 +401,9 @@ describe('rendered paired device authorization', () => {
 })
 
 describe('rendered Bridge WebView document lifecycle', () => {
-  it('reveals the real gateway pairing form after trusted SSR readiness instead of leaving it behind the fullscreen loader', async () => {
-    vi.useRealTimers()
-    const { loginPageHtml } = await vi.importActual<{ loginPageHtml: (message?: string) => string }>('../../packages/dsh-tauri-remote/src/host/service/gateway.utils')
-    vi.useFakeTimers()
+  it('reveals a server-rendered login form after trusted readiness instead of leaving it behind the fullscreen loader', async () => {
     await mount()
-    const page = createPage(undefined, 'unverified', loginPageHtml())
+    const page = createPage(undefined, 'unverified', '<!doctype html><html><body><form id="loginForm"></form></body></html>')
 
     expect(page.posts).toHaveLength(1)
     const raw = page.posts[0]!

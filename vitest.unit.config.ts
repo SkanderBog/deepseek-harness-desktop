@@ -14,7 +14,7 @@ export default defineProject({
   test: {
     name: 'unit',
     environment: 'node',
-    include: ['apps/desktop/tests/**/*.test.{ts,tsx}', 'packages/builtin-plugin-*/src/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}', 'tests/**/*.test.{ts,tsx}'],
+    include: ['apps/desktop/src/**/*.test.{ts,tsx}', 'apps/desktop/tests/**/*.test.{ts,tsx}', 'packages/builtin-plugin-*/src/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}', 'tests/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/target/**'],
     testTimeout: 30000,
     hookTimeout: 30000,

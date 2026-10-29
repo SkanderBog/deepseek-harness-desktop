@@ -20,6 +20,7 @@ const blockedRootDirs = ['.git', '.temp', '.tmp', '.worktrees', 'dist']
 config.resolver.blockList = [
   ...[config.resolver.blockList].flat().filter(Boolean),
   ...blockedRootDirs.map(dir => new RegExp(`^${path.join(rootDir, dir).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\/]`)),
-],
-if (process.platform === 'win32') config.maxWorkers = 2
+]
+if (process.platform === 'win32')
+  config.maxWorkers = 2
 export default config

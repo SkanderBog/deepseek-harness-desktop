@@ -11,13 +11,51 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+tauri-utils = "2"
+serde_json = "1"
+json-patch = "3"
+tauri-runtime-electron = { version = "0.1.0", path = "../../../crates/tauri-runtime-electron" }
 
 [dependencies]
-tauri = { version = "2", default-features = false , features = [] }
+tauri = { version = "2", default-features = false, features = ["tray-icon", "image-png", "devtools"] }
+log = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "time"] }
+tracing-appender = "0.2"
+tracing-log = "0.2"
+time = { version = "0.3", features = ["formatting"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri-runtime-electron = { version = "0.1.0", path = "../../../crates/tauri-runtime-electron" }
+tauri-runtime-electron = { version = "0.1.0", path = "../../../crates/tauri-runtime-electron", features = ["tauri", "devtools"] }
 tauri-plugin-notifications = { version = "0.5.0-rc.14", default-features = false }
+tauri-plugin-opener = "2"
+tauri-plugin-os = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-store = "2"
+tauri-plugin-http = { version = "2.6", default-features = false, features = ["rustls-tls", "http2", "charset", "system-proxy"] }
+arboard = { version = "3", features = ["wayland-data-control"] }
+tokio = { version = "1", features = ["rt"] }
+dunce = "1"
+reqwest = { version = "0.12", features = ["socks"] }
+
+[dev-dependencies]
+tauri = { version = "2", default-features = false, features = ["test"] }
+tauri-runtime = "2"
+tempfile = "3"
+auto-launch = "0.5"
+
+[target.'cfg(unix)'.dependencies]
+fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs", rev = "c4c45d503ea115a839aae718d02f79e7c7f0f673" }
+libc = "0.2"
+tempfile = "3"
+
+[target.'cfg(any(windows, target_os = "macos", target_os = "linux"))'.dependencies]
+rfd = { version = "0.16", default-features = false, features = ["common-controls-v6", "xdg-portal", "wayland", "tokio"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_LibraryLoader", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 [patch.crates-io]
 tauri-plugin-notifications = { path = "../../../crates/tauri-plugin-notifications" }

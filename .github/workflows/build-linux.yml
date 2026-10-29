@@ -1,0 +1,108 @@
+name: Reusable Linux Build
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        required: true
+        type: string
+      version:
+        description: 注入的版本号；为空时沿用仓库内版本，仅夜间构建使用
+        required: false
+        type: string
+        default: ''
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (linux-${{ matrix.arch }})
+    # 两个架构统一用 Ubuntu 22.04 构建，产物 GLIBC 符号上限 2.35（issue #1124）。
+    # ubuntu-22.04-arm 自 2026-09 起进入弃用期、2027-04-17 退休（runner-images#14254）。
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          apt_ok=0
+          for i in {1..3}; do
+            if timeout 180 sudo apt-get update \
+              -o Acquire::Retries=5 \
+              -o Acquire::http::Timeout=60 \
+              -o Acquire::https::Timeout=60 \
+              -o Acquire::ftp::Timeout=60; then
+              apt_ok=1
+              break
+            fi
+            echo "apt-get update 失败，准备重试 ($i/3)..."
+            sleep 10
+          done
+          [ "$apt_ok" = "1" ] || { echo "apt-get update 连续 3 次失败，中止"; exit 1; }
+          # squashfs-tools 提供 mksquashfs，供 AppImage 宿主库剔除后重打包使用。
+          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf squashfs-tools
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Stamp injected version
+        if: inputs.version != ''
+        env:
+          STAMP_VERSION: ${{ inputs.version }}
+        run: node scripts/stamp-version.mjs "$STAMP_VERSION"
+
+      - name: Build packages
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --features tauri/custom-protocol --no-sign --bundles appimage,deb ${{ inputs.version != '' && '--config apps/desktop/src-tauri/tauri.nightly.conf.json' || '' }}
+
+      # AppImage 由 Electron 自带运行库，不依赖宿主 GTK 库；linuxdeploy 的宿主库修补不再适用。
+      - name: Normalize release asset names
+        run: node scripts/rename-release-assets.mjs apps/desktop/src-tauri/target/release/bundle/appimage apps/desktop/src-tauri/target/release/bundle/deb
+
+      - name: Verify arm64 glibc ABI
+        if: matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          mapfile -d '' artifacts < <(find apps/desktop/src-tauri/target/release/bundle/appimage apps/desktop/src-tauri/target/release/bundle/deb -type f \( -name '*.AppImage' -o -name '*.deb' \) -print0)
+          [ "${#artifacts[@]}" -gt 0 ] || { echo '::error::no Linux arm64 artifacts were produced'; exit 1; }
+          bash scripts/check-linux-glibc-abi.sh --max 2.35 "${artifacts[@]}"
+
+      - name: Upload build outputs
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 7

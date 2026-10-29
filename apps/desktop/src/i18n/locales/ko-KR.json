@@ -1,0 +1,20 @@
+{
+  "app.wordmark": "HARNESS",
+  "app.retry": "다시 시도",
+  "status.loading_plugins": "플러그인 로딩 중…",
+  "plugins.loading": "플러그인 불러오는 중…",
+  "plugins.error": "플러그인을 불러오지 못했습니다",
+  "ui.waiting_logs": "설치 로그 대기 중…",
+  "ui.install_log": "설치 로그",
+  "nav.minimize": "최소화",
+  "nav.maximize": "최대화",
+  "nav.restore": "복원",
+  "nav.background": "백그라운드",
+  "nav.close": "창 닫기",
+  "navbar.child_window": "하위 창",
+  "app.dev_env": "개발 환경",
+  "buttons.cancel": "취소",
+  "buttons.confirm": "확인",
+  "messages.clipboard_copied": "클립보드에 복사했습니다",
+  "messages.clipboard_failed": "복사하지 못했습니다"
+}

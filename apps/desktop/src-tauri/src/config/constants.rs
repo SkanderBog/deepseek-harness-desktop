@@ -1,0 +1,10 @@
+pub const APP_IDENTIFIER: &str = env!("DSH_APP_IDENTIFIER");
+pub const APP_DATA_DEV_DIR_NAME: &str = "dev";
+pub const E2E_PORT_ENV_VAR: &str = "TAURI_WEBDRIVER_PORT";
+pub const DSH_PORT: u16 = 3080;
+pub const DSH_DEV_PORT: u16 = 3081;
+pub const STORE_DAT_FILE: &str = ".store.dat";
+pub const STORE_DAT_DEV_FILE: &str = ".store.dev.dat";
+pub const STORE_DAT_TEST_FILE: &str = ".store.test.dat";
+pub const STORE_SETTING_KEY: &str = "setting";
+pub const STORE_WINDOW_STATE_KEY: &str = "window_state";

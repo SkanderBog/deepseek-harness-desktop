@@ -5,6 +5,8 @@
         "title": "DeepSeek Harness",
         "width": 1200,
         "height": 800,
+        "minWidth": 860,
+        "minHeight": 620,
         "decorations": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,

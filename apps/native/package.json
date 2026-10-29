@@ -1,8 +1,8 @@
 {
   "name": "dsh-native",
+  "type": "module",
   "version": "0.25.0",
   "private": true,
-  "type": "module",
   "main": "./src/entry.ts",
   "scripts": {
     "dev": "expo start --dev-client",
@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "catalog:native",
-    "react": "catalog:runtime",
     "@reause/core": "catalog:runtime",
     "@tanstack/react-query": "catalog:runtime",
     "expo": "catalog:native",
@@ -39,11 +38,13 @@
     "expo-system-ui": "catalog:native",
     "heroui-native": "catalog:native",
     "i18next": "catalog:runtime",
+    "react": "catalog:runtime",
     "react-i18next": "catalog:runtime",
     "react-if-lite": "catalog:runtime",
     "react-native": "catalog:native",
     "react-native-drawer-layout": "catalog:native",
     "react-native-gesture-handler": "catalog:native",
+    "react-native-lucide": "catalog:",
     "react-native-reanimated": "catalog:native",
     "react-native-safe-area-context": "catalog:native",
     "react-native-screens": "catalog:native",
