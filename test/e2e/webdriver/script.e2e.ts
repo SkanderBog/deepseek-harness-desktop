@@ -55,6 +55,64 @@ describe('Windows WebDriver script integration', () => {
     }
   })
 
+  it('connected non-frame elements return no such frame while matching user exceptions remain JavaScript errors', async () => {
+    const selector = '[data-testid="dsh-e2e-driver-non-frame"]'
+    await browser.execute(() => {
+      const element = document.createElement('div')
+      element.dataset.testid = 'dsh-e2e-driver-non-frame'
+      document.body.append(element)
+    })
+    try {
+      const element = await browser.$(selector)
+      const { protocol, hostname, port, path } = browser.options
+      const base = `${protocol}://${hostname}:${port}${(path ?? '').replace(/\/+$/, '')}/session/${encodeURIComponent(browser.sessionId)}`
+      const response = await fetch(`${base}/frame`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: { 'element-6066-11e4-a52e-4f735466cecf': await element.elementId } }),
+        signal: AbortSignal.timeout(30_000),
+      })
+      expect(response.status, '连接中的普通元素不是帧，必须返回 404').toBe(404)
+      expect(await response.json(), '普通元素必须返回 no such frame').toMatchObject({ value: { error: 'no such frame' } })
+      const exception = await fetch(`${base}/execute/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script: 'throw new Error("element is not a frame")', args: [] }),
+        signal: AbortSignal.timeout(30_000),
+      })
+      expect(exception.status, '用户脚本同文异常必须返回 500').toBe(500)
+      expect(await exception.json(), '用户脚本同文异常不能改成帧错误').toMatchObject({ value: { error: 'javascript error', message: 'element is not a frame' } })
+      expect(await browser.$(SHELL_ROOT).isExisting(), '错误帧请求不得改变顶层上下文').toBe(true)
+    }
+    finally {
+      await browser.switchFrame(null)
+      await browser.execute((selector) => {
+        document.querySelector(selector)?.remove()
+      }, selector)
+    }
+  })
+
+  it('async argument failures preserve stale errors and allow the next callback to complete', async () => {
+    const { protocol, hostname, port, path } = browser.options
+    const base = `${protocol}://${hostname}:${port}${(path ?? '').replace(/\/+$/, '')}/session/${encodeURIComponent(browser.sessionId)}/execute/async`
+    const failed = await fetch(base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ script: 'arguments[arguments.length - 1]("unexpected")', args: [{ 'element-6066-11e4-a52e-4f735466cecf': 'missing-async-element' }] }),
+      signal: AbortSignal.timeout(30_000),
+    })
+    expect(failed.status, '异步参数引用缺失必须立即返回 404').toBe(404)
+    expect(await failed.json(), '异步参数引用缺失必须保留 stale 类型').toMatchObject({ value: { error: 'stale element reference' } })
+    const completed = await fetch(base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ script: 'arguments[arguments.length - 1]("completed")', args: [] }),
+      signal: AbortSignal.timeout(30_000),
+    })
+    expect(completed.status, '参数失败后异步回调仍必须完成').toBe(200)
+    expect(await completed.json(), '异步成功返回值必须保留').toEqual({ value: 'completed' })
+  })
+
   it('replaced native frames execute scripts in the replacement document', async () => {
     const selector = '[data-testid="dsh-e2e-driver-replacement"]'
     try {
