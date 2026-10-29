@@ -254,8 +254,8 @@ pub(crate) fn clear_value() -> Result<(), String> {
 
 fn apply_to_process(value: Option<&str>) {
     match value {
-        Some(text) => std::env::set_var(DATA_DIR_ENV, text),
-        None => std::env::remove_var(DATA_DIR_ENV),
+        Some(text) => unsafe { std::env::set_var(DATA_DIR_ENV, text) },
+        None => unsafe { std::env::remove_var(DATA_DIR_ENV) },
     }
 }
 
@@ -286,7 +286,7 @@ pub(crate) fn restore_process_env() {
         return;
     };
     log::info!("restored {DATA_DIR_ENV} from the persisted configuration: {value}");
-    std::env::set_var(DATA_DIR_ENV, value);
+    unsafe { std::env::set_var(DATA_DIR_ENV, value) };
 }
 
 #[cfg(target_os = "macos")]

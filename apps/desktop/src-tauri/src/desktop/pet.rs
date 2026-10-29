@@ -496,7 +496,6 @@ fn place_pet_at_default<R: Runtime>(window: &WebviewWindow<R>) {
     let Some(monitor) = app.primary_monitor().ok().flatten() else {
         return;
     };
-    #[cfg(not(target_os = "linux"))]
     let (lw, lh) = pet_window_logical_size(get_pet_size_percent(app), pet_window_aspect(app));
     #[cfg(target_os = "macos")]
     {
