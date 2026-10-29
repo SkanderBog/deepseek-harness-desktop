@@ -376,8 +376,6 @@ export const harness = defineStore({
       const generation = this.iframeKey
       const documentSeq = iframeDocumentSeq
       const token = bootToken
-      // 这一代兜底是否仍然有效：换帧、帧内导航、重新启动、帧内已自报 boot 完成、
-      // 服务退出都会让它作废
       const stillNeeded = () => generation === this.iframeKey
         && documentSeq === iframeDocumentSeq
         && token === bootToken
@@ -399,8 +397,6 @@ export const harness = defineStore({
         return
       }
 
-      // `stillNeeded` 兼作轮询的继续条件：帧内一旦自报 boot 完成，尚未返回的探测立刻
-      // 收尾，不会用它的失败结论覆盖已经跑完的文档。
       const result = await pollHarnessReadiness(
         IFRAME_RECOVERY_ABSOLUTE_TIMEOUT,
         stillNeeded,
@@ -500,9 +496,7 @@ export const harness = defineStore({
       if (token !== bootToken)
         return false
 
-      // `launch_harness` 在 supervisor 发出 started 后即返回，端口冲突重试却在之后才改写
-      // 端口：探测可能落在旧端口上。旧端口的「就绪」不能替新地址背书，按新端口重跑探测；
-      // 最多两轮（supervisor 的重试预算），仍对不上就按最新地址挂载，由帧内自报兜底。
+      // `launch_harness` 返回后 supervisor 仍可能改写端口，探测落在旧端口时按新地址重试两次
       let readinessProbe = probe
       for (let requeued = 0; requeued < 2; requeued++) {
         if (!readinessProbe?.bootOrigin || readinessProbe.bootOrigin === readyInfo.service_url)

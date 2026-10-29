@@ -30,6 +30,11 @@ beforeEach(() => {
   state.urls = []
   state.polls = []
   vi.mocked(pollHarnessReadiness).mockClear()
+  Object.assign(harness, {
+    serviceUrl: 'http://127.0.0.1:3080',
+    iframeSrc: 'http://127.0.0.1:3080/?dshDesktop',
+    frontendBootHtml: null,
+  })
 })
 
 describe('就绪提交遇到端口改写', () => {

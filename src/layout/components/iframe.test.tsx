@@ -205,7 +205,8 @@ it('keeps remote frame messages out of the local readiness state', async () => {
   render(<Iframe iframeRef={createRef()} srcOverride="https://example.test/?token=secret" />)
   const frame = screen.getByTestId<HTMLIFrameElement>('dsh-shell-iframe')
   Object.assign(store.harness, { iframeAliveKey: null, iframeBootReadyKey: null })
-  for (const type of ['dsh://appearance:applied', 'dsh://sidebar:collapsed', 'dsh://plugin-boot:ready']) {
+  const recover = vi.spyOn(store.harness, 'recoverIframeBoot')
+  for (const type of ['dsh://appearance:applied', 'dsh://sidebar:collapsed', 'dsh://plugin-boot:ready', 'dsh://plugin-boot:stalled']) {
     await act(async () => {
       window.dispatchEvent(new MessageEvent('message', {
         source: frame.contentWindow,
@@ -216,6 +217,7 @@ it('keeps remote frame messages out of the local readiness state', async () => {
   }
   expect(store.harness.iframeAlive).toBe(false)
   expect(store.harness.iframeBootReady).toBe(false)
+  expect(recover).not.toHaveBeenCalled()
 })
 
 it('diagnoses remote frame visibility across local health and error transitions without hiding the remote document', async () => {

@@ -477,6 +477,8 @@ export function Iframe({ iframeRef, srcOverride = null, borderTint = null }: Ifr
           store.harness.markIframeBootReady()
         break
       case 'dsh://plugin-boot:stalled':
+        if (remoteMode)
+          break
         if (activePreload && !activePreload.applied) {
           if (harness.serviceHealthy)
             fallbackPreload()
