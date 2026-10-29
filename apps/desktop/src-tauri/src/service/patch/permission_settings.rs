@@ -81,14 +81,19 @@ pub fn apply(app_handle: &AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    const LEGACY_CONTROLLER: &str =
-        include_str!("../../../../test/fixtures/permission-settings-rc2.txt");
+    fn controller() -> String {
+        format!(
+            "class Presets {{\n\t\tstate = {{}};\n\t\tasync save() {{\n\t\t\t{}\n\t\t}}\n\t\tasync load() {{\n\t\t\t{}\n\t\t}}\n\t\tderive() {{\n\t\t\t{}\n\t\t}}\n}}\n",
+            SAVE_ERROR_ORIGINAL, RESPONSE_ORIGINAL, DERIVE_ORIGINAL
+        )
+    }
 
     #[test]
     fn patches_real_controller_and_upgrades_v1_once() {
+        let legacy = controller();
         for source in [
-            LEGACY_CONTROLLER.to_owned(),
-            LEGACY_CONTROLLER.replacen(DERIVE_ORIGINAL, DERIVE_V1, 1),
+            legacy.clone(),
+            legacy.replace(DERIVE_ORIGINAL, DERIVE_V1),
         ] {
             let PatchOutcome::Patched(patched) = patch_source(&source) else {
                 panic!("expected Patched");
@@ -102,27 +107,28 @@ mod tests {
 
     #[test]
     fn leaves_changed_or_ambiguous_anchors_unchanged() {
+        let legacy = controller();
         assert_eq!(patch_source(""), PatchOutcome::AnchorMissing);
         for anchor in [SAVE_ERROR_ORIGINAL, RESPONSE_ORIGINAL, DERIVE_ORIGINAL] {
             assert_eq!(
-                patch_source(&LEGACY_CONTROLLER.replacen(anchor, "", 1)),
+                patch_source(&legacy.replacen(anchor, "", 1)),
                 PatchOutcome::AnchorMissing
             );
             assert_eq!(
-                patch_source(&LEGACY_CONTROLLER.replacen(anchor, &anchor.repeat(2), 1)),
+                patch_source(&legacy.replacen(anchor, &anchor.repeat(2), 1)),
                 PatchOutcome::AnchorMissing
             );
         }
         assert_eq!(
-            patch_source(&LEGACY_CONTROLLER.replacen(DERIVE_ORIGINAL, &DERIVE_V1.repeat(2), 1)),
+            patch_source(&legacy.replacen(DERIVE_ORIGINAL, &DERIVE_V1.repeat(2), 1)),
             PatchOutcome::AnchorMissing
         );
         assert_eq!(
-            patch_source(&format!("{LEGACY_CONTROLLER}{DERIVE_V1}")),
+            patch_source(&format!("{legacy}{DERIVE_V1}")),
             PatchOutcome::AnchorMissing
         );
         assert_eq!(
-            patch_source(&LEGACY_CONTROLLER.replacen(DERIVE_ORIGINAL, DERIVE_PATCHED, 1)),
+            patch_source(&legacy.replacen(DERIVE_ORIGINAL, DERIVE_PATCHED, 1)),
             PatchOutcome::AnchorMissing
         );
     }

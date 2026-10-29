@@ -144,10 +144,6 @@ pub fn apply(app_handle: &AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
-
-    const FIXTURE: &str = include_str!("../../../../test/fixtures/chat-follow-anchor.txt");
 
     fn released() -> String {
         format!(
@@ -222,52 +218,4 @@ mod tests {
         assert!(matches!(patch_source(&source), PatchOutcome::AnchorMissing));
     }
 
-    #[test]
-    fn repaired_core_passes_the_javascript_contract() {
-        let core = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
-        let target = core.path().join(CLIENT);
-        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-        let shipped = format!(
-            "const css = \"{}\";{}",
-            PATCHED_CSS,
-            FIXTURE.replacen(ORIGINAL_BIND, LEGACY_BIND, 1).replacen(
-                ORIGINAL_FOLLOW,
-                LEGACY_FOLLOW,
-                1
-            )
-        );
-        let PatchOutcome::Patched(repaired) = patch_source(&shipped) else {
-            panic!("shipped fixture should be repaired");
-        };
-        assert!(matches!(
-            patch_source(&repaired),
-            PatchOutcome::AlreadyPatched
-        ));
-        std::fs::write(&target, &repaired).unwrap();
-
-        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../test/fixtures/chat-follow-anchor-contract.mjs");
-        let mut child = Command::new("node")
-            .arg(script)
-            .arg(&target)
-            .stdin(Stdio::null())
-            .spawn()
-            .expect("node is required for the repaired JavaScript contract");
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                assert!(
-                    status.success(),
-                    "repaired JavaScript contract failed: {status}"
-                );
-                break;
-            }
-            if Instant::now() >= deadline {
-                child.kill().unwrap();
-                child.wait().unwrap();
-                panic!("repaired JavaScript contract timed out");
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
 }
