@@ -142,6 +142,44 @@ describe('桌面端启动冒烟', () => {
     expect(shellErrors, '壳层出现报错').toEqual([])
   }, ASSEMBLY_TIMEOUT_MS)
 
+  it('reports detached native frame references and keeps the top-level context usable', async () => {
+    const selector = '[data-testid="dsh-e2e-driver-frame"]'
+    await browser.execute(() => {
+      const frame = document.createElement('iframe')
+      frame.dataset.testid = 'dsh-e2e-driver-frame'
+      document.body.append(frame)
+    })
+    try {
+      const frame = await browser.$(selector)
+      const id = await frame.elementId
+      await browser.execute((selector) => {
+        document.querySelector(selector)!.remove()
+      }, selector)
+      const { protocol, hostname, port, path } = browser.options
+      const base = `${protocol}://${hostname}:${port}${(path ?? '').replace(/\/+$/, '')}/session/${encodeURIComponent(browser.sessionId)}`
+      for (const [route, body] of [
+        [`element/${encodeURIComponent(id)}/name`, undefined],
+        ['frame', { id: { 'element-6066-11e4-a52e-4f735466cecf': id } }],
+      ] as const) {
+        const response = await fetch(`${base}/${route}`, {
+          method: body ? 'POST' : 'GET',
+          headers: { 'Content-Type': 'application/json' },
+          body: body ? JSON.stringify(body) : undefined,
+          signal: AbortSignal.timeout(30_000),
+        })
+        expect(response.status).toBe(404)
+        expect(await response.json()).toMatchObject({ value: { error: 'stale element reference' } })
+      }
+      expect(await browser.$(SHELL_ROOT).isExisting()).toBe(true)
+    }
+    finally {
+      await browser.switchFrame(null)
+      await browser.execute((selector) => {
+        document.querySelector(selector)?.remove()
+      }, selector)
+    }
+  })
+
   it('TC-DSK-L3-993 原生窗口继承档案、复用同档案核心且切换与关闭不重启其他核心', async () => {
     const windows: string[] = []
     async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {

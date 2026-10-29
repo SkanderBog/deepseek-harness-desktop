@@ -292,7 +292,7 @@ impl<R: Runtime + 'static> WindowsExecutor<R> {
     ) -> Result<Value, WebDriverErrorResponse> {
         let (tx, rx) = oneshot::channel();
         let script_preview: String = script.chars().take(100).collect();
-        let script_owned = script.to_string();
+        let script_owned = include_str!("script_errors.js.inc").replacen("__WD_SCRIPT__", script, 1);
 
         let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
 
@@ -349,7 +349,7 @@ impl<R: Runtime + 'static> WindowsExecutor<R> {
         script: &str,
     ) -> Result<Value, WebDriverErrorResponse> {
         let (tx, rx) = oneshot::channel();
-        let script_owned = script.to_string();
+        let script_owned = include_str!("script_errors.js.inc").replacen("__WD_SCRIPT__", script, 1);
         let script_preview: String = script.chars().take(100).collect();
 
         let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
@@ -408,10 +408,12 @@ impl<R: Runtime + 'static> WindowsExecutor<R> {
     ) -> Result<Value, WebDriverErrorResponse> {
         let timeout = std::time::Duration::from_millis(self.timeouts.script_ms);
         match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(Ok(value))) => Ok(serde_json::json!({
-                "success": true,
-                "value": value
-            })),
+            Ok(Ok(Ok(value))) => {
+                if let Some(error) = value.get("__wdio_script_error").and_then(Value::as_str) {
+                    return Err(WebDriverErrorResponse::javascript_error(error, None));
+                }
+                Ok(serde_json::json!({ "success": true, "value": value }))
+            }
             Ok(Ok(Err(error))) => Err(WebDriverErrorResponse::javascript_error(&error, None)),
             Ok(Err(_)) => {
                 tracing::error!("Channel closed unexpectedly during script execution");
