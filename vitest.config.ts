@@ -11,6 +11,7 @@ export default defineConfig({
       './vitest.unit.config.ts',
       './vitest.plugin.config.ts',
       './vitest.desktop.config.ts',
+      './vitest.webdriver.config.ts',
     ],
     // 覆盖率只作可见性报告：不设 `thresholds`、不作为 CI 门禁。vendored 源码（`source/`、
     // `archive/`、`test/archive/`）与 Rust 侧（`src-tauri/`）不是本仓被测面，必须显式排除，

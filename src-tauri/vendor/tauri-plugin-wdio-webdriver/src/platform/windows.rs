@@ -292,7 +292,10 @@ impl<R: Runtime + 'static> WindowsExecutor<R> {
     ) -> Result<Value, WebDriverErrorResponse> {
         let (tx, rx) = oneshot::channel();
         let script_preview: String = script.chars().take(100).collect();
-        let script_owned = include_str!("script_errors.js.inc").replacen("__WD_SCRIPT__", script, 1);
+        let error_key = format!("__wdio_script_error_{}", uuid::Uuid::new_v4().simple());
+        let script_owned = include_str!("script_errors.js.inc")
+            .replacen("__WD_ERROR_KEY__", &error_key, 1)
+            .replacen("__WD_SCRIPT__", script, 1);
 
         let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
 
@@ -335,7 +338,7 @@ impl<R: Runtime + 'static> WindowsExecutor<R> {
             }
         }
 
-        self.collect_script_result(rx).await
+        self.collect_script_result(rx, &error_key).await
     }
 
     /// Run `script` inside a native frame via `ICoreWebView2Frame2::ExecuteScript`.
@@ -349,7 +352,10 @@ impl<R: Runtime + 'static> WindowsExecutor<R> {
         script: &str,
     ) -> Result<Value, WebDriverErrorResponse> {
         let (tx, rx) = oneshot::channel();
-        let script_owned = include_str!("script_errors.js.inc").replacen("__WD_SCRIPT__", script, 1);
+        let error_key = format!("__wdio_script_error_{}", uuid::Uuid::new_v4().simple());
+        let script_owned = include_str!("script_errors.js.inc")
+            .replacen("__WD_ERROR_KEY__", &error_key, 1)
+            .replacen("__WD_SCRIPT__", script, 1);
         let script_preview: String = script.chars().take(100).collect();
 
         let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
@@ -398,18 +404,19 @@ impl<R: Runtime + 'static> WindowsExecutor<R> {
             }
         }
 
-        self.collect_script_result(rx).await
+        self.collect_script_result(rx, &error_key).await
     }
 
     /// Await a script completion channel and shape it like `evaluate_js` expects.
     async fn collect_script_result(
         &self,
         rx: tokio::sync::oneshot::Receiver<Result<Value, String>>,
+        error_key: &str,
     ) -> Result<Value, WebDriverErrorResponse> {
         let timeout = std::time::Duration::from_millis(self.timeouts.script_ms);
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(Ok(value))) => {
-                if let Some(error) = value.get("__wdio_script_error").and_then(Value::as_str) {
+                if let Some(error) = value.get(error_key).and_then(Value::as_str) {
                     return Err(WebDriverErrorResponse::javascript_error(error, None));
                 }
                 Ok(serde_json::json!({ "success": true, "value": value }))
