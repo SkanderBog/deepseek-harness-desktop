@@ -299,6 +299,11 @@ function startFakeUpstream(): Promise<FakeUpstream> {
       }, 20)
       return
     }
+    if (url.pathname === '/gz-corrupt-stall') {
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'content-encoding': 'gzip' })
+      response.write(Buffer.from('not a gzip stream at all'))
+      return
+    }
     if (url.pathname === '/big-stall') {
       response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
       response.write('b'.repeat(MIN_BYTES * 2))
@@ -2221,6 +2226,24 @@ describe('gateway 客户端提前断开', () => {
       unsubscribe()
     }
     expect(events.filter(event => event.kind === 'upstream' || event.kind === 'compression')).toEqual([])
+  })
+})
+
+describe('gateway 压缩流自身出错', () => {
+  it('解压失败：连同上游腿一起撤掉，不留半开连接', async () => {
+    const events: RemoteGatewayEvent[] = []
+    const unsubscribe = gateway.subscribe(event => events.push(event))
+    const status = await startEntry('inbound', upstream, { tokenProvider: upstream.mintUrlFor })
+    try {
+      const live = await streamed(status.port, '/gz-corrupt-stall', markerHeaders('private'))
+      expect(live.status).toBe(200)
+      await vi.waitFor(() => expect(upstream.openSockets()).toBe(0))
+      await vi.waitFor(() => expect(gateway.status('entry')?.connections).toBe(0))
+    }
+    finally {
+      unsubscribe()
+    }
+    expect(events.filter(event => event.kind === 'compression')).toHaveLength(1)
   })
 })
 

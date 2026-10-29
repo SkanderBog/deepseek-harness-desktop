@@ -633,13 +633,15 @@ function pipeBody(entry: GatewayEntry, leg: ResponseLeg, upstreamResponse: Incom
     source = stage
   }
   source.pipe(response)
+  /** 这一层的失败由自己收尾：拆响应（置 closedByUs）之后连上游腿一起拆，否则 `pipe` 只 unpipe 不销毁源。 */
   const fail = (error: unknown): void => {
+    if (!leg.clientGone && !leg.closedByUs && !response.writableFinished) {
+      emit(entry, 'compression', `响应流中断：${messageOf(error)}（${entry.upstream.origin}）`)
+      teardown(leg, response)
+    }
+    upstreamResponse.destroy()
     for (const stage of stages)
       stage.destroy()
-    if (leg.clientGone || leg.closedByUs || response.writableFinished)
-      return
-    emit(entry, 'compression', `响应流中断：${messageOf(error)}（${entry.upstream.origin}）`)
-    teardown(leg, response)
   }
   upstreamResponse.on('error', fail)
   for (const stage of stages)
