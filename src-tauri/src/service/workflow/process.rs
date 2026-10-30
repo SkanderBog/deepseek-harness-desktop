@@ -393,31 +393,66 @@ fn is_windows_harness_command_line(cmdline: &str, dsh_bin: &str) -> bool {
     windows_harness_arguments(cmdline, dsh_bin).is_some()
 }
 
-#[cfg(windows)]
+/// 生产路径直接构造匹配器；此便捷函数只在单测里用，保持签名简单。
+#[cfg(all(windows, test))]
 fn windows_harness_arguments(cmdline: &str, dsh_bin: &str) -> Option<Vec<String>> {
-    let normalized = cmdline.replace('/', "\\");
-    let path = dsh_bin.replace('/', "\\");
-    // node 选项（`--max-old-space-size` 等）合法地夹在 node 与入口之间（issue #751）。
-    let entry = if path.chars().any(char::is_whitespace) {
-        format!(r#""{}""#, regex::escape(&path))
-    } else {
-        format!(r#"(?:"{}"|{})"#, regex::escape(&path), regex::escape(&path))
-    };
-    let boundary = format!(
-        r#"(?i)^\s*(?:"(?:[^"\r\n]*\\)?node(?:\.exe)?"|(?:[^\s"]*\\)?node(?:\.exe)?)(?:\s+(?:"-[^"\r\n]*"|-[^\s"]*(?:"[^"\r\n]*")?))*\s+{entry}\s+--profile\s+(?:"[^"\r\n]+"|[^\s"]+)(?:\s+--patch\s+(?:"[^"\r\n]+"|[^\s"]+))?\s+--port\s+\d+\s+--no-open\s*$"#
-    );
-    let pattern = regex::Regex::new(&boundary).ok()?;
-    if !pattern.is_match(&normalized) {
-        return None;
-    }
-    let token = regex::Regex::new(r#"(?:[^\s"]+|"[^"\r\n]*")+"#).ok()?;
-    Some(
-        token
-            .find_iter(&normalized)
-            .skip(1)
-            .map(|argument| argument.as_str().replace('"', ""))
-            .collect(),
+    HarnessMatcher::new(dsh_bin)?.arguments(cmdline)
+}
+
+/// 命令行分词正则：与入口路径无关，全进程只编译一次。
+#[cfg(windows)]
+static TOKEN_PATTERN: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r#"(?:[^\s"]+|"[^"\r\n]*")+"#).expect("literal"));
+
+/// `cmd.exe /c "…"` 转发层的前缀正则：同样与入口路径无关。
+#[cfg(windows)]
+static RELAY_PREFIX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r#"(?i)^\s*(?:"(?:[^"\r\n]*\\)?cmd(?:\.exe)?"|(?:[^\s"]*\\)?cmd(?:\.exe)?)\s+/c\s+"#,
     )
+    .expect("literal")
+});
+
+/// 与「本应用 dsh 入口」绑定的命令行匹配器。
+///
+/// 边界正则里含入口绝对路径，无法静态化；而一次清扫要对快照里的**每个进程**跑一遍，
+/// 逐次 `Regex::new` 是纯浪费。因此在清扫入口构造一次、沿调用链下传。
+#[cfg(windows)]
+struct HarnessMatcher {
+    boundary: regex::Regex,
+}
+
+#[cfg(windows)]
+impl HarnessMatcher {
+    fn new(dsh_bin: &str) -> Option<Self> {
+        let path = dsh_bin.replace('/', "\\");
+        // node 选项（`--max-old-space-size` 等）合法地夹在 node 与入口之间（issue #751）。
+        let entry = if path.chars().any(char::is_whitespace) {
+            format!(r#""{}""#, regex::escape(&path))
+        } else {
+            format!(r#"(?:"{}"|{})"#, regex::escape(&path), regex::escape(&path))
+        };
+        let boundary = format!(
+            r#"(?i)^\s*(?:"(?:[^"\r\n]*\\)?node(?:\.exe)?"|(?:[^\s"]*\\)?node(?:\.exe)?)(?:\s+(?:"-[^"\r\n]*"|-[^\s"]*(?:"[^"\r\n]*")?))*\s+{entry}\s+--profile\s+(?:"[^"\r\n]+"|[^\s"]+)(?:\s+--patch\s+(?:"[^"\r\n]+"|[^\s"]+))?\s+--port\s+\d+\s+--no-open\s*$"#
+        );
+        Some(Self {
+            boundary: regex::Regex::new(&boundary).ok()?,
+        })
+    }
+
+    fn arguments(&self, cmdline: &str) -> Option<Vec<String>> {
+        let normalized = cmdline.replace('/', "\\");
+        if !self.boundary.is_match(&normalized) {
+            return None;
+        }
+        Some(
+            TOKEN_PATTERN
+                .find_iter(&normalized)
+                .skip(1)
+                .map(|argument| argument.as_str().replace('"', ""))
+                .collect(),
+        )
+    }
 }
 
 #[cfg(windows)]
@@ -777,12 +812,17 @@ pub(super) fn terminate_stale_harness_processes_at(dsh_bin: &Path) -> Result<(),
     // 结束进程后不再固定补睡：端口释放实测是毫秒级（taskkill 返回后约 1ms），
     // 而紧随其后的启动会以 `wait_for_port_release` 等到端口真正回落，固定睡眠
     // 只是把这段滞后放大成白等。
-    let targets = orphan_harness_pids(&output, dsh_bin, owned_pid);
+    let Some(matcher) = HarnessMatcher::new(dsh_bin) else {
+        return Err("HARNESS_SWEEP_FAILED: invalid entry path".to_string());
+    };
+    let targets = select_orphan_harness_pids(&output, &matcher, owned_pid);
     for &(pid, created) in &targets {
         terminate_confirmed_process(pid, created)?;
     }
+    // 第二轮的判据是「这一行单独构成孤儿」，与批量判定同一套规则，只是输入换成单行；
+    // 匹配器复用同一份，不再逐行重建正则。
     for line in String::from_utf8_lossy(&output).lines() {
-        if orphan_harness_pids(line.as_bytes(), dsh_bin, owned_pid).is_empty() {
+        if select_orphan_harness_pids(line.as_bytes(), &matcher, owned_pid).is_empty() {
             continue;
         }
         if let Ok(entry) = serde_json::from_str::<WindowsProcessEntry>(line) {
@@ -943,7 +983,11 @@ pub(super) fn reclaim_orphan_port(dsh_bin: &Path, port: u16) -> Result<bool, Str
     let entry = dsh_bin
         .to_str()
         .ok_or("HARNESS_SWEEP_FAILED: invalid entry path")?;
-    let targets = orphan_harness_pids(&output, entry, owned_process_pid());
+    let Some(matcher) = HarnessMatcher::new(entry) else {
+        log::warn!("PORT_OWNER: port={port} pid={pid} ownership=unknown: invalid entry path");
+        return Ok(false);
+    };
+    let targets = select_orphan_harness_pids(&output, &matcher, owned_process_pid());
     log::warn!(
         "PORT_OWNER: port={port} pid={pid} ownership={} process={}",
         if targets.is_empty() {
@@ -1006,7 +1050,7 @@ struct WindowsProcessAncestor {
 #[cfg(windows)]
 fn windows_relay_arguments(
     ancestor: &WindowsProcessAncestor,
-    dsh_bin: &str,
+    matcher: &HarnessMatcher,
 ) -> Option<Vec<String>> {
     if !ancestor.name.eq_ignore_ascii_case("cmd.exe") {
         return None;
@@ -1015,12 +1059,8 @@ fn windows_relay_arguments(
     if command.contains(['&', '|', '<', '>', '^', '%', '\n', '\r']) {
         return None;
     }
-    let prefix = regex::Regex::new(
-        r#"(?i)^\s*(?:"(?:[^"\r\n]*\\)?cmd(?:\.exe)?"|(?:[^\s"]*\\)?cmd(?:\.exe)?)\s+/c\s+"#,
-    )
-    .ok()?;
-    let matched = prefix.find(command)?;
-    windows_harness_arguments(&command[matched.end()..], dsh_bin)
+    let matched = RELAY_PREFIX.find(command)?;
+    matcher.arguments(&command[matched.end()..])
 }
 
 #[cfg(windows)]
@@ -1030,7 +1070,7 @@ fn orphan_root(
     arguments: &[String],
     mut child_is_relay: bool,
     ancestors: &[WindowsProcessAncestor],
-    dsh_bin: &str,
+    matcher: &HarnessMatcher,
     owned_pid: Option<u32>,
 ) -> Option<(u32, u64)> {
     let mut root = (pid, created);
@@ -1040,11 +1080,11 @@ fn orphan_root(
         if ancestor.created > descendant {
             break;
         }
-        let relay = windows_relay_arguments(ancestor, dsh_bin).as_deref() == Some(arguments);
+        let relay = windows_relay_arguments(ancestor, matcher).as_deref() == Some(arguments);
         let shim = child_is_relay
             && ancestor.name.eq_ignore_ascii_case("node.exe")
             && ancestor.command_line.as_deref().is_some_and(|command| {
-                windows_harness_arguments(command, dsh_bin).as_deref() == Some(arguments)
+                matcher.arguments(command).as_deref() == Some(arguments)
             });
         if ancestor.created == 0
             || Some(ancestor.pid) == owned_pid
@@ -1064,7 +1104,11 @@ fn orphan_root(
 // issue #1122：只穿过同一命令的 cmd 转发层及其直接 node 垫片，仍须向上确认真实宿主。
 // issue #1266：会话子进程命令行不含入口，但持有核心目录时，从其最近的入口祖先起按同一规则找根。
 #[cfg(windows)]
-fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> Vec<(u32, u64)> {
+fn select_orphan_harness_pids(
+    output: &[u8],
+    matcher: &HarnessMatcher,
+    owned_pid: Option<u32>,
+) -> Vec<(u32, u64)> {
     let mut targets: Vec<(u32, u64)> = Vec::new();
     for entry in String::from_utf8_lossy(output)
         .lines()
@@ -1073,15 +1117,14 @@ fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> 
         if entry.created == 0 || entry.ancestors_truncated || Some(entry.pid) == owned_pid {
             continue;
         }
-        let root = if let Some(arguments) = windows_harness_arguments(&entry.command_line, dsh_bin)
-        {
+        let root = if let Some(arguments) = matcher.arguments(&entry.command_line) {
             orphan_root(
                 entry.pid,
                 entry.created,
                 &arguments,
                 false,
                 &entry.ancestors,
-                dsh_bin,
+                matcher,
                 owned_pid,
             )
         } else if entry.holds_core {
@@ -1090,12 +1133,12 @@ fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> 
                 .iter()
                 .enumerate()
                 .find_map(|(index, ancestor)| {
-                    let relay = windows_relay_arguments(ancestor, dsh_bin);
+                    let relay = windows_relay_arguments(ancestor, matcher);
                     let arguments = relay.clone().or_else(|| {
                         ancestor
                             .command_line
                             .as_deref()
-                            .and_then(|command| windows_harness_arguments(command, dsh_bin))
+                            .and_then(|command| matcher.arguments(command))
                     })?;
                     Some(orphan_root(
                         ancestor.pid,
@@ -1103,7 +1146,7 @@ fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> 
                         &arguments,
                         relay.is_some(),
                         &entry.ancestors[index + 1..],
-                        dsh_bin,
+                        matcher,
                         owned_pid,
                     ))
                 })
@@ -1118,6 +1161,16 @@ fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> 
         }
     }
     targets
+}
+
+/// 便捷入口：按入口路径现场构造匹配器。仅测试与单次调用方使用；批量场景应直接用
+/// [`select_orphan_harness_pids`]，避免逐行重复编译边界正则。
+#[cfg(all(windows, test))]
+fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> Vec<(u32, u64)> {
+    match HarnessMatcher::new(dsh_bin) {
+        Some(matcher) => select_orphan_harness_pids(output, &matcher, owned_pid),
+        None => Vec::new(),
+    }
 }
 
 /// 判断命令行是否为「从本应用 dsh 安装目录启动的 Harness 服务」。

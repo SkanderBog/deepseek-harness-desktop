@@ -147,14 +147,18 @@ fn read_specs(app_handle: &AppHandle) -> HashMap<String, String> {
 ///
 /// 必须经 importer 归属，不能全局扫描 codeload URL：同一 GitHub 仓库可被
 /// 多个直接/传递依赖锁到不同提交，全局「后写覆盖」会把缓存绑到错误提交。
+/// codeload tarball URL 里提取 `owner/repo/commit` 的正则：字面量，只编译一次。
+static CODELOAD_COMMIT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"codeload\.github\.com/([^/\s]+)/([^/\s]+)/tar\.gz/([0-9a-fA-F]{7,40})")
+        .expect("static codeload regex")
+});
+
 fn read_locked_commits(profile: &Path, specs: &HashMap<String, String>) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let Ok(text) = std::fs::read_to_string(profile.join("pnpm-lock.yaml")) else {
         return out;
     };
-    let re =
-        regex::Regex::new(r"codeload\.github\.com/([^/\s]+)/([^/\s]+)/tar\.gz/([0-9a-fA-F]{7,40})")
-            .expect("static codeload regex");
+    let re = &*CODELOAD_COMMIT;
     let mut has_project_dependencies = false;
     for document in serde_yaml::Deserializer::from_str(&text) {
         let Ok(lockfile) = serde_yaml::Value::deserialize(document) else {
