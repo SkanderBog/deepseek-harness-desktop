@@ -589,7 +589,9 @@ async fn run_plugin_command(
     cli::ensure_shims(app_handle)?;
 
     let node = config::get_node_binary_path(app_handle);
-    let dsh_bin = core::active_dsh_binary(app_handle);
+    // 同一次操作后面还要取核心目录作 cwd，故解析一次快照复用。
+    let active = core::resolve_active(app_handle);
+    let dsh_bin = active.dsh_binary(app_handle);
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
     }
@@ -621,7 +623,7 @@ async fn run_plugin_command(
     let mut args = vec![dsh_bin.as_os_str().to_os_string()];
     args.extend(single_plugin_args(&profile, action, sub_args));
 
-    let cwd = crate::service::core::active_core_dir(app_handle);
+    let cwd = active.core_dir(app_handle);
     log::info!("Running dsh plugin {action} for {ids:?}");
     let (exit_code, output, last_attempt) = run_plugin_with_allow_build_retry(
         app_handle, &node, &args, &cwd, &envs, &window, action, None, owner,

@@ -221,12 +221,13 @@ fn preset_targets(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<InstallT
 /// 一个没有清单的联接，随后的产物核验只会报出「命令成功但没有产物」这种与真实
 /// 原因无关的错误。
 fn spec_targets(app_handle: &AppHandle, specs: &[String]) -> Result<Vec<InstallTarget>, String> {
-    let core_version = crate::service::core::active_version(app_handle);
+    let active = crate::service::core::resolve_active(app_handle);
+    let core_version = active.version(app_handle);
     let presets = load_presets(app_handle);
     // 相对路径的基准：`dsh plugin` 不切换 cwd，pnpm 在活动核心目录下执行（与
     // [`install_with_cancel`] 传入的 cwd 同源），故本地 spec 必须在这里先绝对化，
     // 用户输入的 `./plugins/x` 才不会被解析到应用安装目录里。
-    let base = crate::service::core::active_core_dir(app_handle);
+    let base = active.core_dir(app_handle);
     let mut targets = Vec::with_capacity(specs.len());
     for spec in specs {
         let spec = spec.trim();
@@ -372,8 +373,10 @@ async fn install_with_cancel(
     cli::ensure_shims(app_handle)?;
 
     let node = config::get_node_binary_path(app_handle);
-    // 活动核心的 dsh 入口：本地核心存在时用本地 CLI，否则预打包
-    let dsh_bin = core::active_dsh_binary(app_handle);
+    // 活动核心的 dsh 入口：本地核心存在时用本地 CLI，否则预打包。
+    // 同一次安装后面还要取核心目录作 cwd，故解析一次快照复用。
+    let active = core::resolve_active(app_handle);
+    let dsh_bin = active.dsh_binary(app_handle);
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
     }
@@ -416,7 +419,7 @@ async fn install_with_cancel(
     ];
     args.extend(specs.iter().map(OsString::from));
 
-    let cwd = crate::service::core::active_core_dir(app_handle);
+    let cwd = active.core_dir(app_handle);
     // 日志打印实际传给 dsh 的 spec（此前打印 id 会误导排查：安装用的是 spec）
     log::info!("Running dsh plugin install for {specs:?}");
 
@@ -632,7 +635,8 @@ pub async fn allow_version_exemptions(
     let window = crate::utils::operation_window(app_handle)
         .ok_or("WINDOW_NOT_FOUND: current profile window missing")?;
     let node = config::get_node_binary_path(app_handle);
-    let dsh_bin = core::active_dsh_binary(app_handle);
+    let active = core::resolve_active(app_handle);
+    let dsh_bin = active.dsh_binary(app_handle);
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
     }
@@ -643,7 +647,7 @@ pub async fn allow_version_exemptions(
     // 豁免分支不进 pnpm（见函数文档），这里不做 pnpm 就绪探测：探测失败不该
     // 让一条本不需要 pnpm 的授权落不了地。
     let envs = build_plugin_envs(app_handle, false);
-    let cwd = crate::service::core::active_core_dir(app_handle);
+    let cwd = active.core_dir(app_handle);
     let profile = active_profile(app_handle);
     let owner = new_process_owner();
     let mut failures: Vec<String> = Vec::new();

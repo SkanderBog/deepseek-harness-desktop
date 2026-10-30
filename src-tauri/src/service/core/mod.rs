@@ -34,7 +34,8 @@ pub(crate) use runtime::{
 };
 #[allow(unused_imports)]
 pub use source::{
-    active_core_dir, active_dsh_binary, active_source, active_version, CoreSource, HarnessCore,
+    active_core_dir, active_dsh_binary, active_source, active_version, resolve_active, ActiveCore,
+    CoreSource, HarnessCore,
 };
 pub use version::{download_version, has_installed_version, list, remove_version, set_active};
 // 目录链接实现（Windows 符号链接 → 无特权时的 junction 回退）供插件模块复用：
