@@ -1,10 +1,9 @@
-
 use crate::config;
 use crate::service::download;
 use crate::service::download::Installable;
 
 use super::process::{has_owned_process, stop, terminate_stale_harness_processes};
-use crate::{AppHandle};
+use crate::AppHandle;
 
 pub async fn install(
     app_handle: &AppHandle,
@@ -127,14 +126,12 @@ pub async fn install(
         let buffer = download::download_file_from_sources(&tracker, urls).await?;
         log::info!("Download completed, file size: {} bytes", buffer.len());
         let expected_digest = match kind {
-            download::InstallKind::Dsh => {
-                dsh_latest
-                    .as_ref()
-                    .and_then(|info| info.digest.clone())
-                    .ok_or_else(|| {
-                        "DSH_INTEGRITY_UNAVAILABLE: trusted release digest is required".to_string()
-                    })?
-            }
+            download::InstallKind::Dsh => dsh_latest
+                .as_ref()
+                .and_then(|info| info.digest.clone())
+                .ok_or_else(|| {
+                    "DSH_INTEGRITY_UNAVAILABLE: trusted release digest is required".to_string()
+                })?,
             download::InstallKind::Pnpm => config::PNPM_SHA256.to_string(),
         };
         download::verify_sha256(&buffer, &expected_digest)?;

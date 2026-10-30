@@ -1,4 +1,3 @@
-
 use std::fs;
 #[cfg(windows)]
 use std::os::windows::fs::FileTypeExt;

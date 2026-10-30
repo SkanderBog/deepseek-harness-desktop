@@ -1,9 +1,8 @@
-
 use crate::config;
 use crate::service::{plugin, workflow::instances};
 
-use tauri_plugin_opener::OpenerExt;
 use crate::{AppHandle, WebviewWindow};
+use tauri_plugin_opener::OpenerExt;
 
 fn mark_preinstall_done(app_handle: &AppHandle) {
     let mut setting = config::get_store_dat_setting(app_handle);

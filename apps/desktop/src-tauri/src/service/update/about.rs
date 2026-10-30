@@ -1,8 +1,7 @@
-
 use super::meta::fetch_tag_published_at;
 use super::version::{current_version, parse_version};
 use super::{COPYRIGHT, POWERED_BY, REPO_URL};
-use crate::{AppHandle};
+use crate::AppHandle;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

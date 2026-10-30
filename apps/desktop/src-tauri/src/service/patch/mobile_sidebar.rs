@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
-use crate::{AppHandle};
+use crate::AppHandle;
+use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
 
 const CLIENT: &str = "node_modules/@deepseek-ai/dsh-client-ui-layout/lib/client.js";
 const PATCH_MARKER: &str = "dsh-tauri: mobile sidebar slot props";
@@ -98,7 +98,9 @@ mod tests {
             "(0, react.useSyncExternalStore)(subscribeDshMobileSidebar, getDshMobileSidebarWidth, () => 0)"
         ));
         assert!(patched.contains("collapsed: mobileSidebarWidth > 0 ? false : sidebarCollapsed"));
-        assert!(patched.contains("width: mobileSidebarWidth > 0 ? mobileSidebarWidth : cols.sidebar"));
+        assert!(
+            patched.contains("width: mobileSidebarWidth > 0 ? mobileSidebarWidth : cols.sidebar")
+        );
         assert!(patched.contains(r#"attributeFilter: ["data-dsh-mobile-sidebar"]"#));
         assert!(patched.contains("window.innerWidth < 1024"));
         assert!(patched.contains("window.matchMedia(query).matches"));

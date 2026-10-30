@@ -1,7 +1,7 @@
+use crate::AppHandle;
 use crate::config;
 use async_trait::async_trait;
 use std::path::PathBuf;
-use crate::{AppHandle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallKind {
@@ -38,7 +38,6 @@ pub fn record_mappings(app: &AppHandle) {
     }
 }
 
-
 pub struct Dsh;
 
 #[async_trait]
@@ -56,11 +55,11 @@ impl Installable for Dsh {
         config::get_dsh_install_path(app)
     }
     fn check_installed(&self, app: &AppHandle) -> bool {
-        crate::service::core::active_dsh_binary(app).is_file()
+        config::dependencies::binary_present(app, config::dependencies::DEP_DSH)
     }
     fn record_mapping(&self, app: &AppHandle) {
         let active = config::dependencies::active_root(app, config::dependencies::DEP_DSH);
-        if config::get_dsh_binary_path(app).is_file() {
+        if config::dependencies::binary_present(app, config::dependencies::DEP_DSH) {
             config::dependencies::record(app, InstallKind::Dsh.dependency_key(), Some(active));
         } else if crate::service::core::active_version(app).is_some() {
             config::dependencies::record(app, InstallKind::Dsh.dependency_key(), None);

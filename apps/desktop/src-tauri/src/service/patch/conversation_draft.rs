@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
-use crate::{AppHandle};
+use crate::AppHandle;
+use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
 
 const CONVERSATION_CLIENT_JS: &str =
     "node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js";

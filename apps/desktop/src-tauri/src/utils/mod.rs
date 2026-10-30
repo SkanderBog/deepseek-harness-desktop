@@ -130,7 +130,7 @@ pub(crate) fn decode_multibyte(bytes: &[u8], codepage: u32) -> Option<String> {
 
 #[cfg(windows)]
 pub(crate) fn encode_multibyte(text: &str, codepage: u32) -> Option<Vec<u8>> {
-    use windows_sys::Win32::Globalization::{WideCharToMultiByte, CP_UTF8, WC_NO_BEST_FIT_CHARS};
+    use windows_sys::Win32::Globalization::{CP_UTF8, WC_NO_BEST_FIT_CHARS, WideCharToMultiByte};
 
     if text.is_empty() {
         return Some(Vec::new());

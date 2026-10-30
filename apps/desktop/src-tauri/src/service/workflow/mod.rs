@@ -1,4 +1,3 @@
-
 pub mod instances;
 pub mod status;
 pub mod utils;
@@ -16,7 +15,7 @@ mod process;
 mod startup;
 mod sweep;
 
-pub use health::{proxy_health_check, recheck_ownership, HealthCheck};
+pub use health::{HealthCheck, proxy_health_check, recheck_ownership};
 pub(crate) use heap::effective_heap_limit_mb;
 pub use install::install;
 pub use launch::{launch, restart, start};

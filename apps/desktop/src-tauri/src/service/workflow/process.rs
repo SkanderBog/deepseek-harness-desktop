@@ -1,4 +1,3 @@
-
 use crate::config;
 use std::fs;
 #[cfg(windows)]
@@ -13,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 use super::status;
 use super::sweep::harness_pid_path;
 use super::utils::wait_for_port_release;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 pub(super) const HARNESS_PROCESS_EXITED_EVENT: &str = "harness-process-exited";
 

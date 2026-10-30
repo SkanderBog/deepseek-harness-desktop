@@ -1,10 +1,9 @@
-
 use std::collections::HashSet;
 
 use super::recovery::is_actionable_plugin_ref;
 use super::{installed_name, list_installed, load_presets, uninstall_recovery};
-use crate::service::profile::{active_profile, SAFE_PROFILE};
-use crate::{AppHandle};
+use crate::AppHandle;
+use crate::service::profile::{SAFE_PROFILE, active_profile};
 
 fn user_plugin_names(installed: &HashSet<String>, builtin: &HashSet<String>) -> Vec<String> {
     let mut names: Vec<String> = installed

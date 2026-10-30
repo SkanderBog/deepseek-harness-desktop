@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use std::os::windows::fs::FileTypeExt;
 
 use super::source::CoreSource;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 const CORE_PACKAGE_SCOPE: &str = "@deepseek-ai";
 const CORE_PACKAGE_PREFIX: &str = "dsh";
@@ -388,7 +388,7 @@ fn prune_stale_core_entries(
             return Err(format!(
                 "CORE_PLUGIN_STALE_CORE_SCAN_FAILED: {}: {e}",
                 scope.display()
-            ))
+            ));
         }
     };
 
@@ -680,7 +680,7 @@ fn ensure_package_link(name: &str, source: &Path, node_modules: &Path) -> Result
         Err(e) => {
             return Err(format!(
                 "CORE_PLUGIN_DESTINATION_STAT_FAILED: {destination:?}: {e}"
-            ))
+            ));
         }
     };
     if let Some(metadata) = existing {
@@ -762,7 +762,7 @@ fn ensure_non_link_directory(path: &Path, root: &Path) -> Result<(), String> {
                 return Err(format!(
                     "CORE_PLUGIN_DESTINATION_PARENT_INVALID: {}",
                     current.display()
-                ))
+                ));
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 std::fs::create_dir(&current).map_err(|e| {
@@ -776,7 +776,7 @@ fn ensure_non_link_directory(path: &Path, root: &Path) -> Result<(), String> {
                 return Err(format!(
                     "CORE_PLUGIN_DESTINATION_PARENT_STAT_FAILED: {}: {e}",
                     current.display()
-                ))
+                ));
             }
         }
     }
@@ -824,9 +824,9 @@ fn create_directory_junction(source: &Path, destination: &Path) -> std::io::Resu
         CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
         FILE_SHARE_WRITE, OPEN_EXISTING,
     };
+    use windows_sys::Win32::System::IO::DeviceIoControl;
     use windows_sys::Win32::System::Ioctl::FSCTL_SET_REPARSE_POINT;
     use windows_sys::Win32::System::SystemServices::IO_REPARSE_TAG_MOUNT_POINT;
-    use windows_sys::Win32::System::IO::DeviceIoControl;
 
     let source = source.canonicalize()?;
     let simplified = dunce::simplified(&source);
@@ -946,7 +946,9 @@ fn valid_package_component(value: &str) -> bool {
         && value != "."
         && value != ".."
         && value != "@"
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"._-@".contains(&byte))
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-@".contains(&byte))
 }
 
 fn read_package_name(path: &Path) -> Result<Option<String>, String> {
@@ -1288,8 +1290,6 @@ fn parse_native_probe_failures(stdout: &str) -> Option<Vec<NativeProbeFailure>> 
     let json = line.trim_start_matches(NATIVE_PROBE_MARKER).trim();
     serde_json::from_str::<Vec<NativeProbeFailure>>(json).ok()
 }
-
-
 
 fn native_failure_diagnostic(
     failures: &[NativeProbeFailure],
@@ -1714,9 +1714,11 @@ mod tests {
             version: None,
         }];
         paths.required_plugins = Some(&invalid);
-        assert!(prepare_active_runtime_at(&paths)
-            .unwrap_err()
-            .starts_with("CORE_PLUGIN_NAME_INVALID:"));
+        assert!(
+            prepare_active_runtime_at(&paths)
+                .unwrap_err()
+                .starts_with("CORE_PLUGIN_NAME_INVALID:")
+        );
         remove_link_only(&destination).unwrap();
         assert!(source.is_dir());
 
@@ -1801,12 +1803,16 @@ mod tests {
 
         let entries = probe_stamp_entries(&modules);
         assert!(entries.iter().any(|entry| entry.starts_with("sharp=")));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.starts_with("sharp/build/Release=")));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.starts_with("@deepseek-ai/dsh-plugin=")));
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.starts_with("sharp/build/Release="))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.starts_with("@deepseek-ai/dsh-plugin="))
+        );
         assert!(!entries.iter().any(|entry| entry.starts_with(".bin")));
 
         let digest = probe_stamp_modules_digest(&modules).expect("complete fingerprint");
@@ -1846,9 +1852,11 @@ mod tests {
             entries.len() > 512,
             "fixture must exceed the legacy entry cap"
         );
-        assert!(entries
-            .iter()
-            .any(|entry| entry.starts_with("sharp/build/Release/sharp.node=8:")));
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.starts_with("sharp/build/Release/sharp.node=8:"))
+        );
 
         let digest = probe_stamp_modules_digest(&modules).expect("complete fingerprint");
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -1869,23 +1877,27 @@ mod tests {
         assert!(artifact_stamp(&addon).is_none());
         std::fs::write(&addon, "native").unwrap();
         assert!(artifact_stamp(&addon).is_some());
-        assert!(push_probe_stamp_artifacts(
-            &dir,
-            "sharp/build/Release",
-            &mut Vec::new(),
-            NATIVE_PROBE_STAMP_MAX_ENTRIES
-        )
-        .is_some());
+        assert!(
+            push_probe_stamp_artifacts(
+                &dir,
+                "sharp/build/Release",
+                &mut Vec::new(),
+                NATIVE_PROBE_STAMP_MAX_ENTRIES
+            )
+            .is_some()
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(artifact_stamp(&addon).is_none());
-        assert!(push_probe_stamp_artifacts(
-            &dir,
-            "sharp/build/Release",
-            &mut Vec::new(),
-            NATIVE_PROBE_STAMP_MAX_ENTRIES
-        )
-        .is_none());
+        assert!(
+            push_probe_stamp_artifacts(
+                &dir,
+                "sharp/build/Release",
+                &mut Vec::new(),
+                NATIVE_PROBE_STAMP_MAX_ENTRIES
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -1899,15 +1911,21 @@ mod tests {
         std::fs::write(&addon, "native-a").unwrap();
 
         let entries = probe_stamp_entries(&modules);
-        assert!(entries
-            .iter()
-            .any(|entry| entry.starts_with("sharp/prebuilds=")));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.starts_with("sharp/prebuilds/win32-x64=")));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.starts_with("sharp/prebuilds/win32-x64/addon.node=8:")));
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.starts_with("sharp/prebuilds="))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.starts_with("sharp/prebuilds/win32-x64="))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.starts_with("sharp/prebuilds/win32-x64/addon.node=8:"))
+        );
 
         let digest = probe_stamp_modules_digest(&modules).expect("complete fingerprint");
         std::thread::sleep(std::time::Duration::from_millis(20));

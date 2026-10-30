@@ -1,19 +1,19 @@
-
 use crate::config;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::{Runtime};
+use tauri::Runtime;
 
+#[cfg(all(windows, not(debug_assertions)))]
+use super::SHIM_PS1_NAME;
 #[cfg(not(windows))]
 #[allow(unused_imports)] // debug 构建 dsh shim 不写入；测试仍引用
 use super::build::build_sh_shim;
 #[allow(unused_imports)] // 构建函数在 debug 构建/异平台下由 cfg 裁剪，测试仍引用
 use super::build::{
-    build_cmd_shim, build_npm_cmd_shim, build_npm_ps1_shim, build_npx_cmd_shim, build_npx_ps1_shim,
-    build_pnpm_cmd_shim, build_pnpm_ps1_shim, build_pnpm_sh_shim, build_ps1_shim, ShimPaths,
+    ShimPaths, build_cmd_shim, build_npm_cmd_shim, build_npm_ps1_shim, build_npx_cmd_shim,
+    build_npx_ps1_shim, build_pnpm_cmd_shim, build_pnpm_ps1_shim, build_pnpm_sh_shim,
+    build_ps1_shim,
 };
-#[cfg(all(windows, not(debug_assertions)))]
-use super::SHIM_PS1_NAME;
 #[cfg(windows)]
 use super::{
     NPM_SHIM_CMD_NAME, NPM_SHIM_PS1_NAME, NPX_SHIM_CMD_NAME, NPX_SHIM_PS1_NAME, PNPM_SHIM_CMD_NAME,
@@ -21,7 +21,7 @@ use super::{
 };
 #[cfg(not(windows))]
 use super::{PNPM_SHIM_SH_NAME, SHIM_SH_NAME};
-use crate::{AppHandle};
+use crate::AppHandle;
 
 const GENERATED_MARKER: &str = "DeepSeek Harness Desktop - ";
 
@@ -400,15 +400,20 @@ mod tests {
     fn ps1_shim_with_non_ascii_path_gets_utf8_bom() {
         let dir = temp_dir("non-ascii-ps1");
         let target = dir.join("pnpm.ps1");
-        let content =
-            "# DeepSeek Harness Desktop - pnpm command shim (generated)\r\n$pnpmBin = 'C:\\Users\\小蔡\\pnpm.cjs'\r\n";
+        let content = "# DeepSeek Harness Desktop - pnpm command shim (generated)\r\n$pnpmBin = 'C:\\Users\\小蔡\\pnpm.cjs'\r\n";
 
         write_shim_file(&target, content).unwrap();
 
         let bytes = std::fs::read(&target).unwrap();
-        assert_eq!(&bytes[..3], &[0xEF, 0xBB, 0xBF], "ps1 shim needs a utf-8 bom");
         assert_eq!(
-            std::fs::read_to_string(&target).unwrap().trim_start_matches('\u{feff}'),
+            &bytes[..3],
+            &[0xEF, 0xBB, 0xBF],
+            "ps1 shim needs a utf-8 bom"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&target)
+                .unwrap()
+                .trim_start_matches('\u{feff}'),
             content
         );
         assert!(!is_foreign_file(&target));
@@ -432,7 +437,8 @@ mod tests {
     fn code_page_encoded_shim_stays_overwritable() {
         let dir = temp_dir("codepage-overwrite");
         let target = dir.join("pnpm.cmd");
-        let header = "@echo off\r\nrem DeepSeek Harness Desktop - pnpm command shim (generated)\r\n";
+        let header =
+            "@echo off\r\nrem DeepSeek Harness Desktop - pnpm command shim (generated)\r\n";
         write_shim_file(&target, &format!("{header}rem C:\\Users\\小蔡\r\n")).unwrap();
         assert!(!is_foreign_file(&target));
 

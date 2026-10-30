@@ -1,9 +1,8 @@
-
 use std::time::Duration;
 
-use super::version::{current_version, is_newer, is_stable, parse_version, pick_asset};
 use super::REPO_URL;
-use crate::{AppHandle};
+use super::version::{current_version, is_newer, is_stable, parse_version, pick_asset};
+use crate::AppHandle;
 
 #[derive(Debug, Clone)]
 pub(super) struct LatestRelease {
@@ -49,7 +48,9 @@ fn parse_atom_entries(body: &str) -> Vec<(String, String)> {
     releases
 }
 
-pub(super) async fn fetch_releases_meta(app_handle: &AppHandle) -> Result<Vec<(String, String)>, String> {
+pub(super) async fn fetch_releases_meta(
+    app_handle: &AppHandle,
+) -> Result<Vec<(String, String)>, String> {
     let body = http_client(app_handle)?
         .get(format!("{REPO_URL}/releases.atom"))
         .send()
@@ -102,7 +103,10 @@ fn parse_digest_from_expanded_assets(body: &str, expected_name: &str) -> Option<
     Some(format!("sha256:{}", &hash[..64]))
 }
 
-async fn fetch_expanded_assets(app_handle: &AppHandle, tag: &str) -> Result<(Vec<String>, String), String> {
+async fn fetch_expanded_assets(
+    app_handle: &AppHandle,
+    tag: &str,
+) -> Result<(Vec<String>, String), String> {
     let body = http_client(app_handle)?
         .get(format!("{REPO_URL}/releases/expanded_assets/{tag}"))
         .send()
@@ -117,7 +121,10 @@ async fn fetch_expanded_assets(app_handle: &AppHandle, tag: &str) -> Result<(Vec
     Ok((names, body))
 }
 
-fn stable_candidates(releases: &[(String, String)], current: &str) -> (Vec<(String, String)>, bool) {
+fn stable_candidates(
+    releases: &[(String, String)],
+    current: &str,
+) -> (Vec<(String, String)>, bool) {
     let mut candidates = Vec::new();
     let mut saw_stable = false;
     for (tag, published_at) in releases {
@@ -173,7 +180,11 @@ fn parse_release_listing_tags(html: &str) -> Vec<String> {
     tags
 }
 
-fn listed_stable_candidates(tags: &[String], current: &str, skip: &[String]) -> Vec<(String, String)> {
+fn listed_stable_candidates(
+    tags: &[String],
+    current: &str,
+    skip: &[String],
+) -> Vec<(String, String)> {
     tags.iter()
         .filter(|tag| !skip.iter().any(|s| tag == &s))
         .filter(|tag| is_stable_tag(tag) && is_newer(tag.trim_start_matches('v'), current))
@@ -280,19 +291,24 @@ async fn first_matching_release(
 ) -> Result<Option<LatestRelease>, String> {
     for (tag, published_at) in candidates {
         let version = tag.trim_start_matches('v');
-        if let Some(release) = fetch_release_assets(app_handle, &tag, version, &published_at).await? {
+        if let Some(release) =
+            fetch_release_assets(app_handle, &tag, version, &published_at).await?
+        {
             return Ok(Some(release));
         }
     }
     Ok(None)
 }
 
-pub(super) async fn fetch_latest_release(app_handle: &AppHandle) -> Result<Option<LatestRelease>, String> {
+pub(super) async fn fetch_latest_release(
+    app_handle: &AppHandle,
+) -> Result<Option<LatestRelease>, String> {
     if !super::version::supports_stable_updates(&app_handle.config().identifier) {
         return Ok(None);
     }
     let current = current_version();
-    let (candidates, saw_stable) = stable_candidates(&fetch_releases_meta(app_handle).await?, &current);
+    let (candidates, saw_stable) =
+        stable_candidates(&fetch_releases_meta(app_handle).await?, &current);
 
     if saw_stable {
         return first_matching_release(app_handle, candidates).await;
@@ -449,7 +465,10 @@ mod tests {
         assert!(!saw_stable);
 
         let mut mixed = nightlies.clone();
-        mixed.insert(0, ("nightly".to_string(), "2026-10-11T18:00:00Z".to_string()));
+        mixed.insert(
+            0,
+            ("nightly".to_string(), "2026-10-11T18:00:00Z".to_string()),
+        );
         let (candidates, saw_stable) = stable_candidates(&mixed, "0.22.3");
         assert!(candidates.is_empty());
         assert!(!saw_stable);
@@ -487,11 +506,18 @@ mod tests {
             Some("v0.22.3")
         );
         assert_eq!(
-            parse_latest_tag("https://github.com/x/y/releases/tag/v0.22.3?expanded=true").as_deref(),
+            parse_latest_tag("https://github.com/x/y/releases/tag/v0.22.3?expanded=true")
+                .as_deref(),
             Some("v0.22.3")
         );
-        assert_eq!(parse_latest_tag("https://github.com/x/y/releases/latest"), None);
-        assert_eq!(parse_latest_tag("https://github.com/x/y/releases/tag/"), None);
+        assert_eq!(
+            parse_latest_tag("https://github.com/x/y/releases/latest"),
+            None
+        );
+        assert_eq!(
+            parse_latest_tag("https://github.com/x/y/releases/tag/"),
+            None
+        );
     }
 
     #[test]
@@ -542,7 +568,10 @@ mod tests {
     fn parse_published_at_skips_display_only_datetimes() {
         let html = r#"<relative-time datetime="2026-10-06T16:11:01Z">last week</relative-time>
             <relative-time datetime="2026-10-06 15:28:28 UTC">committed</relative-time>"#;
-        assert_eq!(parse_published_at(html).as_deref(), Some("2026-10-06T16:11:01Z"));
+        assert_eq!(
+            parse_published_at(html).as_deref(),
+            Some("2026-10-06T16:11:01Z")
+        );
         assert_eq!(parse_published_at("<p>no datetime</p>"), None);
         assert_eq!(
             parse_published_at(r#"<p datetime="2026-10-06 15:28:28 UTC">x</p>"#),
@@ -569,7 +598,10 @@ mod tests {
 
         let feed = fetch(format!("{REPO_URL}/releases.atom")).await;
         let entries = parse_atom_entries(&feed);
-        assert!(!entries.is_empty(), "atom feed 解析不出 entry：页面结构可能已变化");
+        assert!(
+            !entries.is_empty(),
+            "atom feed 解析不出 entry：页面结构可能已变化"
+        );
         let (candidates, _) = stable_candidates(&entries, "0.0.0");
         assert!(
             candidates.iter().all(|(tag, _)| is_stable_tag(tag)),
@@ -582,18 +614,23 @@ mod tests {
             .await
             .expect("请求 /releases/latest 失败");
         assert!(response.status().is_success(), "HTTP {}", response.status());
-        let tag = parse_latest_tag(response.url().as_str()).expect("/releases/latest 未重定向到 tag 页面");
+        let tag = parse_latest_tag(response.url().as_str())
+            .expect("/releases/latest 未重定向到 tag 页面");
         assert!(is_stable_tag(&tag), "{tag} 不是正式版");
 
         let page = fetch(format!("{REPO_URL}/releases/tag/{tag}")).await;
-        assert!(parse_published_at(&page).is_some(), "解析不出 {tag} 的发布时间");
+        assert!(
+            parse_published_at(&page).is_some(),
+            "解析不出 {tag} 的发布时间"
+        );
 
         let assets = fetch(format!("{REPO_URL}/releases/expanded_assets/{tag}")).await;
         let names = extract_asset_names(&assets, &tag);
         assert!(!names.is_empty(), "{tag} 的资产页解析不出文件名");
 
         let listing = fetch(format!("{REPO_URL}/releases?page=1")).await;
-        let listed = listed_stable_candidates(&parse_release_listing_tags(&listing), "0.0.0", &[tag]);
+        let listed =
+            listed_stable_candidates(&parse_release_listing_tags(&listing), "0.0.0", &[tag]);
         assert!(!listed.is_empty(), "列表页里找不到更旧的正式版");
     }
 }

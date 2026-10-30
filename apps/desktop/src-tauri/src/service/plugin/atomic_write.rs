@@ -82,10 +82,10 @@ fn create_temp(parent: &Path, original: Option<&Path>) -> io::Result<tempfile::N
         use std::os::windows::io::FromRawHandle;
         use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
         use windows_sys::Win32::Security::{
-            SetSecurityDescriptorControl, SECURITY_ATTRIBUTES, SE_DACL_PROTECTED,
+            SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SetSecurityDescriptorControl,
         };
         use windows_sys::Win32::Storage::FileSystem::{
-            CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+            CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
             FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
         };
 
@@ -200,7 +200,7 @@ fn reject_inheritable_parent_acl(parent: &Path) -> io::Result<()> {
 fn security_descriptor(path: &Path) -> io::Result<Vec<u32>> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Security::{
-        GetFileSecurityW, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+        DACL_SECURITY_INFORMATION, GetFileSecurityW, OWNER_SECURITY_INFORMATION,
     };
 
     let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -385,8 +385,8 @@ mod tests {
             ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
         };
         use windows_sys::Win32::Security::{
-            GetSecurityDescriptorControl, GetSecurityDescriptorDacl, SetFileSecurityW,
-            DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+            DACL_SECURITY_INFORMATION, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
+            PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, SetFileSecurityW,
         };
 
         fn dacl(path: &Path) -> Vec<u8> {
@@ -492,7 +492,7 @@ mod tests {
             ) -> libc::c_int;
             fn acl_add_perm(permset: *mut libc::c_void, perm: libc::c_int) -> libc::c_int;
             fn acl_set_permset(entry: *mut libc::c_void, permset: *mut libc::c_void)
-                -> libc::c_int;
+            -> libc::c_int;
             fn acl_get_flagset_np(
                 entry: *mut libc::c_void,
                 flagset: *mut *mut libc::c_void,

@@ -1,7 +1,6 @@
-
+use crate::AppHandle;
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::{AppHandle};
 
 const MOVED_INFIX: &str = ".moved-";
 
@@ -39,7 +38,10 @@ pub(super) fn moved_stamp(name: &str) -> Option<&str> {
     if stamp.is_empty() {
         return None;
     }
-    if stamp.chars().all(|c| c.is_ascii_digit() || c == 'T' || c == '-') {
+    if stamp
+        .chars()
+        .all(|c| c.is_ascii_digit() || c == 'T' || c == '-')
+    {
         Some(stamp)
     } else {
         None
@@ -146,7 +148,10 @@ mod tests {
             aside.file_name().unwrap().to_str().unwrap(),
             "DSHHome.current-2026-10-02T21-33-14"
         );
-        assert_eq!(moved_stamp(aside.file_name().unwrap().to_str().unwrap()), None);
+        assert_eq!(
+            moved_stamp(aside.file_name().unwrap().to_str().unwrap()),
+            None
+        );
     }
 
     #[test]

@@ -1,4 +1,3 @@
-
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -8,7 +7,7 @@ use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
 use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::fmt::time::OffsetTime;
 use tracing_subscriber::layer::{Layer, SubscriberExt};
-use tracing_subscriber::{fmt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, util::SubscriberInitExt};
 
 use crate::config::{APP_DATA_DEV_DIR_NAME, APP_IDENTIFIER};
 

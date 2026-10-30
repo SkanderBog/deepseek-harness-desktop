@@ -9,10 +9,10 @@ use crate::service::cli;
 
 use super::errors;
 use super::install::{build_plugin_envs, new_process_owner, run_plugin_process};
-use super::installed::{installed_name, profile_dir, ProfilePackageJson};
-use super::preset::{load_presets, PreinstallPluginInfo};
+use super::installed::{ProfilePackageJson, installed_name, profile_dir};
+use super::preset::{PreinstallPluginInfo, load_presets};
 use super::process::is_process_cleanup_failure;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 pub(super) fn missing_plugin_ids(
     presets: &[PreinstallPluginInfo],

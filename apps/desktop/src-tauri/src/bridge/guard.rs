@@ -1,8 +1,7 @@
-
 use std::path::{Path, PathBuf};
 
-use tauri::{Manager};
-use crate::{AppHandle};
+use crate::AppHandle;
+use tauri::Manager;
 
 pub fn allowed_roots(app_handle: &AppHandle) -> Vec<PathBuf> {
     let mut roots = Vec::new();

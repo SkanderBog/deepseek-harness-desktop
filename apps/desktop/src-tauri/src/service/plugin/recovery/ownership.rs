@@ -1,4 +1,3 @@
-
 use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
@@ -7,7 +6,7 @@ use std::path::Path;
 use super::is_actionable_plugin_ref;
 use super::is_package_name;
 use super::profile_dir;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 #[derive(Default)]
 struct PluginMeta {

@@ -1,12 +1,11 @@
-
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::{Runtime};
+use tauri::Runtime;
 
 use super::manifest;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 pub const MAPPING_FILE: &str = "dependencies.json";
 
@@ -229,9 +228,43 @@ fn default_managed_root(key: &str) -> &'static str {
 fn default_entry(key: &str) -> &'static str {
     match key {
         DEP_PNPM => "bin/pnpm.cjs",
+        // The dsh package ships as one `.asar`; its bin lives inside the archive,
+        // so this path is resolved by Electron, not by the OS file system.
         DEP_DSH => "dsh.asar/node_modules/@deepseek-ai/dsh/lib/bin.js",
         _ => "",
     }
+}
+
+/// True when `binary_path` exists for the purpose of launching.
+///
+/// Paths inside an asar are invisible to `Path::is_file()`; for those the archive
+/// itself is the install anchor. Every caller that used to stat the dsh bin must
+/// go through this instead, or a correctly installed asar looks missing.
+pub fn binary_present<R: Runtime>(app: &AppHandle<R>, key: &str) -> bool {
+    binary_at_present(&binary_path(app, key))
+}
+
+/// [`binary_present`] for a path resolved elsewhere (e.g. a local core).
+pub fn binary_at_present(binary: &Path) -> bool {
+    if binary.is_file() {
+        return true;
+    }
+    match asar_archive_of(binary) {
+        Some(archive) => archive.is_file(),
+        None => false,
+    }
+}
+
+/// Splits `<...>/x.asar/<inner>` into the archive path and its inner remainder.
+pub fn asar_archive_of(binary: &Path) -> Option<PathBuf> {
+    binary
+        .ancestors()
+        .find(|ancestor| {
+            ancestor
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("asar"))
+        })
+        .map(Path::to_path_buf)
 }
 
 #[cfg(test)]

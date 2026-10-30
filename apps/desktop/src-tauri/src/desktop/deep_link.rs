@@ -1,6 +1,5 @@
-
+use crate::AppHandle;
 use tauri_plugin_deep_link::DeepLinkExt;
-use crate::{AppHandle};
 
 pub fn is_open_request(url: &str) -> bool {
     let scheme = if crate::config::APP_IDENTIFIER == "dsh-tauri-nightly" {

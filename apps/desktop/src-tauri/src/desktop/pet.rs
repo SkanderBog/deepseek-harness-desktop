@@ -1,7 +1,8 @@
 //! 动画宠物（桌宠外置化，issue #308）。
 //!   遮挡（issue #649，上游 tauri-apps/tao#1134 已按「Wayland 不支持」补文档结案）。
 
-use crate::config::{store_dat_file_name, STORE_PET_WINDOW_STATE_KEY};
+use crate::config::{STORE_PET_WINDOW_STATE_KEY, store_dat_file_name};
+use crate::{AppHandle, WebviewWindow};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -9,7 +10,6 @@ use std::time::{Duration, Instant};
 use tauri::PhysicalPosition;
 use tauri::{Manager, Runtime, WebviewUrl, WebviewWindowBuilder, Window};
 use tauri_plugin_store::StoreExt;
-use crate::{AppHandle, WebviewWindow};
 
 pub const PET_WINDOW_LABEL: &str = "pet";
 pub const PET_SPRITE_BASE_WIDTH: f64 = 220.0;

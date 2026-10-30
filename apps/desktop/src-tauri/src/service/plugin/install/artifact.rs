@@ -1,18 +1,17 @@
-
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use tauri::{Emitter};
+use tauri::Emitter;
 
 use serde_json::Value as JsonValue;
 
+use super::InstallTarget;
 use super::append_command_output;
 use super::errors;
 use super::installed_name;
 use super::load_presets;
 use super::profile_dir;
-use super::InstallTarget;
-use super::{new_process_owner, run_plugin_process, PreinstallLogPayload, PREINSTALL_LOG_EVENT};
+use super::{PREINSTALL_LOG_EVENT, PreinstallLogPayload, new_process_owner, run_plugin_process};
 use crate::{AppHandle, WebviewWindow};
 
 pub(super) fn verify_installed_products(
@@ -307,11 +306,15 @@ mod tests {
         let missing = vec![
             (
                 "dsh-tauri".to_string(),
-                PathBuf::from("C:\\Users\\t\\.dsh\\profiles\\safe\\node_modules\\dsh-tauri\\package.json"),
+                PathBuf::from(
+                    "C:\\Users\\t\\.dsh\\profiles\\safe\\node_modules\\dsh-tauri\\package.json",
+                ),
             ),
             (
                 "dsh-tauri-ui".to_string(),
-                PathBuf::from("C:\\Users\\t\\.dsh\\profiles\\safe\\node_modules\\dsh-tauri-ui\\package.json"),
+                PathBuf::from(
+                    "C:\\Users\\t\\.dsh\\profiles\\safe\\node_modules\\dsh-tauri-ui\\package.json",
+                ),
             ),
         ];
         let resolve = |id: &str| {
@@ -333,10 +336,8 @@ mod tests {
 
     #[test]
     fn bundled_source_present_falls_back_to_generic_detail() {
-        let root = std::env::temp_dir().join(format!(
-            "dsh-source-present-test-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("dsh-source-present-test-{}", std::process::id()));
         let dir = root.join("dsh-tauri");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("package.json"), r#"{"name":"dsh-tauri"}"#).unwrap();

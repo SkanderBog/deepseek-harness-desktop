@@ -1,11 +1,10 @@
-
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use tauri::Manager;
 
 use super::super::shim::is_generated_shim;
 use super::get_bin_dir;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 pub fn find_user_pnpm(app_handle: &AppHandle) -> Option<PathBuf> {
     #[cfg(unix)]
@@ -370,7 +369,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn discovery_preserves_argv0_style_mise_symlink() {
-        use std::os::unix::fs::{symlink, PermissionsExt};
+        use std::os::unix::fs::{PermissionsExt, symlink};
 
         let root = temp_dir("pnpm-mise-symlink");
         let desktop_bin = root.join("desktop-bin");

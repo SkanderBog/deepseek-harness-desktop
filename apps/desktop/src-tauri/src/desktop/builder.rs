@@ -1,10 +1,10 @@
-#[cfg(any(windows, target_os = "macos"))]
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(windows)]
 use std::sync::Arc;
 #[cfg(windows)]
 use std::sync::OnceLock;
+#[cfg(any(windows, target_os = "macos"))]
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
 
@@ -12,18 +12,19 @@ use std::sync::{Mutex, OnceLock};
 use objc2_app_kit::{NSWindow, NSWindowButton, NSWindowStyleMask};
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSPoint;
-use tauri::{ipc::Invoke, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, ipc::Invoke};
 use tauri_runtime_electron::ElectronRuntime;
 
 use tauri::menu::{Menu, MenuEvent, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 
+use crate::{AppHandle, WebviewWindow};
 #[cfg(target_os = "macos")]
 use tauri::menu::{PredefinedMenuItem, Submenu};
-use crate::{AppHandle, WebviewWindow};
 
 #[cfg(target_os = "macos")]
-static MACOS_FULLSCREEN_MENU_ITEM: OnceLock<Mutex<Option<MenuItem<ElectronRuntime>>>> = OnceLock::new();
+static MACOS_FULLSCREEN_MENU_ITEM: OnceLock<Mutex<Option<MenuItem<ElectronRuntime>>>> =
+    OnceLock::new();
 
 // MainEventsCleared 立刻再次触发，把主线程烧成 100% CPU（issue #880）。
 #[cfg(target_os = "macos")]
@@ -777,7 +778,7 @@ where
 
 #[cfg(all(test, target_os = "macos"))]
 mod macos_titlebar_tests {
-    use super::{on_macos_titlebar_event, sync_macos_titlebars, MACOS_TITLEBAR_SYNC_PENDING};
+    use super::{MACOS_TITLEBAR_SYNC_PENDING, on_macos_titlebar_event, sync_macos_titlebars};
     use std::cell::Cell;
     use std::sync::atomic::Ordering;
     use tauri::{PhysicalPosition, PhysicalSize, Theme, WindowEvent};
@@ -852,7 +853,9 @@ fn with_shell_scripts<'a>(
         .initialization_script_for_all_frames(crate::desktop::paste::PASTE_SHIM_JS)
 }
 
-pub fn build_main_window(app: &AppHandle<ElectronRuntime>) -> tauri::Result<WebviewWindow<ElectronRuntime>> {
+pub fn build_main_window(
+    app: &AppHandle<ElectronRuntime>,
+) -> tauri::Result<WebviewWindow<ElectronRuntime>> {
     let app_handle = app.clone();
 
     // 启动期几何恢复窗口（issue #464）：必须在创建主窗口之前置位。恢复完成前
@@ -881,10 +884,11 @@ pub fn build_main_window(app: &AppHandle<ElectronRuntime>) -> tauri::Result<Webv
 
     let webview_window = webview_builder.build()?;
     let app_for_popup = app_handle.clone();
-    if let Err(error) = tauri_runtime_electron::on_new_window(
-        webview_window.as_ref(),
-        move |url, features| on_new_window(app_for_popup.clone(), url, features),
-    ) {
+    if let Err(error) =
+        tauri_runtime_electron::on_new_window(webview_window.as_ref(), move |url, features| {
+            on_new_window(app_for_popup.clone(), url, features)
+        })
+    {
         log::warn!("[new-window] POPUP_HANDLER_FAILED: {error}");
     }
     apply_window_background(app, &webview_window);
@@ -902,7 +906,10 @@ pub fn build_main_window(app: &AppHandle<ElectronRuntime>) -> tauri::Result<Webv
     Ok(webview_window)
 }
 
-fn apply_window_background(app: &AppHandle<ElectronRuntime>, window: &WebviewWindow<ElectronRuntime>) {
+fn apply_window_background(
+    app: &AppHandle<ElectronRuntime>,
+    window: &WebviewWindow<ElectronRuntime>,
+) {
     let appearance = crate::config::get_store_dat_setting(app).appearance;
     let background = if shell_window_transparent(&appearance) {
         Some(tauri::webview::Color(0, 0, 0, 0))
@@ -947,10 +954,11 @@ pub fn build_shell_window(
 
     let window = webview_builder.build()?;
     let app_for_popup = app_handle.clone();
-    if let Err(error) = tauri_runtime_electron::on_new_window(
-        window.as_ref(),
-        move |url, features| on_new_window(app_for_popup.clone(), url, features),
-    ) {
+    if let Err(error) =
+        tauri_runtime_electron::on_new_window(window.as_ref(), move |url, features| {
+            on_new_window(app_for_popup.clone(), url, features)
+        })
+    {
         log::warn!("[new-window] POPUP_HANDLER_FAILED: {error}");
     }
     apply_window_background(app, &window);
@@ -1129,9 +1137,11 @@ mod security_tests {
             .as_array()
             .expect("permissions must be an array")
             .clone();
-        assert!(!default_permissions
-            .iter()
-            .any(|permission| { permission.as_str() == Some("core:window:allow-set-effects") }));
+        assert!(
+            !default_permissions
+                .iter()
+                .any(|permission| { permission.as_str() == Some("core:window:allow-set-effects") })
+        );
     }
 
     #[test]

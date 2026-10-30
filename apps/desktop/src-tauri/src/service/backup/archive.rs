@@ -1,4 +1,3 @@
-
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -58,7 +57,8 @@ fn append_dir_filtered(
         #[cfg(windows)]
         if reject_links {
             use std::os::windows::fs::MetadataExt;
-            let meta = fs::symlink_metadata(&path).map_err(|e| format!("BACKUP_ARCHIVE_TYPE: {e}"))?;
+            let meta =
+                fs::symlink_metadata(&path).map_err(|e| format!("BACKUP_ARCHIVE_TYPE: {e}"))?;
             if meta.file_attributes() & 0x400 != 0 {
                 return Err(format!("RECOVERY_LINK_UNSUPPORTED: {}", path.display()));
             }
@@ -67,7 +67,14 @@ fn append_dir_filtered(
             builder
                 .append_dir(&archived, &path)
                 .map_err(|e| format!("BACKUP_ARCHIVE_APPEND_DIR: {e}"))?;
-            append_dir_filtered(builder, &path, source, &archived, include_credentials, reject_links)?;
+            append_dir_filtered(
+                builder,
+                &path,
+                source,
+                &archived,
+                include_credentials,
+                reject_links,
+            )?;
         } else if ty.is_file() {
             builder
                 .append_file(
@@ -109,11 +116,20 @@ pub fn create_archive(source: &Path, dest: &Path, include_credentials: bool) -> 
     create_archive_impl(source, dest, include_credentials, false)
 }
 
-pub(super) fn create_recovery_archive(source: &Path, dest: &Path, include_credentials: bool) -> Result<(), String> {
+pub(super) fn create_recovery_archive(
+    source: &Path,
+    dest: &Path,
+    include_credentials: bool,
+) -> Result<(), String> {
     create_archive_impl(source, dest, include_credentials, true)
 }
 
-fn create_archive_impl(source: &Path, dest: &Path, include_credentials: bool, reject_links: bool) -> Result<(), String> {
+fn create_archive_impl(
+    source: &Path,
+    dest: &Path,
+    include_credentials: bool,
+    reject_links: bool,
+) -> Result<(), String> {
     let file = fs::File::create(dest).map_err(|e| format!("BACKUP_ARCHIVE_CREATE: {e}"))?;
     let workers = std::thread::available_parallelism()
         .map(|n| if reject_links { n.get().min(2) } else { n.get() } as u32)
@@ -822,7 +838,11 @@ mod tests {
         fs::write(source.join("target.txt"), "content").unwrap();
         create_dir_link(&deep, &source.join("link"));
         assert!(
-            fs::read_link(source.join("link")).unwrap().as_os_str().len() > 100,
+            fs::read_link(source.join("link"))
+                .unwrap()
+                .as_os_str()
+                .len()
+                > 100,
             "夹具链接名应超过 tar 链接名上限"
         );
 

@@ -3,11 +3,11 @@
 use std::path::{Path, PathBuf};
 
 use super::patch_entries::{
-    scan_unresolved_entries_in, unresolved_entries_message, PATCH_ENTRY_UNRESOLVED,
+    PATCH_ENTRY_UNRESOLVED, scan_unresolved_entries_in, unresolved_entries_message,
 };
 use super::profile_dir;
+use crate::AppHandle;
 use crate::config;
-use crate::{AppHandle};
 
 const PATCH_FILENAME: &str = "cordis.patch.yml";
 
@@ -231,9 +231,11 @@ mod tests {
         std::fs::write(&package, "{}\n").unwrap();
         assert_eq!(preflight_at(&profile, &home, Some(&anchor)), Ok(()));
         std::fs::remove_file(package).unwrap();
-        assert!(preflight_at(&profile, &home, Some(&anchor))
-            .unwrap_err()
-            .starts_with("PATCH_LAYER_ENTRY_UNRESOLVED: "));
+        assert!(
+            preflight_at(&profile, &home, Some(&anchor))
+                .unwrap_err()
+                .starts_with("PATCH_LAYER_ENTRY_UNRESOLVED: ")
+        );
     }
 
     #[test]

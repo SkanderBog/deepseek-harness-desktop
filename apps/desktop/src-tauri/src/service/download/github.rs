@@ -1,6 +1,5 @@
-
+use crate::AppHandle;
 use crate::config;
-use crate::{AppHandle};
 
 const DSH_PKG_GITHUB_API: &str = "https://api.github.com/repos/dsh-tauri-desk/deepseek-harness-pkg";
 const DSH_PKG_REPO: &str = "https://github.com/dsh-tauri-desk/deepseek-harness-pkg";
@@ -168,9 +167,7 @@ async fn fetch_dsh_digest_from_expanded_assets(
 }
 
 /// 回退到最新一条非预览版 release 供更新/安装判定（issue #299：最新 alpha 发布后
-pub async fn fetch_latest_dsh_pkg_info(
-    app_handle: &AppHandle,
-) -> Result<LatestDshPkg, String> {
+pub async fn fetch_latest_dsh_pkg_info(app_handle: &AppHandle) -> Result<LatestDshPkg, String> {
     let client = github_client(app_handle)?;
     let expected_name = config::get_dsh_download_url()?
         .rsplit('/')
@@ -584,9 +581,7 @@ pub async fn fetch_dsh_pkg_releases(
     }
 }
 
-pub async fn fetch_dsh_pkg_tags(
-    app_handle: &AppHandle,
-) -> Result<Vec<(String, String)>, String> {
+pub async fn fetch_dsh_pkg_tags(app_handle: &AppHandle) -> Result<Vec<(String, String)>, String> {
     let client = github_client(app_handle)?;
     let tags: serde_json::Value = github_api_get(
         &client,
@@ -630,11 +625,11 @@ mod tests {
         assert!(url.contains(&format!("/releases/download/{tag}/")));
         assert!(!url.contains("/releases/latest/download/"));
         assert!(
-            url.ends_with("deepseek-harness-pkg-windows.zip")
-                || url.ends_with("deepseek-harness-pkg-linux.zip")
-                || url.ends_with("deepseek-harness-pkg-linux-arm64.zip")
-                || url.ends_with("deepseek-harness-pkg-macos-arm64.zip")
-                || url.ends_with("deepseek-harness-pkg-macos-x64.zip")
+            url.ends_with("deepseek-harness-pkg-windows.asar.zip")
+                || url.ends_with("deepseek-harness-pkg-linux.asar.zip")
+                || url.ends_with("deepseek-harness-pkg-linux-arm64.asar.zip")
+                || url.ends_with("deepseek-harness-pkg-macos-arm64.asar.zip")
+                || url.ends_with("deepseek-harness-pkg-macos-x64.asar.zip")
         );
     }
 

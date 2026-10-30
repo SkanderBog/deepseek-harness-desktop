@@ -1,12 +1,11 @@
-
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use tauri::{Manager};
+use tauri::Manager;
 
+use crate::AppHandle;
 use crate::config;
 use crate::config::manifest::{Manifest, PluginEntry, PluginVersion};
-use crate::{AppHandle};
 
 #[derive(Debug, Clone)]
 pub struct PreinstallPluginInfo {

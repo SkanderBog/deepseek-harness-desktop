@@ -143,9 +143,11 @@ mod tests {
             let mut recorded = [Missing; 2];
             recorded[index] = Pid(std::process::id());
             assert!(reject_unreadable_markers(recorded).is_ok());
-            assert!(confirm_harness_stopped(recorded)
-                .unwrap_err()
-                .starts_with("DATA_DIR_HARNESS_RUNNING:"));
+            assert!(
+                confirm_harness_stopped(recorded)
+                    .unwrap_err()
+                    .starts_with("DATA_DIR_HARNESS_RUNNING:")
+            );
             recorded[index] = Invalid;
             let error = reject_unreadable_markers(recorded).unwrap_err();
             assert!(error.starts_with("DATA_DIR_HARNESS_MARKER_INVALID:"));

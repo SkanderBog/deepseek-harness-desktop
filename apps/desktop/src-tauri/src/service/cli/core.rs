@@ -1,11 +1,10 @@
-
 use crate::config;
 use serde::Serialize;
 use std::fs;
 
 use super::path::{get_bin_dir, get_shim_path, path_registered, register_path, unregister_path};
 use super::shim::{user_dsh_preserved, write_shims};
-use crate::{AppHandle};
+use crate::AppHandle;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CliLinkStatus {

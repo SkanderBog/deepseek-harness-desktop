@@ -1,4 +1,3 @@
-
 use crate::config;
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -13,16 +12,16 @@ use tauri::Manager;
 #[cfg(unix)]
 use super::process::warn_if_inotify_watch_limit_low;
 use super::process::{
-    has_owned_process, launch_guard, on_owned_process_exit_at, register_owned_process, stop,
-    take_startup_sweep, terminate_stale_harness_processes, LaunchGuard, OwnedProcess,
-    HARNESS_PROCESS_EXITED_EVENT,
+    HARNESS_PROCESS_EXITED_EVENT, LaunchGuard, OwnedProcess, has_owned_process, launch_guard,
+    on_owned_process_exit_at, register_owned_process, stop, take_startup_sweep,
+    terminate_stale_harness_processes,
 };
 use super::status;
 #[cfg(windows)]
 use super::sweep::{dsh_bin_open_error, relaunch_marker_path, relaunch_via_shell_escape};
 use super::utils::{append_log, rotate_service_log, spawn_output_readers, wait_for_port_release};
 use super::win_inspector;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 #[cfg(windows)]
 type HarnessChild = std::sync::Arc<std::os::windows::io::OwnedHandle>;
@@ -188,7 +187,9 @@ pub async fn start(app_handle: AppHandle) -> Result<(), String> {
         log::debug!("Harness not installed, skipping startup");
         return Ok(());
     }
-    if !node_binary_path.exists() || !dsh_binary_path.exists() {
+    if !node_binary_path.exists()
+        || !config::dependencies::binary_present(&app_handle, config::dependencies::DEP_DSH)
+    {
         #[cfg(windows)]
         if dsh_bin_open_error(&app_handle) == Some(448) {
             relaunch_via_shell_escape(&app_handle);
@@ -255,7 +256,7 @@ fn wait_harness(
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
         use windows_sys::Win32::System::Threading::{
-            GetExitCodeProcess, WaitForSingleObject, INFINITE,
+            GetExitCodeProcess, INFINITE, WaitForSingleObject,
         };
 
         let handle = child.as_raw_handle();
@@ -471,7 +472,8 @@ pub async fn launch(app_handle: AppHandle) -> Result<(), String> {
         return Err("NODE_NOT_FOUND: Node.js not installed".to_string());
     }
     log::debug!("Checking Harness path: {:?}", dsh_binary_path);
-    if !dsh_binary_path.exists() {
+    // The dsh bin lives inside `dsh.asar`, so a plain `exists()` never sees it.
+    if !config::dependencies::binary_present(&app_handle, config::dependencies::DEP_DSH) {
         log::error!("Harness not installed");
         return Err("HARNESS_NOT_FOUND: Harness not installed".to_string());
     }
@@ -806,6 +808,12 @@ pub(super) async fn launch_prepared(
     envs.extend(config::proxy::proxy_child_env(&setting.proxy_url));
 
     envs.insert("DSH_TAURI_EMBEDDED".to_string(), "1".to_string());
+    // `node_binary_path` is the Electron binary; without this switch Chromium
+    // starts as a GUI process, the dsh script never runs and nothing listens.
+    // The Unix branch relied on `apply_node_env`, the Windows branch on
+    // CreateProcessW; both read this shared env map instead.
+    let (node_env_key, node_env_value) = config::node_env_value();
+    envs.insert(node_env_key.to_string(), node_env_value.to_string());
 
     // issue #1064：AppImage 的旧库不能泄漏给 Harness 启动的宿主目录选择器。
     #[cfg(target_os = "linux")]
@@ -1021,7 +1029,9 @@ mod tests {
             assert_eq!(
                 harness_library_path(
                     Some(OsStr::new("/tmp/.mount_DSH")),
-                    Some(OsStr::new("/opt/custom/lib:/tmp/.mount_DSH/usr/lib:/tmp/.mount_DSH:/tmp/.mount_DSH-other/lib:")),
+                    Some(OsStr::new(
+                        "/opt/custom/lib:/tmp/.mount_DSH/usr/lib:/tmp/.mount_DSH:/tmp/.mount_DSH-other/lib:"
+                    )),
                 ),
                 Some(OsString::from("/opt/custom/lib:/tmp/.mount_DSH-other/lib:")),
             );
@@ -1275,7 +1285,7 @@ mod tests {
         }
 
         fn with_reader_failure(script: &str, reader: usize) -> Self {
-            use std::sync::{atomic::AtomicUsize, Arc, Mutex};
+            use std::sync::{Arc, Mutex, atomic::AtomicUsize};
 
             let node = config::get_local_node_path()
                 .expect("supported Node.js required for supervisor tests");
@@ -1608,18 +1618,37 @@ mod tests {
     #[test]
     fn supervisor_retries_only_duplicate_code_one_at_most_twice() {
         for (script, attempts, resets) in [
-            ("require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(1)", 3, 2),
-            ("require('fs').writeSync(2,'Error: EADDRINUSE\\n');process.exit(1)", 1, 0),
-            ("require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(0)", 1, 0),
+            (
+                "require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(1)",
+                3,
+                2,
+            ),
+            (
+                "require('fs').writeSync(2,'Error: EADDRINUSE\\n');process.exit(1)",
+                1,
+                0,
+            ),
+            (
+                "require('fs').writeSync(2,'duplicate loader entry id: fixture\\n');process.exit(0)",
+                1,
+                0,
+            ),
         ] {
             let mut fixture = SupervisedNode::new(script);
             fixture.acknowledge();
             fixture.finish().unwrap();
-            assert_eq!(fixture.attempts.load(Ordering::SeqCst), attempts, "{script}");
+            assert_eq!(
+                fixture.attempts.load(Ordering::SeqCst),
+                attempts,
+                "{script}"
+            );
             assert_eq!(fixture.resets.load(Ordering::SeqCst), resets, "{script}");
             assert!(fixture.instance.process.lock().unwrap().is_none());
             assert!(!fixture.instance.launching.load(Ordering::SeqCst));
-            assert_eq!(*fixture.instance.status.lock().unwrap(), status::Status::Stopped);
+            assert_eq!(
+                *fixture.instance.status.lock().unwrap(),
+                status::Status::Stopped
+            );
             assert!(fixture.transition.try_lock().is_ok());
         }
     }

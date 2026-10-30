@@ -1,12 +1,11 @@
-
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use crate::AppHandle;
 use crate::service::plugin::installed::profile_dir;
 use crate::service::plugin::recovery::{is_core_package, is_package_name, patch_entry_targets};
 use crate::service::plugin::{parse_patch_layer, process, render_patch_layer, watch};
-use crate::{AppHandle};
 
 const PATCH_FILE: &str = "cordis.patch.yml";
 const DISABLED_KEY: &str = "disabled";
@@ -180,7 +179,7 @@ pub(crate) fn add_patch_disable(profile: &Path, id: &str) -> Result<bool, String
                     return Err(
                         "DISABLE_PATCH_UNSUPPORTED_SHAPE: cordis.patch.yml top level is not a list"
                             .to_string(),
-                    )
+                    );
                 }
             }
         }
@@ -568,9 +567,11 @@ mod tests {
         fs::write(profile.join(PATCH_FILE), original).unwrap();
         let result = disable_plugin_at(&profile, "dsh-better-sidebar");
         assert_eq!(fs::read(profile.join(PATCH_FILE)).unwrap(), original);
-        assert!(result
-            .unwrap_err()
-            .starts_with("DISABLE_PATCH_READ_FAILED:"));
+        assert!(
+            result
+                .unwrap_err()
+                .starts_with("DISABLE_PATCH_READ_FAILED:")
+        );
         fs::remove_dir_all(&profile).unwrap();
     }
 

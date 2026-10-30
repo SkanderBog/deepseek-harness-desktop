@@ -1,4 +1,3 @@
-
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +81,7 @@ fn is_china_timezone() -> bool {
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Time::{
-            GetDynamicTimeZoneInformation, DYNAMIC_TIME_ZONE_INFORMATION, TIME_ZONE_ID_INVALID,
+            DYNAMIC_TIME_ZONE_INFORMATION, GetDynamicTimeZoneInformation, TIME_ZONE_ID_INVALID,
         };
         let mut info: DYNAMIC_TIME_ZONE_INFORMATION = unsafe { std::mem::zeroed() };
         let id = unsafe { GetDynamicTimeZoneInformation(&mut info) };

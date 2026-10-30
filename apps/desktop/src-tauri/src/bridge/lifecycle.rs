@@ -1,4 +1,3 @@
-
 use std::sync::OnceLock;
 
 use crate::config;
@@ -60,6 +59,44 @@ pub async fn install_dependencies(
         log::info!("Installation process already running, skipping");
         return Ok(false);
     };
+
+    {
+        let _transition = workflow::acquire_core_transition().await?;
+        workflow::instances::require_exclusive_profile()?;
+        if workflow::has_owned_process() {
+            workflow::stop(app_handle.clone()).await?;
+        }
+        let handle = app_handle.clone();
+        let profile = crate::service::profile::active_profile(&app_handle);
+        tauri::async_runtime::spawn_blocking(move || {
+            workflow::instances::scope_sync(profile, || {
+                workflow::terminate_stale_harness_processes(&handle)
+            })
+        })
+        .await
+        .map_err(|error| format!("CORE_CLEANUP_STOP_FAILED: {error}"))??;
+        let root = config::dependencies::managed_root(&app_handle, config::dependencies::DEP_DSH);
+        let base = config::get_base_dir(&app_handle);
+        let mut protected = vec![crate::config::get_dsh_data_path(&app_handle)];
+        if let Some(resources) = config::manifest::resource_root(&app_handle) {
+            protected.push(resources);
+        }
+        core::cleanup_active_folder_core(&root, &root, &protected).await?;
+        let deps = base.join("dependencies");
+        let active = root.clone();
+        if let Err(error) = std::thread::Builder::new()
+            .name("core-slot-cleanup".into())
+            .spawn(move || {
+                tauri::async_runtime::block_on(core::cleanup_other_folder_cores(
+                    &deps,
+                    &active,
+                    &protected,
+                ));
+            })
+        {
+            log::warn!("CORE_CLEANUP_BACKGROUND_FAILED: {error}");
+        }
+    }
 
     let dsh_files_ok = download::Dsh.check_installed(&app_handle);
     let pnpm_ok = download::Pnpm.check_installed(&app_handle);
@@ -250,10 +287,7 @@ pub async fn check_dsh_update(
 }
 
 #[tauri::command]
-pub async fn launch_harness(
-    window: WebviewWindow,
-    app_handle: AppHandle,
-) -> Result<(), String> {
+pub async fn launch_harness(window: WebviewWindow, app_handle: AppHandle) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::service::workflow::instances::scope(profile, async move {
         workflow::launch(app_handle).await
@@ -262,10 +296,7 @@ pub async fn launch_harness(
 }
 
 #[tauri::command]
-pub async fn shutdown_harness(
-    window: WebviewWindow,
-    app_handle: AppHandle,
-) -> Result<(), String> {
+pub async fn shutdown_harness(window: WebviewWindow, app_handle: AppHandle) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::service::workflow::instances::scope(
         profile,
@@ -275,10 +306,7 @@ pub async fn shutdown_harness(
 }
 
 #[tauri::command]
-pub async fn restart_harness(
-    window: WebviewWindow,
-    app_handle: AppHandle,
-) -> Result<(), String> {
+pub async fn restart_harness(window: WebviewWindow, app_handle: AppHandle) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::service::workflow::instances::scope(profile, async move {
         workflow::restart(app_handle).await
@@ -349,10 +377,7 @@ pub async fn strip_unresolved_patch_entries(
 }
 
 #[tauri::command]
-pub fn get_dsh_status(
-    app_handle: AppHandle,
-    window: WebviewWindow,
-) -> workflow::status::Status {
+pub fn get_dsh_status(app_handle: AppHandle, window: WebviewWindow) -> workflow::status::Status {
     let profile = workflow::instances::window_profile(&app_handle, window.label());
     workflow::instances::scope_sync(profile, workflow::status::get_status)
 }

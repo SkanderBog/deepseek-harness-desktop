@@ -1,6 +1,5 @@
-
+use crate::AppHandle;
 use crate::service::update;
-use crate::{AppHandle};
 
 #[tauri::command]
 pub async fn check_desktop_update(

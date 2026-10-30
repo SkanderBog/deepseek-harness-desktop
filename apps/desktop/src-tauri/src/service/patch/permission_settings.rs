@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
-use crate::{AppHandle};
+use crate::AppHandle;
+use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
 
 const PERMISSION_CLIENT_JS: &str =
     "node_modules/@deepseek-ai/dsh-client-ui-permission-presets/lib/client.js";
@@ -91,10 +91,7 @@ mod tests {
     #[test]
     fn patches_real_controller_and_upgrades_v1_once() {
         let legacy = controller();
-        for source in [
-            legacy.clone(),
-            legacy.replace(DERIVE_ORIGINAL, DERIVE_V1),
-        ] {
+        for source in [legacy.clone(), legacy.replace(DERIVE_ORIGINAL, DERIVE_V1)] {
             let PatchOutcome::Patched(patched) = patch_source(&source) else {
                 panic!("expected Patched");
             };

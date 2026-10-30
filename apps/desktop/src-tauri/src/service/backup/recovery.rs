@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{archive, BackupInfo};
+use super::{BackupInfo, archive};
 
 const RECOVERY_README: &str = "DSH recovery export\n\n\
 data.tar.zst contains DSH_HOME data, including sessions, storages and all profiles.\n\
@@ -19,19 +19,32 @@ Do not use the desktop's profile Restore button for this archive.\n\n\
 This is a manual export, not an automatic backup. It is not automatically pruned.\n\
 Copy it to another device to protect against disk failure.\n";
 
-pub fn export(source: &Path, app_data: &Path, include_credentials: bool) -> Result<BackupInfo, String> {
+pub fn export(
+    source: &Path,
+    app_data: &Path,
+    include_credentials: bool,
+) -> Result<BackupInfo, String> {
     let source = dunce::canonicalize(source).map_err(|e| format!("RECOVERY_SOURCE: {e}"))?;
     if !source.is_dir() {
         return Err("RECOVERY_SOURCE: DSH_HOME is not a directory".into());
     }
-    let app_data = dunce::canonicalize(app_data).map_err(|e| format!("RECOVERY_DESTINATION: {e}"))?;
+    let app_data =
+        dunce::canonicalize(app_data).map_err(|e| format!("RECOVERY_DESTINATION: {e}"))?;
     if app_data.starts_with(&source) {
-        return Err("RECOVERY_DESTINATION_INSIDE_SOURCE: application data is inside DSH_HOME".into());
+        return Err(
+            "RECOVERY_DESTINATION_INSIDE_SOURCE: application data is inside DSH_HOME".into(),
+        );
     }
     let root = app_data.join("recovery-backups");
-    create_private_dir(&root).or_else(|e| {
-        if e.kind() == std::io::ErrorKind::AlreadyExists { Ok(()) } else { Err(e) }
-    }).map_err(|e| format!("RECOVERY_MKDIR: {e}"))?;
+    create_private_dir(&root)
+        .or_else(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        })
+        .map_err(|e| format!("RECOVERY_MKDIR: {e}"))?;
     let root = dunce::canonicalize(root).map_err(|e| format!("RECOVERY_DESTINATION: {e}"))?;
     if root.starts_with(&source) || !root.starts_with(&app_data) {
         return Err("RECOVERY_DESTINATION_UNSAFE: recovery directory resolves outside application data or inside DSH_HOME".into());
@@ -43,18 +56,26 @@ pub fn export(source: &Path, app_data: &Path, include_credentials: bool) -> Resu
     let path = directory.join("data.tar.zst");
     let result = (|| {
         archive::create_recovery_archive(&source, &partial, include_credentials)?;
-        fs::OpenOptions::new().write(true).open(&partial).and_then(|file| file.sync_all())
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&partial)
+            .and_then(|file| file.sync_all())
             .map_err(|e| format!("RECOVERY_SYNC: {e}"))?;
         let readme = directory.join("README.txt");
-        fs::write(&readme, RECOVERY_README)
-            .map_err(|e| format!("RECOVERY_README: {e}"))?;
-        fs::OpenOptions::new().write(true).open(&readme).and_then(|file| file.sync_all())
+        fs::write(&readme, RECOVERY_README).map_err(|e| format!("RECOVERY_README: {e}"))?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&readme)
+            .and_then(|file| file.sync_all())
             .map_err(|e| format!("RECOVERY_SYNC_README: {e}"))?;
-        let size = fs::metadata(&partial).map_err(|e| format!("RECOVERY_METADATA: {e}"))?.len();
+        let size = fs::metadata(&partial)
+            .map_err(|e| format!("RECOVERY_METADATA: {e}"))?
+            .len();
         fs::rename(&partial, &path).map_err(|e| format!("RECOVERY_PUBLISH: {e}"))?;
         #[cfg(unix)]
         for parent in [&directory, &root, &app_data] {
-            fs::File::open(parent).and_then(|file| file.sync_all())
+            fs::File::open(parent)
+                .and_then(|file| file.sync_all())
                 .map_err(|e| format!("RECOVERY_SYNC_DIRECTORY: {e}"))?;
         }
         Ok(BackupInfo {
@@ -112,10 +133,17 @@ mod tests {
                 super::super::timestamp_nanos()
             ));
             fs::create_dir(&root).unwrap();
-            let fixture = Self { home: root.join("dsh-home"), app: root.join("app-data"), root };
+            let fixture = Self {
+                home: root.join("dsh-home"),
+                app: root.join("app-data"),
+                root,
+            };
             fs::create_dir(&fixture.app).unwrap();
             for (name, value) in [
-                ("sessions/project/session/session.v4.jsonl.zstd", "saved conversation"),
+                (
+                    "sessions/project/session/session.v4.jsonl.zstd",
+                    "saved conversation",
+                ),
                 ("storages/workspace.json", "workspace data"),
                 ("profiles/web/cordis.patch.yml", "user patch"),
                 ("profiles/other/package.json", "other profile"),
@@ -151,14 +179,26 @@ mod tests {
     fn export_preserves_sessions_shared_storage_and_every_profile_after_source_loss() {
         let fixture = Fixture::new();
         let info = export(&fixture.home, &fixture.app, false).unwrap();
-        assert!(Path::new(&info.path).starts_with(dunce::canonicalize(&fixture.app).unwrap().join("recovery-backups")));
+        assert!(
+            Path::new(&info.path).starts_with(
+                dunce::canonicalize(&fixture.app)
+                    .unwrap()
+                    .join("recovery-backups")
+            )
+        );
         assert!(info.size > 0);
         assert!(!info.include_credentials);
-        assert_eq!(fs::read_to_string(fixture.home.join(".credentials.yaml")).unwrap(), "secret");
+        assert_eq!(
+            fs::read_to_string(fixture.home.join(".credentials.yaml")).unwrap(),
+            "secret"
+        );
         fs::remove_dir_all(&fixture.home).unwrap();
         let restored = fixture.restore(&info, "recovered");
         for (name, expected) in [
-            ("sessions/project/session/session.v4.jsonl.zstd", "saved conversation"),
+            (
+                "sessions/project/session/session.v4.jsonl.zstd",
+                "saved conversation",
+            ),
             ("storages/workspace.json", "workspace data"),
             ("profiles/web/cordis.patch.yml", "user patch"),
             ("profiles/other/package.json", "other profile"),
@@ -166,16 +206,33 @@ mod tests {
         ] {
             assert_eq!(fs::read_to_string(restored.join(name)).unwrap(), expected);
         }
-        for excluded in [".credentials.yaml", "profiles/web/.credentials.yaml", "profiles/web/node_modules", ".backups", ".plugin-backups", ".harness.pid"] {
-            assert!(!restored.join(excluded).exists(), "should exclude {excluded}");
+        for excluded in [
+            ".credentials.yaml",
+            "profiles/web/.credentials.yaml",
+            "profiles/web/node_modules",
+            ".backups",
+            ".plugin-backups",
+            ".harness.pid",
+        ] {
+            assert!(
+                !restored.join(excluded).exists(),
+                "should exclude {excluded}"
+            );
         }
         let directory = Path::new(&info.path).parent().unwrap();
-        assert!(fs::read_to_string(directory.join("README.txt")).unwrap().contains("NEW EMPTY directory"));
+        assert!(
+            fs::read_to_string(directory.join("README.txt"))
+                .unwrap()
+                .contains("NEW EMPTY directory")
+        );
         assert!(!directory.join("data.tar.zst.partial").exists());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(fs::metadata(directory).unwrap().permissions().mode() & 0o777, 0o700);
+            assert_eq!(
+                fs::metadata(directory).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
         }
     }
 
@@ -189,8 +246,14 @@ mod tests {
         assert_eq!(fs::read(&first.path).unwrap(), bytes);
         let restored = fixture.restore(&second, "with-credentials");
         assert!(second.include_credentials);
-        assert_eq!(fs::read_to_string(restored.join(".credentials.yaml")).unwrap(), "secret");
-        assert_eq!(fs::read_to_string(restored.join("profiles/web/.credentials.yaml")).unwrap(), "profile secret");
+        assert_eq!(
+            fs::read_to_string(restored.join(".credentials.yaml")).unwrap(),
+            "secret"
+        );
+        assert_eq!(
+            fs::read_to_string(restored.join("profiles/web/.credentials.yaml")).unwrap(),
+            "profile secret"
+        );
     }
 
     #[test]
@@ -208,7 +271,10 @@ mod tests {
         fs::create_dir(&nested).unwrap();
         for target in [&fixture.home, &nested] {
             let error = export(&fixture.home, target, false).unwrap_err();
-            assert!(error.starts_with("RECOVERY_DESTINATION_INSIDE_SOURCE:"), "{error}");
+            assert!(
+                error.starts_with("RECOVERY_DESTINATION_INSIDE_SOURCE:"),
+                "{error}"
+            );
             assert!(!target.join("recovery-backups").exists());
         }
     }
@@ -220,7 +286,10 @@ mod tests {
         fs::create_dir(fixture.app.join("stamp-1")).unwrap();
         let path = reserve_directory(&fixture.app, "stamp").unwrap();
         assert_eq!(path, fixture.app.join("stamp-2"));
-        assert_eq!(fs::read_to_string(fixture.app.join("stamp-0")).unwrap(), "keep file");
+        assert_eq!(
+            fs::read_to_string(fixture.app.join("stamp-0")).unwrap(),
+            "keep file"
+        );
         assert!(fixture.app.join("stamp-1").is_dir());
     }
 
@@ -233,7 +302,10 @@ mod tests {
             std::os::unix::fs::symlink(target, &link).unwrap();
             let error = export(&fixture.home, &fixture.app, false).unwrap_err();
             assert!(error.starts_with("RECOVERY_DESTINATION_UNSAFE:"), "{error}");
-            assert_eq!(fs::read_to_string(fixture.home.join(".credentials.yaml")).unwrap(), "secret");
+            assert_eq!(
+                fs::read_to_string(fixture.home.join(".credentials.yaml")).unwrap(),
+                "secret"
+            );
             fs::remove_file(&link).unwrap();
         }
     }
@@ -248,9 +320,22 @@ mod tests {
         let error = export(&fixture.home, &fixture.app, false).unwrap_err();
         assert!(error.starts_with("RECOVERY_LINK_UNSUPPORTED:"), "{error}");
         assert_eq!(fs::read(&saved.path).unwrap(), bytes);
-        assert_eq!(fs::read_dir(fixture.app.join("recovery-backups")).unwrap().count(), 1);
-        assert_eq!(fs::read_to_string(fixture.home.join(".credentials.yaml")).unwrap(), "secret");
-        assert!(fs::symlink_metadata(fixture.home.join("linked-data")).unwrap().file_type().is_symlink());
+        assert_eq!(
+            fs::read_dir(fixture.app.join("recovery-backups"))
+                .unwrap()
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.home.join(".credentials.yaml")).unwrap(),
+            "secret"
+        );
+        assert!(
+            fs::symlink_metadata(fixture.home.join("linked-data"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[cfg(windows)]
@@ -261,13 +346,20 @@ mod tests {
         let link = fixture.home.join("linked-data");
         let status = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J"])
-            .arg(&link).arg(&fixture.app)
+            .arg(&link)
+            .arg(&fixture.app)
             .creation_flags(0x08000000)
-            .status().unwrap();
+            .status()
+            .unwrap();
         assert!(status.success());
         let error = export(&fixture.home, &fixture.app, false).unwrap_err();
         assert!(error.starts_with("RECOVERY_LINK_UNSUPPORTED:"), "{error}");
-        assert_eq!(fs::read_dir(fixture.app.join("recovery-backups")).unwrap().count(), 0);
+        assert_eq!(
+            fs::read_dir(fixture.app.join("recovery-backups"))
+                .unwrap()
+                .count(),
+            0
+        );
         fs::remove_dir(link).unwrap();
     }
 }

@@ -1,30 +1,30 @@
 #![cfg(windows)]
 
+use crate::AppHandle;
 use std::{
     ffi::c_void,
     os::windows::io::{FromRawHandle, OwnedHandle},
     ptr::{null, null_mut},
-    sync::{mpsc, Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
-use tauri::{Manager};
+use tauri::Manager;
 use tauri_plugin_deep_link::DeepLink;
 use windows_sys::Win32::{
     Foundation::{
-        GetLastError, SetLastError, ERROR_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
+        ERROR_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, SetLastError, WPARAM,
     },
     System::{LibraryLoader::GetModuleHandleW, Threading::CreateMutexW},
     UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowExW,
-        GetClassLongW, GetMessageW, GetWindowLongPtrW, GetWindowLongW, GetWindowThreadProcessId,
-        PostQuitMessage, SendMessageTimeoutW, SendMessageW, SetWindowLongPtrW, SetWindowLongW,
-        UnregisterClassW, CREATESTRUCTW, GCL_CBWNDEXTRA, GWLP_USERDATA, MSG, SMTO_ABORTIFHUNG,
-        SMTO_BLOCK, SMTO_ERRORONEXIT, WM_APP, WM_CLOSE, WM_COPYDATA, WM_NCCREATE, WM_NCDESTROY,
-        WNDPROC, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
+        CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+        FindWindowExW, GCL_CBWNDEXTRA, GWLP_USERDATA, GetClassLongW, GetMessageW,
+        GetWindowLongPtrW, GetWindowLongW, GetWindowThreadProcessId, MSG, PostQuitMessage,
+        SMTO_ABORTIFHUNG, SMTO_BLOCK, SMTO_ERRORONEXIT, SendMessageTimeoutW, SendMessageW,
+        SetWindowLongPtrW, SetWindowLongW, UnregisterClassW, WM_APP, WM_CLOSE, WM_COPYDATA,
+        WM_NCCREATE, WM_NCDESTROY, WNDPROC, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
     },
 };
-use crate::{AppHandle};
 
 const MESSAGE_TAG: usize = 1542;
 const MAX_MESSAGE_BYTES: usize = 256 * 1024;
@@ -121,7 +121,9 @@ fn dispatch(inbox: &Arc<Mutex<Inbox>>, app: &AppHandle) -> Result<(), String> {
     app.run_on_main_thread(move || {
         let pending = std::mem::take(&mut inbox.lock().unwrap_or_else(|e| e.into_inner()).pending);
         for request in pending {
-            if let Some(deep_link) = handle.try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>() {
+            if let Some(deep_link) =
+                handle.try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>()
+            {
                 deep_link.handle_cli_arguments(request.args.iter());
             }
             crate::utils::show_main_window(&handle);
@@ -353,7 +355,9 @@ pub struct SingleInstance {
 impl SingleInstance {
     pub fn attach(&self, app: &AppHandle) -> Result<(), String> {
         if crate::utils::shell_window(app).is_none()
-            || app.try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>().is_none()
+            || app
+                .try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>()
+                .is_none()
         {
             return Err("SINGLE_INSTANCE_NOT_READY: attach after the main window and deep-link plugin are ready".into());
         }
@@ -400,7 +404,9 @@ pub fn claim(identifier: &str) -> Result<Option<SingleInstance>, String> {
         }));
     }
     let Some(owner) = wait_owner(identifier, std::process::id(), Duration::from_secs(5))? else {
-        log::warn!("SINGLE_INSTANCE_TARGET_MISSING: mutex held but no ready target, exiting quietly (issue #1125)");
+        log::warn!(
+            "SINGLE_INSTANCE_TARGET_MISSING: mutex held but no ready target, exiting quietly (issue #1125)"
+        );
         return Ok(None);
     };
     target.stop()?;
@@ -568,9 +574,11 @@ mod tests {
             find_owner(&identifier, 0).unwrap(),
             Some(target.hwnd as HWND)
         );
-        assert!(find_owner(&identifier, std::process::id())
-            .unwrap()
-            .is_none());
+        assert!(
+            find_owner(&identifier, std::process::id())
+                .unwrap()
+                .is_none()
+        );
         Request {
             cwd: "C:\\独立测试".into(),
             args: vec!["app.exe".into(), "dsh://open".into()],

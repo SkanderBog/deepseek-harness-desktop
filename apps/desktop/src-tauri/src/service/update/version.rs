@@ -1,4 +1,3 @@
-
 use semver::Version;
 
 pub(super) fn current_version() -> String {

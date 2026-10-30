@@ -2,8 +2,8 @@ use crate::AppHandle;
 
 #[cfg(windows)]
 mod imp {
-    use std::fs;
     use crate::AppHandle;
+    use std::fs;
     use std::path::{Path, PathBuf};
 
     use crate::service::plugin::{parse_patch_layer, render_patch_layer};

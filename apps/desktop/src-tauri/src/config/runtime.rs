@@ -6,8 +6,8 @@ use tauri::{Manager, Runtime};
 
 use super::constants::*;
 use super::dependencies;
-use super::{detect_region, Region};
-use crate::{AppHandle};
+use super::{Region, detect_region};
+use crate::AppHandle;
 
 pub fn get_base_dir<R: Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
     base_dir_from(|| {
@@ -30,18 +30,19 @@ pub(crate) fn base_dir_from(app_data: impl FnOnce() -> PathBuf) -> PathBuf {
     }
 }
 
-
-
-
+/// Upstream publishes both a plain `node_modules` zip and an `.asar.zip` holding a
+/// single `.asar`. The desktop runs the asar: Electron patches `fs` for it, so the
+/// dsh bin inside is loadable while the archive stays one file on disk.
 fn dsh_pkg_asset_filename(os: &str, arch: &str) -> Result<String, String> {
-    match (os, arch) {
-        ("windows", _) => Ok("deepseek-harness-pkg-windows.zip".to_string()),
-        ("macos", "aarch64") => Ok("deepseek-harness-pkg-macos-arm64.zip".to_string()),
-        ("macos", "x86_64") => Ok("deepseek-harness-pkg-macos-x64.zip".to_string()),
-        ("linux", "x86_64") => Ok("deepseek-harness-pkg-linux.zip".to_string()),
-        ("linux", "aarch64") => Ok("deepseek-harness-pkg-linux-arm64.zip".to_string()),
-        _ => Err(format!("Unsupported platform: {} {}", os, arch)),
-    }
+    let stem = match (os, arch) {
+        ("windows", _) => "deepseek-harness-pkg-windows",
+        ("macos", "aarch64") => "deepseek-harness-pkg-macos-arm64",
+        ("macos", "x86_64") => "deepseek-harness-pkg-macos-x64",
+        ("linux", "x86_64") => "deepseek-harness-pkg-linux",
+        ("linux", "aarch64") => "deepseek-harness-pkg-linux-arm64",
+        _ => return Err(format!("Unsupported platform: {} {}", os, arch)),
+    };
+    Ok(format!("{stem}.asar.zip"))
 }
 
 pub fn get_dsh_download_url() -> Result<String, String> {
@@ -265,15 +266,10 @@ pub fn get_pnpm_download_url() -> String {
 }
 
 #[cfg_attr(not(windows), allow(dead_code))] // 仅 Windows 的 Git 运行时探测使用
-
 #[cfg_attr(not(windows), allow(dead_code))] // 仅 Windows 的 Git 运行时探测使用
-
 #[cfg_attr(all(not(windows), not(test)), allow(dead_code))] // 仅 Windows 的 MinGit 任务与单测使用
-
 #[cfg_attr(not(windows), allow(dead_code))] // 仅 Windows 的 MinGit 任务使用
-
 #[cfg_attr(not(windows), allow(dead_code))] // 仅 Windows 的 MinGit 任务使用
-
 #[cfg(windows)]
 pub fn find_system_git_binary() -> Option<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
@@ -437,9 +433,7 @@ pub fn is_runtime_compatible(app_handle: &AppHandle) -> bool {
 }
 
 pub fn get_dsh_version<R: Runtime>(app_handle: &AppHandle<R>) -> Option<String> {
-    let manifest_path = get_dsh_package_json_path(app_handle);
-    let content = fs::read_to_string(&manifest_path).ok()?;
-    let manifest: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let manifest = dsh_package_manifest(app_handle)?;
     manifest
         .get("dependencies")
         .and_then(|deps| deps.get("@deepseek-ai/dsh"))
@@ -458,6 +452,36 @@ pub fn get_dsh_version<R: Runtime>(app_handle: &AppHandle<R>) -> Option<String> 
                 .and_then(|value| value.as_str())
                 .map(str::to_string)
         })
+}
+
+/// The dsh `package.json`, which lives inside the shipped asar.
+///
+/// The install root only holds `dsh.asar`; the manifest entry pins the reader to
+/// `dsh.asar/node_modules/@deepseek-ai/dsh/package.json`, and that path is
+/// resolved through the asar reader instead of `fs`.
+fn dsh_package_manifest<R: Runtime>(app_handle: &AppHandle<R>) -> Option<serde_json::Value> {
+    let install_root = get_dsh_install_path(app_handle);
+    let inside_asar = crate::service::download::read_asar_entry(
+        &install_root.join(DSH_ASAR_FILE),
+        DSH_MANIFEST_IN_ASAR,
+    );
+    match inside_asar {
+        Ok(bytes) => serde_json::from_slice(&bytes).ok(),
+        Err(error) => {
+            // Local cores and the plain-node_modules layout keep it on disk.
+            let manifest_path = get_dsh_package_json_path(app_handle);
+            match fs::read_to_string(&manifest_path) {
+                Ok(content) => serde_json::from_str(&content).ok(),
+                Err(_) => {
+                    log::debug!(
+                        "dsh manifest unavailable ({error}); tried {}",
+                        manifest_path.display()
+                    );
+                    None
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -510,7 +534,6 @@ mod tests {
         assert_eq!(base, expected);
     }
 
-    
     #[test]
     fn service_log_path_keeps_profile_and_build_filename() {
         let base = Path::new("app-data");
@@ -530,7 +553,6 @@ mod tests {
     }
 
     #[cfg(not(windows))]
-    
     #[test]
     fn node_version_cache_runs_probe_once_for_the_same_resolved_file() {
         let root = tempfile::tempdir().unwrap();
@@ -804,10 +826,6 @@ mod tests {
         std::env::temp_dir().join(format!("dsh-runtime-{name}-{}-{nonce}", std::process::id()))
     }
 
-    
-    
-    
-    
     #[test]
     fn mirror_urls_expand_every_prefix() {
         let asset = "https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/download/v1.0.0/deepseek-harness-pkg-windows.zip";
@@ -828,24 +846,22 @@ mod tests {
     fn download_urls_keep_platform_filename_shape() {
         let dsh = get_dsh_download_url().expect("dsh url");
         assert!(dsh.starts_with("https://"));
-        assert!(dsh.ends_with(".zip"));
+        assert!(
+            dsh.ends_with(".asar.zip"),
+            "the desktop runs the asar build: {dsh}"
+        );
     }
 
-    
-    
-    
     #[test]
     fn dsh_pkg_asset_filename_matches_linux_architecture() {
         assert_eq!(
             dsh_pkg_asset_filename("linux", "x86_64").unwrap(),
-            "deepseek-harness-pkg-linux.zip"
+            "deepseek-harness-pkg-linux.asar.zip"
         );
         assert_eq!(
             dsh_pkg_asset_filename("linux", "aarch64").unwrap(),
-            "deepseek-harness-pkg-linux-arm64.zip"
+            "deepseek-harness-pkg-linux-arm64.asar.zip"
         );
         assert!(dsh_pkg_asset_filename("linux", "riscv64").is_err());
     }
-
-    
-    }
+}

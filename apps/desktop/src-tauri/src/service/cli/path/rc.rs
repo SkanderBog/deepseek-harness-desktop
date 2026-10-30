@@ -1,8 +1,7 @@
-
+use crate::AppHandle;
 use std::fs;
 #[cfg(not(windows))]
-use tauri::{Manager};
-use crate::{AppHandle};
+use tauri::Manager;
 
 #[cfg_attr(windows, allow(dead_code))]
 pub(super) const RC_MARK_START: &str = "# >>> deepseek-harness dsh >>>";
@@ -29,7 +28,7 @@ pub(super) fn inject_shell_rc(app_handle: &AppHandle) -> Result<(), String> {
                 return Err(format!(
                     "READ_RC_FAILED: read {} failed: {e}",
                     rc_path.display()
-                ))
+                ));
             }
         };
         let next = upsert_rc_block(&original, &block, RC_MARK_START, RC_MARK_END);
@@ -57,7 +56,7 @@ pub(super) fn strip_shell_rc(app_handle: &AppHandle) -> Result<(), String> {
                 return Err(format!(
                     "READ_RC_FAILED: read {} failed: {e}",
                     rc_path.display()
-                ))
+                ));
             }
         };
         let cleaned = strip_rc_block(&original, RC_MARK_START, RC_MARK_END);
@@ -154,8 +153,7 @@ mod tests {
     use super::super::test_util::temp_dir;
     use super::*;
 
-    const RC_BLOCK: &str =
-        "# >>> deepseek-harness dsh >>>\nexport PATH=\"$HOME/.local/bin:$PATH\"\n# <<< deepseek-harness dsh <<<\n";
+    const RC_BLOCK: &str = "# >>> deepseek-harness dsh >>>\nexport PATH=\"$HOME/.local/bin:$PATH\"\n# <<< deepseek-harness dsh <<<\n";
 
     /// issue #57：目标 rc 文件已存在且包含用户自定义内容 → 只追加块，原内容保留
     #[test]
@@ -185,12 +183,18 @@ mod tests {
     fn upsert_is_idempotent() {
         let content = "user content\n";
         let once = upsert_rc_block(content, RC_BLOCK, RC_MARK_START, RC_MARK_END);
-        assert_eq!(upsert_rc_block(&once, RC_BLOCK, RC_MARK_START, RC_MARK_END), once);
+        assert_eq!(
+            upsert_rc_block(&once, RC_BLOCK, RC_MARK_START, RC_MARK_END),
+            once
+        );
     }
 
     #[test]
     fn upsert_from_missing_file_creates_block_only() {
-        assert_eq!(upsert_rc_block("", RC_BLOCK, RC_MARK_START, RC_MARK_END), RC_BLOCK.to_string());
+        assert_eq!(
+            upsert_rc_block("", RC_BLOCK, RC_MARK_START, RC_MARK_END),
+            RC_BLOCK.to_string()
+        );
     }
 
     #[test]
@@ -204,7 +208,10 @@ mod tests {
         let content = format!("keep\n{RC_BLOCK}tail\n");
         let cleaned = strip_rc_block(&content, RC_MARK_START, RC_MARK_END);
         assert_eq!(cleaned, "keep\ntail\n");
-        assert_eq!(strip_rc_block(&cleaned, RC_MARK_START, RC_MARK_END), cleaned);
+        assert_eq!(
+            strip_rc_block(&cleaned, RC_MARK_START, RC_MARK_END),
+            cleaned
+        );
     }
 
     #[test]

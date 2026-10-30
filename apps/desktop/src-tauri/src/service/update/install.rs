@@ -1,4 +1,3 @@
-
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -9,10 +8,10 @@ use tauri_plugin_opener::OpenerExt;
 use crate::config;
 use crate::service::workflow;
 
-use super::meta::{fetch_latest_release, LatestRelease};
+use super::meta::{LatestRelease, fetch_latest_release};
 use super::version::current_version;
 use super::{DOWNLOAD_TIMEOUT_SECS, UPDATES_DIR};
-use crate::{AppHandle};
+use crate::AppHandle;
 
 fn updates_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let dir = app_handle
@@ -786,10 +785,12 @@ mod tests {
         }
         prune_installers_in_dir(dir.path(), &[]).unwrap();
         assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
-        assert!(std::fs::symlink_metadata(link)
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(
+            std::fs::symlink_metadata(link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 6);
     }
 

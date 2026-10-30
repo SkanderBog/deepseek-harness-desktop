@@ -1,4 +1,3 @@
-
 use crate::config;
 use crate::service::cli;
 use crate::service::update;

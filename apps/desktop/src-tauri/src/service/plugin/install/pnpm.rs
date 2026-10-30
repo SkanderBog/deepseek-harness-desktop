@@ -11,15 +11,15 @@ use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::{Emitter};
+use tauri::Emitter;
 
-use super::acquire_process_lock;
-use super::new_process_owner;
-use super::profile_dir;
+use super::PREINSTALL_LOG_EVENT;
 use super::PidGuard;
 use super::PreinstallLogPayload;
 use super::ProcessOwner;
-use super::PREINSTALL_LOG_EVENT;
+use super::acquire_process_lock;
+use super::new_process_owner;
+use super::profile_dir;
 use crate::{AppHandle, WebviewWindow};
 
 const MIN_TRUSTED_PNPM_MAJOR: u32 = 10;
@@ -643,11 +643,11 @@ mod tests {
         }
         std::fs::write(&manifest, r#"{"version":"10.9.0"}"#).unwrap();
         assert_eq!(bundled_pnpm_major_at(&pnpm_root), Some(10));
-        assert!(harness_prefer_bundled_pnpm_from(
-            &profile, &pnpm_root, &binary, None, &node, &bin_dir,
-        )
-        .await
-        .unwrap());
+        assert!(
+            harness_prefer_bundled_pnpm_from(&profile, &pnpm_root, &binary, None, &node, &bin_dir,)
+                .await
+                .unwrap()
+        );
     }
 
     /// issue #449 回归：探测超时、但进程已被强杀并回收干净时，必须降级为
@@ -1015,7 +1015,9 @@ mod tests {
             let path = release.to_string_lossy().replace('\'', "'\\''");
             std::fs::write(
                 &pnpm,
-                format!("#!/bin/sh\nwhile [ ! -f '{path}' ]; do sleep 0.025; done\nprintf '11.2.0\\n'\n"),
+                format!(
+                    "#!/bin/sh\nwhile [ ! -f '{path}' ]; do sleep 0.025; done\nprintf '11.2.0\\n'\n"
+                ),
             )
             .unwrap();
             std::fs::set_permissions(&pnpm, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -1110,15 +1112,19 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        assert!(result
-            .unwrap_err()
-            .starts_with("PNPM_PROBE_CLEANUP_TIMEOUT:"));
+        assert!(
+            result
+                .unwrap_err()
+                .starts_with("PNPM_PROBE_CLEANUP_TIMEOUT:")
+        );
         assert!(started.elapsed() < std::time::Duration::from_secs(7));
         assert_eq!(retained_pid, Some(pid));
-        assert!(blocked
-            .unwrap()
-            .unwrap_err()
-            .starts_with("PNPM_PROBE_WAIT_TASK_FAILED:"));
+        assert!(
+            blocked
+                .unwrap()
+                .unwrap_err()
+                .starts_with("PNPM_PROBE_WAIT_TASK_FAILED:")
+        );
         assert_eq!(super::super::super::process::active_plugin_pid(owner), None);
         drop(released);
     }

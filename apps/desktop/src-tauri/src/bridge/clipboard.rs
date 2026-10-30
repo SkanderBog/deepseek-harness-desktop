@@ -3,8 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
-use base64::{engine::general_purpose::STANDARD, Engine};
-use crate::{AppHandle};
+use crate::AppHandle;
+use base64::{Engine, engine::general_purpose::STANDARD};
 
 #[derive(serde::Serialize)]
 pub struct ClipboardImageResponse {
@@ -378,8 +378,17 @@ mod tests {
     fn guess_mime_covers_common_types_and_falls_back() {
         assert_eq!(guess_mime_by_extension(Path::new("a.PNG")), "image/png");
         assert_eq!(guess_mime_by_extension(Path::new("b.md")), "text/plain");
-        assert_eq!(guess_mime_by_extension(Path::new("c.pdf")), "application/pdf");
-        assert_eq!(guess_mime_by_extension(Path::new("d.unknownext")), "application/octet-stream");
-        assert_eq!(guess_mime_by_extension(Path::new("noext")), "application/octet-stream");
+        assert_eq!(
+            guess_mime_by_extension(Path::new("c.pdf")),
+            "application/pdf"
+        );
+        assert_eq!(
+            guess_mime_by_extension(Path::new("d.unknownext")),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            guess_mime_by_extension(Path::new("noext")),
+            "application/octet-stream"
+        );
     }
 }

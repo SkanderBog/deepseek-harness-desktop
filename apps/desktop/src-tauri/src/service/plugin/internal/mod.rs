@@ -1,16 +1,15 @@
-
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use super::cancel::terminate_owned_install;
 use super::install::install_internal;
-use super::installed::{installed_name, profile_dir, ProfilePackageJson};
+use super::installed::{ProfilePackageJson, installed_name, profile_dir};
 use super::preset::{
-    bundled_dep_spec, bundled_plugin_dir, bundled_plugin_dir_from, load_presets,
-    presets_from_manifest, PreinstallPluginInfo,
+    PreinstallPluginInfo, bundled_dep_spec, bundled_plugin_dir, bundled_plugin_dir_from,
+    load_presets, presets_from_manifest,
 };
-use super::process::{new_process_owner, PreinstallLogPayload, ProcessOwner, PREINSTALL_LOG_EVENT};
+use super::process::{PREINSTALL_LOG_EVENT, PreinstallLogPayload, ProcessOwner, new_process_owner};
 use crate::config;
 
 use manifest::{
@@ -18,11 +17,11 @@ use manifest::{
     internal_plugin_entry_is_ready, is_local_link_dep, remove_duplicate_bundle_entries_from_patch,
     remove_internal_plugins_from_manifest, remove_stale_plugin_entry, write_profile_manifest,
 };
-use materialize::{materialize_links, OfflineLink};
+use materialize::{OfflineLink, materialize_links};
 
 mod manifest;
 mod materialize;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 #[derive(serde::Serialize, Clone)]
 struct InternalPluginsPhase {
@@ -246,7 +245,7 @@ fn repair_loader_state(
             return Err(format!(
                 "INTERNAL_PLUGIN_ROOT_READ_FAILED: {}: {error}",
                 root.display()
-            ))
+            ));
         }
     };
     if existing.as_deref() != Some(EMPTY_ROOT) && profile.is_dir() {
@@ -369,9 +368,9 @@ async fn subscribe_or_start(
 
                     if !wait_for_owner_release(owner, ENSURE_OWNER_DRAIN_TIMEOUT).await {
                         let reason = format!(
-                        "INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT: plugin process owner {owner:?} remained active for {} seconds",
-                        ENSURE_OWNER_DRAIN_TIMEOUT.as_secs()
-                    );
+                            "INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT: plugin process owner {owner:?} remained active for {} seconds",
+                            ENSURE_OWNER_DRAIN_TIMEOUT.as_secs()
+                        );
                         log::error!("{reason}");
                         outcome = Err(reason.clone());
                         let _ = result_tx.send(Some(outcome));
@@ -698,7 +697,11 @@ fn require_running_plugins_ready(
     {
         return Err(format!(
             "INTERNAL_PLUGIN_RESTART_REQUIRED: 内置插件需要修复；请停止当前服务后通过正常启动重试（need={:?}, orphans={:?}, migration={}, sources_ready={}, fallback={}）。",
-            check.need.iter().map(|(id, _, _)| id.as_str()).collect::<Vec<_>>(),
+            check
+                .need
+                .iter()
+                .map(|(id, _, _)| id.as_str())
+                .collect::<Vec<_>>(),
             check.orphans,
             check.migration_pending,
             check.sources_ready,
@@ -1321,9 +1324,11 @@ mod tests {
             migrated["dsh"]["profile"]["bundles"],
             serde_json::json!(["builtin"])
         );
-        assert!(std::fs::read_to_string(profile.join("cordis.patch.yml"))
-            .unwrap()
-            .contains("user-plugin"));
+        assert!(
+            std::fs::read_to_string(profile.join("cordis.patch.yml"))
+                .unwrap()
+                .contains("user-plugin")
+        );
         assert_eq!(
             prepare_early_plugins_from(&profile, root.path(), &presets, None, |_| {
                 Some(source.clone())
@@ -1356,9 +1361,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["builtin"]
         );
-        assert!(require_running_plugins_ready(&profile, &running)
-            .unwrap_err()
-            .starts_with("INTERNAL_PLUGIN_RESTART_REQUIRED:"));
+        assert!(
+            require_running_plugins_ready(&profile, &running)
+                .unwrap_err()
+                .starts_with("INTERNAL_PLUGIN_RESTART_REQUIRED:")
+        );
         assert_eq!(
             std::fs::read_to_string(profile.join("cordis.yml")).unwrap(),
             running_root
@@ -1374,9 +1381,11 @@ mod tests {
         std::fs::write(&path, healthy.to_string()).unwrap();
         let running = running_check().unwrap();
         assert!(running.migration_pending);
-        assert!(require_running_plugins_ready(&profile, &running)
-            .unwrap_err()
-            .starts_with("INTERNAL_PLUGIN_RESTART_REQUIRED:"));
+        assert!(
+            require_running_plugins_ready(&profile, &running)
+                .unwrap_err()
+                .starts_with("INTERNAL_PLUGIN_RESTART_REQUIRED:")
+        );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), healthy.to_string());
         assert_eq!(check(&healthy).unwrap(), EarlyPluginState::Ready);
         assert_eq!(
@@ -1578,7 +1587,10 @@ mod tests {
         );
         std::fs::create_dir_all(profile.join("node_modules").join("dsh-tauri")).unwrap();
         std::fs::write(
-            profile.join("node_modules").join("dsh-tauri").join("package.json"),
+            profile
+                .join("node_modules")
+                .join("dsh-tauri")
+                .join("package.json"),
             r#"{"name":"dsh-tauri"}"#,
         )
         .unwrap();

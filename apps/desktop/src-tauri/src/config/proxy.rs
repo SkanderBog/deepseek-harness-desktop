@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
+use crate::AppHandle;
 use reqwest::{ClientBuilder, NoProxy, Proxy, Url};
 use std::time::{Duration, Instant};
-use tauri::{Runtime};
-use crate::{AppHandle};
+use tauri::Runtime;
 
 pub fn normalize_proxy_url(value: &str) -> Result<String, String> {
     let value = value.trim();
@@ -133,8 +133,12 @@ pub(crate) fn prepare_inherited_proxy() {
         .any(|key| std::env::var(key).is_ok_and(|value| !value.trim().is_empty()))
     {
         let bypass = child_no_proxy();
-        unsafe { std::env::set_var("no_proxy", &bypass); }
-        unsafe { std::env::set_var("NO_PROXY", bypass); }
+        unsafe {
+            std::env::set_var("no_proxy", &bypass);
+        }
+        unsafe {
+            std::env::set_var("NO_PROXY", bypass);
+        }
     }
 }
 
@@ -302,19 +306,23 @@ mod tests {
             .timeout(std::time::Duration::from_secs(3))
             .build()
             .unwrap();
-        assert!(client
-            .get("https://dsh-proxy-test.invalid/resource")
-            .send()
-            .await
-            .is_err());
+        assert!(
+            client
+                .get("https://dsh-proxy-test.invalid/resource")
+                .send()
+                .await
+                .is_err()
+        );
         let request = tokio::time::timeout(std::time::Duration::from_secs(3), proxy)
             .await
             .unwrap()
             .unwrap();
         assert!(request.starts_with("CONNECT dsh-proxy-test.invalid:443 HTTP/1.1\r\n"));
-        assert!(request
-            .to_ascii_lowercase()
-            .contains("proxy-authorization: basic dxnlcjpzzwnyzxq=\r\n"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("proxy-authorization: basic dxnlcjpzzwnyzxq=\r\n")
+        );
     }
 
     #[test]
@@ -405,9 +413,15 @@ mod tests {
         let address = direct.local_addr().unwrap();
         let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
-        unsafe { std::env::set_var("http_proxy", &proxy_url); }
-        unsafe { std::env::set_var("https_proxy", &proxy_url); }
-        unsafe { std::env::set_var("no_proxy", "corp.example"); }
+        unsafe {
+            std::env::set_var("http_proxy", &proxy_url);
+        }
+        unsafe {
+            std::env::set_var("https_proxy", &proxy_url);
+        }
+        unsafe {
+            std::env::set_var("no_proxy", "corp.example");
+        }
         let recording_proxy = tokio::spawn(async move {
             let mut requests = Vec::new();
             for _ in 0..4 {
@@ -422,9 +436,11 @@ mod tests {
                 let (mut stream, _) = direct.accept().await.unwrap();
                 let request = read_headers(&mut stream).await;
                 if request.starts_with("GET /ws ") {
-                    assert!(request
-                        .to_ascii_lowercase()
-                        .contains("upgrade: websocket\r\n"));
+                    assert!(
+                        request
+                            .to_ascii_lowercase()
+                            .contains("upgrade: websocket\r\n")
+                    );
                     stream.write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n").await.unwrap();
                     let mut ping = [0; 6];
                     stream.read_exact(&mut ping).await.unwrap();
@@ -465,10 +481,12 @@ mod tests {
         assert_eq!(std::env::var("http_proxy").unwrap(), proxy_url);
         assert_eq!(std::env::var("https_proxy").unwrap(), proxy_url);
         for key in ["no_proxy", "NO_PROXY"] {
-            assert!(std::env::var(key)
-                .unwrap()
-                .split(',')
-                .any(|entry| entry == "corp.example"));
+            assert!(
+                std::env::var(key)
+                    .unwrap()
+                    .split(',')
+                    .any(|entry| entry == "corp.example")
+            );
         }
         let after = client();
         assert_eq!(
@@ -505,11 +523,13 @@ mod tests {
                 .status(),
             502
         );
-        assert!(after
-            .get("https://dsh-proxy-test.invalid/remote")
-            .send()
-            .await
-            .is_err());
+        assert!(
+            after
+                .get("https://dsh-proxy-test.invalid/remote")
+                .send()
+                .await
+                .is_err()
+        );
         let requests = tokio::time::timeout(Duration::from_secs(3), recording_proxy)
             .await
             .unwrap()

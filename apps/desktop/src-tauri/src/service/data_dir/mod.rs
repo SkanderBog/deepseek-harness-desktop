@@ -3,7 +3,7 @@
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use tauri::{Emitter as _};
+use tauri::Emitter as _;
 
 mod env;
 mod fs_ops;
@@ -11,7 +11,7 @@ mod migrate;
 mod state;
 #[cfg(unix)]
 mod unix_env;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 /// issue #1195：Windows 启动器可能继承旧环境，须在解析数据目录前恢复持久化值。
 pub fn restore_process_env() {
@@ -368,9 +368,11 @@ mod tests {
         assert!(entries_in(&root).unwrap().is_empty());
         let file = root.with_extension("txt");
         std::fs::write(&file, "not a directory").unwrap();
-        assert!(entries_in(&file)
-            .unwrap_err()
-            .starts_with("DATA_DIR_READ: "));
+        assert!(
+            entries_in(&file)
+                .unwrap_err()
+                .starts_with("DATA_DIR_READ: ")
+        );
         let _ = std::fs::remove_file(&file);
     }
 

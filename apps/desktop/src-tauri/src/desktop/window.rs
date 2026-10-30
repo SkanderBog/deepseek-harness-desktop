@@ -1,8 +1,11 @@
-use tauri::{webview::{DownloadEvent, Webview}, Emitter, Runtime, Url};
+use tauri::{
+    Emitter, Runtime, Url,
+    webview::{DownloadEvent, Webview},
+};
 use tauri_plugin_opener::OpenerExt;
 use tauri_runtime_electron::{
-    new_window::{NewWindowFeatures, NewWindowResponse},
     ElectronRuntime,
+    new_window::{NewWindowFeatures, NewWindowResponse},
 };
 
 use crate::config;
@@ -110,7 +113,7 @@ fn session_navigation_script(
 
 #[cfg(test)]
 mod session_navigation_tests {
-    use super::{session_navigation_script, NAVIGATION_GLOBAL, PRESENTATION_FULL_SIDEBAR};
+    use super::{NAVIGATION_GLOBAL, PRESENTATION_FULL_SIDEBAR, session_navigation_script};
 
     fn payload_of(script: &str) -> serde_json::Value {
         let assignment = format!("globalThis.{NAVIGATION_GLOBAL} = ");

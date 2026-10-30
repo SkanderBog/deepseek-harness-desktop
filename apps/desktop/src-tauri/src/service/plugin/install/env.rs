@@ -1,10 +1,9 @@
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::AppHandle;
 use crate::config;
 use crate::service::cli;
-use crate::{AppHandle};
 
 pub(crate) fn build_plugin_envs(
     app_handle: &AppHandle,

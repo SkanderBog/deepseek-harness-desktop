@@ -1,4 +1,3 @@
-
 pub(super) fn diagnostic_suffix(detail: &str) -> String {
     if detail.is_empty() {
         String::new()
@@ -134,7 +133,8 @@ pub(super) fn incompatible_versions(output: &str) -> Vec<IncompatibleVersion> {
         let Some(start) = stripped.find("Plugin ") else {
             continue;
         };
-        let Some((key, rest)) = stripped[start + "Plugin ".len()..].split_once(" is incompatible with dsh ")
+        let Some((key, rest)) =
+            stripped[start + "Plugin ".len()..].split_once(" is incompatible with dsh ")
         else {
             continue;
         };
@@ -311,7 +311,9 @@ mod tests {
             );
             assert_eq!(
                 pick_error_message(&output, None),
-                format!("{cause}\ndsh: plugin command failed; diagnostics: C:/profile/.plugin-manager/logs/operation-test/pnpm.log")
+                format!(
+                    "{cause}\ndsh: plugin command failed; diagnostics: C:/profile/.plugin-manager/logs/operation-test/pnpm.log"
+                )
             );
         }
     }
@@ -395,18 +397,22 @@ mod tests {
     fn incompatible_versions_ignores_other_failures_and_malformed_lines() {
         assert!(incompatible_versions("ERR_PNPM_FETCH_404 registry error").is_empty());
         assert!(incompatible_versions("").is_empty());
-        assert!(incompatible_versions(
-            "dsh: plugin command failed; diagnostics: /tmp/pnpm.log\n"
-        )
-        .is_empty());
-        assert!(incompatible_versions(
-            "Plugin foo@1.0.0 is incompatible with dsh unknown-runtime: peerDependencies {}."
-        )
-        .is_empty());
-        assert!(incompatible_versions(
-            "Plugin foo is incompatible with dsh 0.2.0-rc.1: peerDependencies {}."
-        )
-        .is_empty());
+        assert!(
+            incompatible_versions("dsh: plugin command failed; diagnostics: /tmp/pnpm.log\n")
+                .is_empty()
+        );
+        assert!(
+            incompatible_versions(
+                "Plugin foo@1.0.0 is incompatible with dsh unknown-runtime: peerDependencies {}."
+            )
+            .is_empty()
+        );
+        assert!(
+            incompatible_versions(
+                "Plugin foo is incompatible with dsh 0.2.0-rc.1: peerDependencies {}."
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -433,7 +439,10 @@ mod tests {
                    Done in 2.8s\n";
         let picked = pick_error_message(out, None);
         assert!(picked.contains("ERR_PNPM_LINKING_FAILED"));
-        assert!(!picked.contains("Done in"), "progress noise must be dropped: {picked}");
+        assert!(
+            !picked.contains("Done in"),
+            "progress noise must be dropped: {picked}"
+        );
     }
 
     #[test]
@@ -563,7 +572,9 @@ pnpm now wants to use the virtual store at "/new/.pnpm" to link dependencies fro
         assert!(store_mismatch_hint("").is_none());
         assert!(store_mismatch_hint("[ERR_PNPM_UNEXPECTED_STORE_EXTRA] other failure").is_none());
         assert!(store_mismatch_hint("[ERR_PNPM_UNEXPECTED_VIRTUAL_STORE_X] other").is_none());
-        assert!(store_mismatch_hint("[ERR_PNPM_UNEXPECTED_STORE] Unexpected store location").is_some());
+        assert!(
+            store_mismatch_hint("[ERR_PNPM_UNEXPECTED_STORE] Unexpected store location").is_some()
+        );
         assert!(store_mismatch_hint(" ERR_PNPM_UNEXPECTED_STORE  x").is_some());
     }
 

@@ -435,7 +435,10 @@ mod tests {
         assert_eq!(quote_environment_d("/data/dsh"), "/data/dsh");
         assert_eq!(quote_environment_d("/data/D$SH"), "/data/D$$SH");
         assert_eq!(quote_environment_d("C:\\data"), "C:\\data");
-        assert_eq!(parse_environment_d("# c\nDSH_HOME=\"/data/dsh\"\n"), Some("/data/dsh".to_string()));
+        assert_eq!(
+            parse_environment_d("# c\nDSH_HOME=\"/data/dsh\"\n"),
+            Some("/data/dsh".to_string())
+        );
         assert_eq!(parse_environment_d("DSH_HOME=\n"), None);
     }
 

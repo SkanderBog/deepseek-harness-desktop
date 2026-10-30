@@ -1,9 +1,8 @@
-
+use crate::AppHandle;
 use crate::config;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::{AppHandle};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

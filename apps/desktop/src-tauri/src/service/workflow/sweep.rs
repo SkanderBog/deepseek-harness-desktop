@@ -8,11 +8,9 @@ use super::process::{
     has_owned_process, kill_pid_tree, take_startup_sweep, terminate_stale_harness_processes,
 };
 use super::utils::is_port_in_use;
-use crate::{AppHandle};
+use crate::AppHandle;
 
-pub(super) fn harness_pid_path<R: tauri::Runtime>(
-    app_handle: &AppHandle<R>,
-) -> std::path::PathBuf {
+pub(super) fn harness_pid_path<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> std::path::PathBuf {
     let channel = usize::from(app_handle.config().identifier == "dsh-tauri-nightly");
     let root = config::get_dsh_data_path(app_handle);
     let name = config::HARNESS_PID_MARKER_NAMES[channel];
@@ -155,7 +153,11 @@ pub(super) fn relaunch_marker_path(app_handle: &AppHandle) -> std::path::PathBuf
 
 #[cfg(windows)]
 pub(super) fn dsh_bin_open_error(app_handle: &AppHandle) -> Option<i32> {
-    std::fs::File::open(config::get_dsh_binary_path(app_handle))
+    // A dsh bin inside an asar is not a real file; the archive is what the
+    // RedirectionGuard policy can actually block, so probe that instead.
+    let binary = config::get_dsh_binary_path(app_handle);
+    let probe = config::dependencies::asar_archive_of(&binary).unwrap_or(binary);
+    std::fs::File::open(probe)
         .err()
         .and_then(|e| e.raw_os_error())
 }
@@ -166,7 +168,9 @@ pub(super) fn relaunch_via_shell_escape(app_handle: &AppHandle) {
     let marker = relaunch_marker_path(app_handle);
     if marker.exists() {
         let _ = std::fs::remove_file(&marker);
-        log::warn!("RedirectionGuard(448) relaunch did not escape, falling back to normal missing handling");
+        log::warn!(
+            "RedirectionGuard(448) relaunch did not escape, falling back to normal missing handling"
+        );
         return;
     }
     let _ = std::fs::write(&marker, b"1");

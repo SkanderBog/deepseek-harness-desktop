@@ -1,4 +1,3 @@
-
 use crate::service::workflow::instances;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -7,9 +6,9 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use super::errors::{self, PluginError};
-use super::installed::{installed_name, profile_dir, ProfilePackageJson};
-use super::preset::{load_presets, PreinstallPluginInfo};
-use crate::{AppHandle};
+use super::installed::{ProfilePackageJson, installed_name, profile_dir};
+use super::preset::{PreinstallPluginInfo, load_presets};
+use crate::AppHandle;
 
 pub(crate) const PLUGINS_UPDATED_EVENT: &str = "dsh-plugins-updated";
 

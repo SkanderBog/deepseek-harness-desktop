@@ -1,4 +1,3 @@
-
 #[inline]
 pub(super) fn to_wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -15,7 +14,7 @@ pub(super) fn read_user_path() -> Option<String> {
 pub(crate) fn read_user_env(name: &str) -> Result<Option<String>, String> {
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA};
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE,
+        HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
     };
 
     unsafe {
@@ -87,8 +86,8 @@ pub(super) fn write_user_path(new_value: &str) -> Result<(), String> {
 
 pub(crate) fn write_user_env(name: &str, value: &str) -> Result<(), String> {
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
-        KEY_QUERY_VALUE, KEY_SET_VALUE, REG_EXPAND_SZ, REG_SZ,
+        HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_EXPAND_SZ, REG_SZ,
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
     };
 
     unsafe {
@@ -146,7 +145,7 @@ pub(crate) fn write_user_env(name: &str, value: &str) -> Result<(), String> {
 pub(crate) fn delete_user_env(name: &str) -> Result<(), String> {
     use windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND;
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE,
+        HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, RegCloseKey, RegDeleteValueW, RegOpenKeyExW,
     };
 
     unsafe {
@@ -181,7 +180,7 @@ pub(crate) fn delete_user_env(name: &str) -> Result<(), String> {
 pub(crate) fn notify_environment_change() {
     use windows_sys::Win32::Foundation::{LPARAM, WPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+        HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
     };
     let wide = to_wide_null("Environment");
     unsafe {

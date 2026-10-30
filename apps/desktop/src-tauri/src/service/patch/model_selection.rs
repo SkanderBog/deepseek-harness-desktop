@@ -1,8 +1,7 @@
-
 use std::path::Path;
 
-use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
-use crate::{AppHandle};
+use crate::AppHandle;
+use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
 
 const PATCH_MARKER: &str = "dsh-tauri: keep the model menu mounted through a WebKit blur";
 

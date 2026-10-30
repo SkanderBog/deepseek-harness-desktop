@@ -1,4 +1,3 @@
-
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -6,10 +5,10 @@ use super::env;
 use super::fs_ops::{self, CopyProgress, TreeStats};
 use super::state;
 use super::{
-    harness_stopped, MigrationBackup, MigrationOutcome, MigrationPlan, ProgressPayload,
-    ProgressSink,
+    MigrationBackup, MigrationOutcome, MigrationPlan, ProgressPayload, ProgressSink,
+    harness_stopped,
 };
-use crate::{AppHandle};
+use crate::AppHandle;
 
 const SPACE_MARGIN_PERCENT: u64 = 5;
 
@@ -35,7 +34,10 @@ pub(super) fn find_backups(app_handle: &AppHandle, current: &Path) -> Vec<Migrat
 
 fn search_places(current: &Path, default: &Path, recorded: Option<&Path>) -> Vec<PathBuf> {
     let mut places: Vec<PathBuf> = Vec::new();
-    for path in [Some(current), Some(default), recorded].into_iter().flatten() {
+    for path in [Some(current), Some(default), recorded]
+        .into_iter()
+        .flatten()
+    {
         if !places.iter().any(|seen| same_path(seen, path)) {
             places.push(path.to_path_buf());
         }
@@ -105,13 +107,27 @@ pub(super) fn run(
     fs_ops::scan_tree(source, &mut expected)?;
 
     let tick = |files: u64, bytes: u64| {
-        emit(step("migrate", "copy", files, bytes, expected.files, expected.bytes));
+        emit(step(
+            "migrate",
+            "copy",
+            files,
+            bytes,
+            expected.files,
+            expected.bytes,
+        ));
     };
     let progress = CopyProgress::new(&tick);
     fs_ops::copy_tree(source, target, &progress)?;
     let copied = progress.stats();
 
-    emit(step("migrate", "verify", copied.files, copied.bytes, expected.files, expected.bytes));
+    emit(step(
+        "migrate",
+        "verify",
+        copied.files,
+        copied.bytes,
+        expected.files,
+        expected.bytes,
+    ));
     let mut actual = TreeStats::default();
     fs_ops::scan_tree(target, &mut actual)?;
     if !actual.covers(&expected) {
@@ -126,12 +142,24 @@ pub(super) fn run(
         ));
     }
 
-    emit(step("migrate", "finalize", copied.files, copied.bytes, expected.files, expected.bytes));
+    emit(step(
+        "migrate",
+        "finalize",
+        copied.files,
+        copied.bytes,
+        expected.files,
+        expected.bytes,
+    ));
     let stamp = env::now_stamp();
     let moved = state::with_moved_suffix(source, &stamp)?;
     state::write_last_migration(app_handle, &source.to_string_lossy())?;
-    fs::rename(source, &moved)
-        .map_err(|e| format!("DATA_DIR_RENAME: {} -> {}: {e}", source.display(), moved.display()))?;
+    fs::rename(source, &moved).map_err(|e| {
+        format!(
+            "DATA_DIR_RENAME: {} -> {}: {e}",
+            source.display(),
+            moved.display()
+        )
+    })?;
 
     let text = target.to_string_lossy().into_owned();
     if let Err(error) = env::write_user_home(&text) {
@@ -140,10 +168,19 @@ pub(super) fn run(
         }
         return Err(error);
     }
-    unsafe { std::env::set_var(env::DATA_DIR_ENV, &text); }
+    unsafe {
+        std::env::set_var(env::DATA_DIR_ENV, &text);
+    }
     refresh_shims(app_handle, target);
 
-    emit(step("migrate", "done", copied.files, copied.bytes, expected.files, expected.bytes));
+    emit(step(
+        "migrate",
+        "done",
+        copied.files,
+        copied.bytes,
+        expected.files,
+        expected.bytes,
+    ));
     Ok(MigrationOutcome {
         source: source.to_string_lossy().into_owned(),
         target: text,
@@ -185,16 +222,14 @@ pub(super) fn rollback(
     let stamp = env::now_stamp();
     let aside = if fs_ops::is_dir_empty(&restore_to) {
         if restore_to.exists() {
-            fs::remove_dir(&restore_to).map_err(|e| {
-                format!("DATA_DIR_ROLLBACK_CLEAR: {}: {e}", restore_to.display())
-            })?;
+            fs::remove_dir(&restore_to)
+                .map_err(|e| format!("DATA_DIR_ROLLBACK_CLEAR: {}: {e}", restore_to.display()))?;
         }
         String::new()
     } else {
         let target = state::with_current_suffix(&restore_to, &stamp)?;
-        fs::rename(&restore_to, &target).map_err(|e| {
-            format!("DATA_DIR_ROLLBACK_ASIDE: {}: {e}", restore_to.display())
-        })?;
+        fs::rename(&restore_to, &target)
+            .map_err(|e| format!("DATA_DIR_ROLLBACK_ASIDE: {}: {e}", restore_to.display()))?;
         target.to_string_lossy().into_owned()
     };
 
@@ -218,13 +253,17 @@ pub(super) fn rollback(
         if back_to_default {
             let cleared = env::clear_user_home();
             if cleared.is_ok() {
-                unsafe { std::env::remove_var(env::DATA_DIR_ENV); }
+                unsafe {
+                    std::env::remove_var(env::DATA_DIR_ENV);
+                }
             }
             cleared
         } else {
             let written = env::write_user_home(text);
             if written.is_ok() {
-                unsafe { std::env::set_var(env::DATA_DIR_ENV, text); }
+                unsafe {
+                    std::env::set_var(env::DATA_DIR_ENV, text);
+                }
             }
             written
         }
@@ -239,7 +278,14 @@ pub(super) fn rollback(
     if let Err(error) = fs_ops::scan_tree(&restore_to, &mut stats) {
         log::warn!("DATA_DIR_ROLLBACK_SCAN: {error}");
     }
-    emit(step("rollback", "done", stats.files, stats.bytes, stats.files, stats.bytes));
+    emit(step(
+        "rollback",
+        "done",
+        stats.files,
+        stats.bytes,
+        stats.files,
+        stats.bytes,
+    ));
     Ok(MigrationOutcome {
         source: current.to_string_lossy().into_owned(),
         target: restore_to.to_string_lossy().into_owned(),
@@ -282,7 +328,10 @@ fn undo_rollback(chosen: &Path, restore_to: &Path, aside: &str) {
 
 fn validate_target(source: &Path, target: &Path) -> Result<(), String> {
     if !target.is_absolute() {
-        return Err(format!("DATA_DIR_TARGET_NOT_ABSOLUTE: {}", target.display()));
+        return Err(format!(
+            "DATA_DIR_TARGET_NOT_ABSOLUTE: {}",
+            target.display()
+        ));
     }
     let resolved_source = resolved_path(source)?;
     let resolved_target = resolved_path(target)?;
@@ -298,7 +347,10 @@ fn validate_target(source: &Path, target: &Path) -> Result<(), String> {
         ));
     }
     if is_within(source, target) {
-        return Err(format!("DATA_DIR_SOURCE_INSIDE_TARGET: {}", target.display()));
+        return Err(format!(
+            "DATA_DIR_SOURCE_INSIDE_TARGET: {}",
+            target.display()
+        ));
     }
     if target.is_file() {
         return Err(format!("DATA_DIR_TARGET_NOT_DIR: {}", target.display()));
@@ -580,7 +632,10 @@ mod tests {
     #[test]
     fn is_within_ignores_case_and_the_verbatim_prefix() {
         assert!(is_within(Path::new("d:\\data\\sub"), Path::new("D:\\Data")));
-        assert!(is_within(Path::new("\\\\?\\D:\\Data\\sub"), Path::new("D:\\Data")));
+        assert!(is_within(
+            Path::new("\\\\?\\D:\\Data\\sub"),
+            Path::new("D:\\Data")
+        ));
     }
 
     #[test]
@@ -624,8 +679,14 @@ mod tests {
         fs::create_dir_all(&backup_to).unwrap();
 
         let found = collect_backups(&[from.clone(), to.clone()]);
-        assert!(found.contains(&backup_from), "当前位置的备份未被找到：{found:?}");
-        assert!(found.contains(&backup_to), "默认位置的备份未被找到：{found:?}");
+        assert!(
+            found.contains(&backup_from),
+            "当前位置的备份未被找到：{found:?}"
+        );
+        assert!(
+            found.contains(&backup_to),
+            "默认位置的备份未被找到：{found:?}"
+        );
         assert!(state::find_moved_dirs(&moved_to, "DSHHome").is_empty());
         let _ = fs::remove_dir_all(&root);
     }

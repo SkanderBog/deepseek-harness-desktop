@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
-use crate::{AppHandle};
+use crate::AppHandle;
+use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
 
 const CLIENT: &str = "node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js";
 
@@ -217,5 +217,4 @@ mod tests {
         let source = format!("{}{}", released(), shipped());
         assert!(matches!(patch_source(&source), PatchOutcome::AnchorMissing));
     }
-
 }

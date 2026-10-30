@@ -1,4 +1,3 @@
-
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -11,9 +10,9 @@ use crate::service::workflow;
 use super::artifact::{ensure_plugin_entry_built, installed_package_name};
 use super::build_plugin_envs;
 use super::diagnose::{
-    git_transport_hint, incompatible_versions, network_error_hint, pick_error_message,
-    policy_blocked_versions, policy_verification_network_failure, store_mismatch_hint,
-    IncompatibleVersion, PolicyBlockedVersion,
+    IncompatibleVersion, PolicyBlockedVersion, git_transport_hint, incompatible_versions,
+    network_error_hint, pick_error_message, policy_blocked_versions,
+    policy_verification_network_failure, store_mismatch_hint,
 };
 use super::errors;
 use super::harness_prefer_bundled_pnpm;
@@ -24,9 +23,9 @@ use super::pnpm::ensure_pnpm;
 use super::profile_dir;
 use super::run_plugin_with_allow_build_retry;
 use super::uninstall_recovery;
+use crate::AppHandle;
 use crate::service::plugin::update::known_latest;
 use crate::service::profile::profile_release_age_excluded;
-use crate::{AppHandle};
 
 pub async fn update_many(app_handle: &AppHandle, specs: &[String]) -> Result<(), String> {
     let mut requested: Vec<(String, Option<String>)> =
@@ -456,7 +455,7 @@ async fn run_plugin_command(
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
     }
-    if !dsh_bin.exists() {
+    if !crate::config::dependencies::binary_at_present(&dsh_bin) {
         return Err("HARNESS_NOT_FOUND: dsh CLI missing".to_string());
     }
 
@@ -996,7 +995,9 @@ mod tests {
     #[test]
     fn fingerprint_detects_git_commit_change_with_stable_version() {
         let lock = |sha: &str| {
-            format!("lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      dsh-probe:\n        specifier: 'catalog:'\n        version: https://codeload.github.com/o/r/tar.gz/{sha}\n")
+            format!(
+                "lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      dsh-probe:\n        specifier: 'catalog:'\n        version: https://codeload.github.com/o/r/tar.gz/{sha}\n"
+            )
         };
         let before = probe_profile("git-before", &lock("aaaaaaaaaaaaaaaa"), Some("0.2.21"));
         let after = probe_profile("git-after", &lock("bbbbbbbbbbbbbbbb"), Some("0.2.21"));

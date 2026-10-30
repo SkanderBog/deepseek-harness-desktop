@@ -330,7 +330,6 @@ pub(super) fn prepare(
         core_version: Some(&version),
         required_plugins: Some(&required),
     })? != core::RuntimePreparation::Ready
-
     {
         return Ok(None);
     }
@@ -405,9 +404,11 @@ mod tests {
         }
         fs::write(&path, json!({"setting": ready}).to_string()).unwrap();
         super::super::instances::scope_sync("other".into(), || {
-            assert!(prepare(root.path(), &root.path().join("missing"))
-                .unwrap()
-                .is_none());
+            assert!(
+                prepare(root.path(), &root.path().join("missing"))
+                    .unwrap()
+                    .is_none()
+            );
         });
         assert!(entry(root.path(), Path::new("relative-resources")).is_none());
     }

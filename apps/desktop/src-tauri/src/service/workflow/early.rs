@@ -1,5 +1,5 @@
+use crate::AppHandle;
 use std::sync::{Arc, OnceLock};
-use crate::{AppHandle};
 
 struct Preparation {
     worker: tokio::sync::watch::Receiver<Option<Result<bool, String>>>,
@@ -106,11 +106,7 @@ fn prepare_in_job(
         }))
     }));
     let plan = super::early_plan::prepare(app_data, resources);
-    if !probes_ready()? {
-        Ok(None)
-    } else {
-        plan
-    }
+    if !probes_ready()? { Ok(None) } else { plan }
 }
 
 #[cfg(windows)]
@@ -460,8 +456,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn absolute_app_data_overrides_match_tauri() {
-        use tauri::utils::config::{AppDirectoriesOverride, AppDirectoryOverrides};
         use tauri::Manager;
+        use tauri::utils::config::{AppDirectoriesOverride, AppDirectoryOverrides};
 
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(".").join("data").join("..").join("store");

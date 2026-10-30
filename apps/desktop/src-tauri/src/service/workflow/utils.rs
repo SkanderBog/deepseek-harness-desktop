@@ -1,7 +1,7 @@
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -445,12 +445,16 @@ mod tests {
         }
 
         assert_eq!(fs::read_to_string(&log).unwrap_or_default(), "");
-        assert!(fs::read_to_string(dir.join("dsh-web.log.1"))
-            .unwrap()
-            .contains("start 4"));
-        assert!(fs::read_to_string(dir.join("dsh-web.log.2"))
-            .unwrap()
-            .contains("start 3"));
+        assert!(
+            fs::read_to_string(dir.join("dsh-web.log.1"))
+                .unwrap()
+                .contains("start 4")
+        );
+        assert!(
+            fs::read_to_string(dir.join("dsh-web.log.2"))
+                .unwrap()
+                .contains("start 3")
+        );
         assert!(!dir.join("dsh-web.log.3").exists());
 
         let _ = fs::remove_dir_all(&dir);
@@ -461,15 +465,18 @@ mod tests {
         let html = r#"<script src="/plugins/@deepseek-ai/dsh-client-modules/client.js?rev=one"></script><script>globalThis["__DSH_BOOT__"] = {"rev":"graph","entries":[{"id":"@deepseek-ai/dsh-client-ui-layout","url":"/plugins/@deepseek-ai/dsh-client-ui-layout/client.js?rev=two","rev":"two"}]}</script>"#;
         let urls = client_urls_from_boot_html(3099, html).expect("boot graph");
         assert_eq!(urls.len(), 2);
-        assert!(urls
-            .iter()
-            .any(|url| url.contains("dsh-client-modules/client.js")));
-        assert!(urls
-            .iter()
-            .any(|url| url.contains("dsh-client-ui-layout/client.js")));
-        assert!(urls
-            .iter()
-            .all(|url| url.starts_with("http://127.0.0.1:3099/plugins/")));
+        assert!(
+            urls.iter()
+                .any(|url| url.contains("dsh-client-modules/client.js"))
+        );
+        assert!(
+            urls.iter()
+                .any(|url| url.contains("dsh-client-ui-layout/client.js"))
+        );
+        assert!(
+            urls.iter()
+                .all(|url| url.starts_with("http://127.0.0.1:3099/plugins/"))
+        );
     }
 
     #[test]
@@ -483,7 +490,12 @@ mod tests {
     fn boot_html_decodes_combo_bundle_attribute_url() {
         let html = r#"<script src="/plugins/??@deepseek-ai/dsh-client-modules/client.js&amp;rev=cddf5581d5d5"></script><script>globalThis["__DSH_BOOT__"] = {"entries":[]}</script>"#;
         let urls = client_urls_from_boot_html(3081, html).expect("boot graph");
-        assert_eq!(urls, vec!["http://127.0.0.1:3081/plugins/??@deepseek-ai/dsh-client-modules/client.js&rev=cddf5581d5d5"]);
+        assert_eq!(
+            urls,
+            vec![
+                "http://127.0.0.1:3081/plugins/??@deepseek-ai/dsh-client-modules/client.js&rev=cddf5581d5d5"
+            ]
+        );
     }
 
     #[test]
@@ -491,15 +503,18 @@ mod tests {
         let html = r#"<script src="plugins/??@deepseek-ai/dsh-client-modules/client.js&amp;rev=f584d378985b"></script><script>globalThis["__DSH_BOOT__"] = {"rev":"g","entries":[{"id":"@deepseek-ai/dsh-client-ui-layout","url":"plugins/??@deepseek-ai/dsh-client-ui-layout/client.js&rev=f26b875a92b6","rev":"f26b875a92b6"}]}</script>"#;
         let urls = client_urls_from_boot_html(3081, html).expect("boot graph");
         assert_eq!(urls.len(), 2);
-        assert!(urls
-            .iter()
-            .all(|url| url.starts_with("http://127.0.0.1:3081/plugins/")));
-        assert!(urls
-            .iter()
-            .any(|url| url.contains("dsh-client-modules/client.js&rev=f584d378985b")));
-        assert!(urls
-            .iter()
-            .any(|url| url.contains("dsh-client-ui-layout/client.js&rev=f26b875a92b6")));
+        assert!(
+            urls.iter()
+                .all(|url| url.starts_with("http://127.0.0.1:3081/plugins/"))
+        );
+        assert!(
+            urls.iter()
+                .any(|url| url.contains("dsh-client-modules/client.js&rev=f584d378985b"))
+        );
+        assert!(
+            urls.iter()
+                .any(|url| url.contains("dsh-client-ui-layout/client.js&rev=f26b875a92b6"))
+        );
     }
 
     #[test]
@@ -543,16 +558,19 @@ mod tests {
     fn health_probe_plugin_urls_target_client_bundles_not_spa_root() {
         let urls = health_probe_plugin_urls(3080);
         assert!(urls.iter().all(|u| u.contains("/plugins/")));
-        assert!(urls
-            .iter()
-            .all(|u| !u.ends_with("3080/") && !u.ends_with("://127.0.0.1:3080")));
-        assert!(urls
-            .iter()
-            .any(|u| u.contains("dsh-client-ui-layout/client.js")));
+        assert!(
+            urls.iter()
+                .all(|u| !u.ends_with("3080/") && !u.ends_with("://127.0.0.1:3080"))
+        );
+        assert!(
+            urls.iter()
+                .any(|u| u.contains("dsh-client-ui-layout/client.js"))
+        );
         assert!(urls.iter().all(|u| !u.contains("dsh-client-runtime")));
-        assert!(urls
-            .iter()
-            .any(|u| u.contains("dsh-client-modules/client.js")));
+        assert!(
+            urls.iter()
+                .any(|u| u.contains("dsh-client-modules/client.js"))
+        );
     }
 
     #[test]

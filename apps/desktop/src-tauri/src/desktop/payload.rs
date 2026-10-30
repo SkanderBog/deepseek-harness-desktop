@@ -4,4 +4,3 @@ pub struct DownloadFinishedPayload {
     pub(crate) path: Option<String>,
     pub(crate) success: bool,
 }
-

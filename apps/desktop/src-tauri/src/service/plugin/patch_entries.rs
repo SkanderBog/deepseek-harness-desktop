@@ -1,4 +1,3 @@
-
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -8,7 +7,7 @@ use super::atomic_write::write_patch_layer_atomically;
 use super::installed::ProfilePackageJson;
 use super::patch_guard::{backup_path, now_stamp, patch_layer_paths};
 use super::patch_yaml::{parse_patch_layer, render_patch_layer};
-use crate::{AppHandle};
+use crate::AppHandle;
 
 pub(crate) const PATCH_ENTRY_UNRESOLVED: &str = "PATCH_LAYER_ENTRY_UNRESOLVED";
 
@@ -579,9 +578,11 @@ mod tests {
         assert_eq!(report.layers[0].removed, 1);
         let backup = PathBuf::from(&report.layers[0].backup);
         assert!(backup.is_file());
-        assert!(std::fs::read_to_string(&backup)
-            .unwrap()
-            .contains("dsh-gone"));
+        assert!(
+            std::fs::read_to_string(&backup)
+                .unwrap()
+                .contains("dsh-gone")
+        );
         let stripped = std::fs::read_to_string(profile.join("cordis.patch.yml")).unwrap();
         assert!(stripped.contains("dsh-keep"), "{stripped}");
         assert!(stripped.contains("untouched"), "{stripped}");
@@ -736,10 +737,12 @@ mod tests {
         );
         assert!(error.contains("symlink"), "{error}");
         assert_eq!(std::fs::read_to_string(&target).unwrap(), DANGLING_LAYER);
-        assert!(std::fs::symlink_metadata(&link)
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[test]

@@ -25,7 +25,9 @@ fn for_each_heap_flag(node_options: &str, mut visit: impl FnMut(&'static str, &s
     while let Some(token) = tokens.next() {
         let token = token.trim_matches(['"', '\'']);
         for flag in heap_flags() {
-            let attached = token.strip_prefix(flag).and_then(|tail| tail.strip_prefix('='));
+            let attached = token
+                .strip_prefix(flag)
+                .and_then(|tail| tail.strip_prefix('='));
             if token != flag && attached.is_none() {
                 continue;
             }
@@ -79,7 +81,8 @@ pub(super) fn node_options_without_heap_flags(node_options: &str) -> Option<Stri
     let mut tokens = node_options.split_whitespace();
     while let Some(token) = tokens.next() {
         let bare = token.trim_matches(['"', '\'']);
-        let is_heap_flag = heap_flags().any(|flag| bare == flag || bare.starts_with(&format!("{flag}=")));
+        let is_heap_flag =
+            heap_flags().any(|flag| bare == flag || bare.starts_with(&format!("{flag}=")));
         if !is_heap_flag {
             kept.push(token);
             continue;
@@ -163,9 +166,13 @@ pub(super) fn physical_memory_mb() -> Option<u64> {
 #[cfg(target_os = "linux")]
 pub(super) fn physical_memory_mb() -> Option<u64> {
     let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
-    let total_kb = meminfo.lines()
+    let total_kb = meminfo
+        .lines()
         .find_map(|line| line.strip_prefix("MemTotal:"))?
-        .split_whitespace().next()?.parse::<u64>().ok()?;
+        .split_whitespace()
+        .next()?
+        .parse::<u64>()
+        .ok()?;
     (total_kb > 0).then(|| total_kb / 1024)
 }
 
@@ -191,17 +198,29 @@ mod tests {
 
     #[test]
     fn resolve_preserves_configured_value_and_falls_back_on_unknown_memory() {
-        assert_eq!(resolve_heap_limit_mb(Some(12288), false, Some(16384)), Some(12288));
+        assert_eq!(
+            resolve_heap_limit_mb(Some(12288), false, Some(16384)),
+            Some(12288)
+        );
         assert_eq!(resolve_heap_limit_mb(None, false, Some(16384)), Some(8192));
-        assert_eq!(resolve_heap_limit_mb(None, false, Some(65536)), Some(AUTO_HEAP_MAX_MB as u32));
+        assert_eq!(
+            resolve_heap_limit_mb(None, false, Some(65536)),
+            Some(AUTO_HEAP_MAX_MB as u32)
+        );
         assert_eq!(resolve_heap_limit_mb(None, false, Some(0)), None);
         assert_eq!(resolve_heap_limit_mb(None, false, None), None);
     }
 
     #[test]
     fn configured_limit_wins_over_inherited_node_options() {
-        assert_eq!(resolve_heap_limit_mb(Some(1600), true, Some(32768)), Some(1600));
-        assert_eq!(resolve_heap_limit_mb(Some(12288), true, Some(32768)), Some(12288));
+        assert_eq!(
+            resolve_heap_limit_mb(Some(1600), true, Some(32768)),
+            Some(1600)
+        );
+        assert_eq!(
+            resolve_heap_limit_mb(Some(12288), true, Some(32768)),
+            Some(12288)
+        );
     }
 
     #[test]
@@ -231,7 +250,10 @@ mod tests {
         ] {
             assert_eq!(node_options_heap_limit(options), Some(8192), "{options}");
         }
-        for options in ["--max-old-space-size-percentage=50", "--max_old_space_size_percentage 50"] {
+        for options in [
+            "--max-old-space-size-percentage=50",
+            "--max_old_space_size_percentage 50",
+        ] {
             assert_eq!(node_options_heap_limit(options), None, "{options}");
         }
     }
@@ -296,14 +318,26 @@ mod tests {
             node_options_without_heap_flags("--max_old_space_size 8192"),
             None
         );
-        assert_eq!(node_options_without_heap_flags("--trace-warnings"), Some("--trace-warnings".to_string()));
+        assert_eq!(
+            node_options_without_heap_flags("--trace-warnings"),
+            Some("--trace-warnings".to_string())
+        );
     }
 
     #[test]
     fn node_options_heap_limit_reads_the_inherited_value() {
-        assert_eq!(node_options_heap_limit("--max-old-space-size=8192"), Some(8192));
-        assert_eq!(node_options_heap_limit("--max-old-space-size 1600"), Some(1600));
-        assert_eq!(node_options_heap_limit("--max_old_space_size=4096"), Some(4096));
+        assert_eq!(
+            node_options_heap_limit("--max-old-space-size=8192"),
+            Some(8192)
+        );
+        assert_eq!(
+            node_options_heap_limit("--max-old-space-size 1600"),
+            Some(1600)
+        );
+        assert_eq!(
+            node_options_heap_limit("--max_old_space_size=4096"),
+            Some(4096)
+        );
     }
 
     #[test]
@@ -317,7 +351,9 @@ mod tests {
             assert!(node_options_has_heap_flags(options), "{options}");
         }
         assert_eq!(
-            node_options_heap_limit("--max-old-space-size=8192 --max-old-space-size-percentage=abc"),
+            node_options_heap_limit(
+                "--max-old-space-size=8192 --max-old-space-size-percentage=abc"
+            ),
             Some(8192)
         );
     }

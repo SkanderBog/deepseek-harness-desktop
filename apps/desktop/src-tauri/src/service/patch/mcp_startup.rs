@@ -1,8 +1,8 @@
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
-use crate::{AppHandle};
+use crate::AppHandle;
+use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
 
 const MCP_INDEX_JS: &str = "node_modules/@deepseek-ai/dsh-mcp-client/lib/index.js";
 const READY_ANCHOR: &str = "\tconst outcome = await connection.ready;";
@@ -233,7 +233,9 @@ export { activate, inject };
 
     #[test]
     fn legacy_sdk_keeps_existing_transport_without_unavailable_imports() {
-        let source = format!("import {{ Client }} from \"@modelcontextprotocol/sdk/client/index.js\";\nfunction createTransport(config) {{\n{TRANSPORT_ANCHOR}\n}}\ngeneration.connect(createTransport(config));\nconst inject = [\"tools\"];\n{READY_ANCHOR}");
+        let source = format!(
+            "import {{ Client }} from \"@modelcontextprotocol/sdk/client/index.js\";\nfunction createTransport(config) {{\n{TRANSPORT_ANCHOR}\n}}\ngeneration.connect(createTransport(config));\nconst inject = [\"tools\"];\n{READY_ANCHOR}"
+        );
         let PatchOutcome::Patched(patched) = patch_source(&source) else {
             panic!("expected legacy readiness patch")
         };
@@ -246,7 +248,9 @@ export { activate, inject };
 
     #[test]
     fn legacy_transport_receives_credentials_and_remains_idempotent() {
-        let source = format!("function createTransport(config) {{\n{TRANSPORT_ANCHOR}\n}}\ngeneration.connect(createTransport(config));\nconst inject = [\"tools\"];\n{READY_ANCHOR}");
+        let source = format!(
+            "function createTransport(config) {{\n{TRANSPORT_ANCHOR}\n}}\ngeneration.connect(createTransport(config));\nconst inject = [\"tools\"];\n{READY_ANCHOR}"
+        );
         let PatchOutcome::Patched(patched) = patch_source(&source) else {
             panic!("expected legacy transport patch")
         };
@@ -258,7 +262,9 @@ export { activate, inject };
 
     #[test]
     fn readiness_patch_is_idempotent_and_preserves_surrounding_lifecycle() {
-        let source = format!("function createTransport(config) {{\n{TRANSPORT_ANCHOR}\n}}\ntransport = createTransport(config);\nconst inject = [\"tools\"];\nctx.effect(() => dispose, \"mcp-client.connection\");\n{READY_ANCHOR}\nif (outcome.error !== void 0 && config.failOnStartupError) throw outcome.error;");
+        let source = format!(
+            "function createTransport(config) {{\n{TRANSPORT_ANCHOR}\n}}\ntransport = createTransport(config);\nconst inject = [\"tools\"];\nctx.effect(() => dispose, \"mcp-client.connection\");\n{READY_ANCHOR}\nif (outcome.error !== void 0 && config.failOnStartupError) throw outcome.error;"
+        );
         let PatchOutcome::Patched(patched) = patch_source(&source) else {
             panic!("expected patch")
         };

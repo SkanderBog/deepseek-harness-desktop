@@ -1,8 +1,8 @@
+use crate::WebviewWindow;
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Runtime};
-use crate::{WebviewWindow};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

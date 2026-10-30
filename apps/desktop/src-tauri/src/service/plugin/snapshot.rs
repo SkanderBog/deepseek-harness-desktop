@@ -10,7 +10,7 @@ use crate::service::fs_guard;
 use super::installed::{is_installed, profile_dir};
 use super::process::acquire_operation_lock;
 use super::recovery::is_actionable_plugin_ref;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 const SNAPSHOT_DIR_NAME: &str = ".plugin-backups";
 const MANIFEST_NAME: &str = "manifest.json";
@@ -415,8 +415,8 @@ fn resolve_restore_target(node_modules: &Path, id: &str) -> Result<PathBuf, Stri
     let profile = node_modules
         .parent()
         .ok_or_else(|| "SNAPSHOT_NO_PARENT: node_modules 缺少父目录".to_string())?;
-    let profile_real = dunce::canonicalize(profile)
-        .map_err(|e| format!("SNAPSHOT_RESOLVE_PROFILE: {e}"))?;
+    let profile_real =
+        dunce::canonicalize(profile).map_err(|e| format!("SNAPSHOT_RESOLVE_PROFILE: {e}"))?;
     match fs::symlink_metadata(node_modules) {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -430,7 +430,9 @@ fn resolve_restore_target(node_modules: &Path, id: &str) -> Result<PathBuf, Stri
         return Err("SNAPSHOT_TARGET_ESCAPE: node_modules 指向档案根目录".to_string());
     }
     let entry = node_modules.join(id);
-    let parent = entry.parent().ok_or_else(|| "SNAPSHOT_NO_PARENT: 插件缺少父目录".to_string())?;
+    let parent = entry
+        .parent()
+        .ok_or_else(|| "SNAPSHOT_NO_PARENT: 插件缺少父目录".to_string())?;
     if fs::symlink_metadata(parent).is_ok() {
         fs_guard::ensure_within(parent, &root)
             .map_err(|e| format!("SNAPSHOT_TARGET_ESCAPE: {e}"))?;
@@ -790,7 +792,11 @@ mod tests {
             use std::os::windows::process::CommandExt;
             let status = std::process::Command::new("cmd")
                 .arg("/C")
-                .raw_arg(format!("mklink /J \"{}\" \"{}\"", link.display(), target.display()))
+                .raw_arg(format!(
+                    "mklink /J \"{}\" \"{}\"",
+                    link.display(),
+                    target.display()
+                ))
                 .creation_flags(0x08000000)
                 .status()
                 .unwrap();
@@ -809,10 +815,21 @@ mod tests {
         link_directory(&node_modules, &node_modules.join("root-alias"));
         let home_result = resolve_restore_target(&node_modules, "home-alias");
         let root_result = resolve_restore_target(&node_modules, "root-alias");
-        assert_eq!(fs::read_to_string(dir.join("sessions/session.jsonl")).unwrap(), "turn 484");
+        assert_eq!(
+            fs::read_to_string(dir.join("sessions/session.jsonl")).unwrap(),
+            "turn 484"
+        );
         fs::remove_dir_all(&dir).unwrap();
-        assert!(home_result.unwrap_err().starts_with("SNAPSHOT_TARGET_ESCAPE:"));
-        assert!(root_result.unwrap_err().starts_with("SNAPSHOT_TARGET_ESCAPE:"));
+        assert!(
+            home_result
+                .unwrap_err()
+                .starts_with("SNAPSHOT_TARGET_ESCAPE:")
+        );
+        assert!(
+            root_result
+                .unwrap_err()
+                .starts_with("SNAPSHOT_TARGET_ESCAPE:")
+        );
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use serde_json::Value;
-use tauri::{Manager};
 use crate::{AppHandle, WebviewWindow};
+use serde_json::Value;
+use tauri::Manager;
 
 fn remote_method(method: &str) -> Result<(reqwest::Method, &str), String> {
     if !matches!(
@@ -223,7 +223,7 @@ pub async fn remote_open_window(
 #[cfg(test)]
 mod tests {
     use super::{remote_method, remote_request, sanitize_label_part, validate_loopback_http_url};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -390,9 +390,11 @@ mod tests {
                 headers.lines().next().unwrap(),
                 format!("{method} HTTP/1.1")
             );
-            assert!(headers
-                .to_ascii_lowercase()
-                .contains("content-type: application/json\r\n"));
+            assert!(
+                headers
+                    .to_ascii_lowercase()
+                    .contains("content-type: application/json\r\n")
+            );
             assert_eq!(
                 serde_json::from_slice::<Value>(&body).unwrap(),
                 json!({"machineId": "m1"})

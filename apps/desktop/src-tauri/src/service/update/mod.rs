@@ -6,11 +6,11 @@ mod meta;
 mod pending;
 mod version;
 
-pub use about::{about, DesktopAboutInfo};
+use crate::AppHandle;
+pub use about::{DesktopAboutInfo, about};
 #[allow(unused_imports)]
-pub use install::{check, download, open_installer, DesktopDownloadProgress, DesktopUpdateInfo};
+pub use install::{DesktopDownloadProgress, DesktopUpdateInfo, check, download, open_installer};
 pub use pending::launch_pending_installer;
-use crate::{AppHandle};
 
 pub fn distro_managed() -> bool {
     version::DISTRO_MANAGED

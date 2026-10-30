@@ -1,10 +1,9 @@
-
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use crate::AppHandle;
 use crate::service::plugin::{declared_packages, load_presets, profile_dir};
-use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
-use crate::{AppHandle};
+use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
 
 const PLUGIN_PREFIX: &str = "dsh-tauri";
 
@@ -120,9 +119,7 @@ pub fn apply(app_handle: &AppHandle) -> Result<(), String> {
     }
     let profile = profile_dir(app_handle);
     for file in MARKET_BUNDLE_FILES {
-        patch_core_file(&profile, file, |source| {
-            patch_inbox_bundles(source, &names)
-        })?;
+        patch_core_file(&profile, file, |source| patch_inbox_bundles(source, &names))?;
     }
     Ok(())
 }
@@ -223,7 +220,10 @@ mod tests {
         let PatchOutcome::Patched(once) = patch_inbox_bundles(INBOX, &names()) else {
             panic!("expected Patched");
         };
-        assert_eq!(patch_inbox_bundles(&once, &names()), PatchOutcome::AlreadyPatched);
+        assert_eq!(
+            patch_inbox_bundles(&once, &names()),
+            PatchOutcome::AlreadyPatched
+        );
         match patch_inbox_bundles(&once, &["dsh-tauri-scheduler".to_string()]) {
             PatchOutcome::Patched(patched) => {
                 assert_eq!(patched.matches("'dsh-tauri',").count(), 1);
@@ -278,7 +278,10 @@ mod tests {
             patched,
             "export const INBOX_BUNDLES = new Set([\n    '@deepseek-ai/dsh-base',\n    'dsh-tauri',\n    'dsh-tauri-ui',\n]);\n"
         );
-        assert_eq!(patch_inbox_bundles(&patched, &names()), PatchOutcome::AlreadyPatched);
+        assert_eq!(
+            patch_inbox_bundles(&patched, &names()),
+            PatchOutcome::AlreadyPatched
+        );
     }
 
     #[test]

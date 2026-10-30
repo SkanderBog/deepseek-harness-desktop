@@ -151,7 +151,10 @@ mod tests {
         fs::create_dir_all(&vsd).unwrap();
         write(
             &node_modules.join(".modules.yaml"),
-            &format!("lockfileVersion: '9.0'\nvirtualStoreDir: {}\n", vsd.display()),
+            &format!(
+                "lockfileVersion: '9.0'\nvirtualStoreDir: {}\n",
+                vsd.display()
+            ),
         );
 
         heal_stale_pnpm_metadata(&home).unwrap();

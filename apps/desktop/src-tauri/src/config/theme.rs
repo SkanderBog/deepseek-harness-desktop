@@ -1,12 +1,12 @@
 use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
+use tauri::Emitter;
 #[cfg(target_os = "macos")]
 use tauri::Manager;
-use tauri::{Emitter};
 
 use super::runtime::get_dsh_data_path;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

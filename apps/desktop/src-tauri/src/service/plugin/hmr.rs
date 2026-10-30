@@ -1,13 +1,12 @@
-
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
-use tauri::{Manager};
+use tauri::Manager;
 
-use super::installed::{profile_dir, ProfilePackageJson};
+use super::installed::{ProfilePackageJson, profile_dir};
 use super::patch_guard::now_stamp;
+use crate::AppHandle;
 use crate::config;
-use crate::{AppHandle};
 
 pub(crate) const HMR_PATCH_FILENAME: &str = "cordis.hmr.patch.yml";
 

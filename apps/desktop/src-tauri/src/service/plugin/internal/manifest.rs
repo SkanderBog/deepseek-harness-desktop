@@ -1,4 +1,3 @@
-
 use std::collections::HashSet;
 #[cfg(windows)]
 use std::os::windows::fs::FileTypeExt;
@@ -131,7 +130,7 @@ fn replace_manifest_file(temp: &Path, path: &Path) -> std::io::Result<()> {
 fn replace_manifest_file(temp: &Path, path: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
     };
 
     let temp_wide: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -343,9 +342,11 @@ mod tests {
             std::fs::read_to_string(path.join("sentinel")).unwrap(),
             "original"
         );
-        assert!(!root
-            .join(format!("package.json.internal.{}.tmp", std::process::id()))
-            .exists());
+        assert!(
+            !root
+                .join(format!("package.json.internal.{}.tmp", std::process::id()))
+                .exists()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -404,7 +405,9 @@ mod tests {
 
     #[test]
     fn local_link_dep_detects_only_directory_specs() {
-        assert!(is_local_link_dep("link:C:/Apps/dsh/resources/internal-plugins/dsh-tauri"));
+        assert!(is_local_link_dep(
+            "link:C:/Apps/dsh/resources/internal-plugins/dsh-tauri"
+        ));
         assert!(is_local_link_dep("file:/Applications/.../dsh-tauri-ui"));
         assert!(!is_local_link_dep("dsh-tauri@0.2.0"));
         assert!(!is_local_link_dep("github:dsh-market/dshmarket"));
@@ -414,10 +417,8 @@ mod tests {
 
     #[test]
     fn dangling_local_link_deps_exclude_presets_and_registry_specs() {
-        let root = std::env::temp_dir().join(format!(
-            "dsh-dangling-link-deps-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("dsh-dangling-link-deps-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let profile = root.join("profile");
         let alive = root.join("packages/dsh-tauri-ui");

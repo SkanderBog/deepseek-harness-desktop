@@ -1,14 +1,13 @@
-
-use tauri::{Runtime};
+use tauri::Runtime;
 use tauri_plugin_autostart::ManagerExt;
 
+use crate::AppHandle;
 #[cfg(windows)]
 use std::io::ErrorKind;
 #[cfg(windows)]
-use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
-#[cfg(windows)]
 use winreg::RegKey;
-use crate::{AppHandle};
+#[cfg(windows)]
+use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
 
 #[cfg(windows)]
 const RUN_REGISTRY_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -135,11 +134,11 @@ mod tests {
 
     #[cfg(windows)]
     use super::{
-        ensure_windows_run_key, remove_windows_startup_approval, windows_run_entry_exists,
-        RUN_REGISTRY_KEY, STARTUP_APPROVED_REGISTRY_KEY,
+        RUN_REGISTRY_KEY, STARTUP_APPROVED_REGISTRY_KEY, ensure_windows_run_key,
+        remove_windows_startup_approval, windows_run_entry_exists,
     };
     #[cfg(windows)]
-    use winreg::enums::{RegType, HKEY_CURRENT_USER, KEY_READ};
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, RegType};
     #[cfg(windows)]
     use winreg::{RegKey, RegValue};
 
@@ -388,7 +387,9 @@ mod tests {
             if enabled {
                 previous.enable().unwrap();
                 let content = std::fs::read_to_string(&plist).unwrap();
-                assert!(content.contains(&format!("<string>{}</string>", old_executable.display())));
+                assert!(
+                    content.contains(&format!("<string>{}</string>", old_executable.display()))
+                );
             }
             let mut context = mock_context(noop_assets());
             context.config_mut().identifier = "dsh-tauri".into();

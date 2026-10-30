@@ -1,5 +1,3 @@
-
-
 pub(super) const CMD_NODE_RESOLVE: &str = r#"
 rem Prefer the desktop-resolved node (DSH_NODE, injected by the app into its
 rem own child processes), then a version-compatible local node, then the
@@ -175,7 +173,7 @@ unset remaining_path
 #[cfg(all(test, unix))]
 mod tests {
     use super::SH_USER_DSH_PRECEDENCE;
-    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::os::unix::fs::{PermissionsExt, symlink};
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -227,7 +225,10 @@ mod tests {
                 tokio::process::Command::new(&shim)
                     .current_dir(&bin)
                     .env_clear()
-                    .env("PATH", format!("{prefix}:{}", root.join("missing").display()))
+                    .env(
+                        "PATH",
+                        format!("{prefix}:{}", root.join("missing").display()),
+                    )
                     .kill_on_drop(true)
                     .output(),
             )

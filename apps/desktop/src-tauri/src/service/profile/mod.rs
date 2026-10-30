@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub mod migrate;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 pub const DEFAULT_PROFILE: &str = "web";
 
@@ -30,8 +30,7 @@ const NON_WEB_SURFACE_BUNDLES: [&str; 4] = [
 
 const PROFILE_PATCH_TEMPLATE: &str = "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n[]\n";
 
-const PROFILE_PNPM_WORKSPACE: &str =
-    "packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n\n# The desktop runtime intentionally reviews this fresh transitive release.\nminimumReleaseAgeExclude:\n  - zod@4.4.3\n";
+const PROFILE_PNPM_WORKSPACE: &str = "packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n\n# The desktop runtime intentionally reviews this fresh transitive release.\nminimumReleaseAgeExclude:\n  - zod@4.4.3\n";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -401,7 +400,9 @@ pub fn migrate_desktop_profile_name(app_handle: &AppHandle) {
 
 fn migrate_desktop_profile_in_root(app_handle: &AppHandle, profiles_root: &Path) {
     if adopt_tauri_profile_dir(profiles_root) == ProfileDirAdoption::Failed {
-        log::warn!("Desktop profile rename failed; keeping {LEGACY_DESKTOP_PROFILE} and retrying next start");
+        log::warn!(
+            "Desktop profile rename failed; keeping {LEGACY_DESKTOP_PROFILE} and retrying next start"
+        );
         return;
     }
 
@@ -682,7 +683,7 @@ fn ensure_profile_core_bundles(dir: &Path, id: &str) -> Result<bool, String> {
             return Err(format!(
                 "PROFILE_MANIFEST_READ_FAILED: {}: {error}",
                 manifest_path.display()
-            ))
+            ));
         }
     };
 
@@ -977,9 +978,11 @@ mod tests {
         let dir = home.path().join("profiles/beta");
         assert!(!prepare_at(home.path(), "beta").unwrap());
         assert!(!dir.exists());
-        assert!(prepare_at(home.path(), "../beta")
-            .unwrap_err()
-            .starts_with("INVALID_ID:"));
+        assert!(
+            prepare_at(home.path(), "../beta")
+                .unwrap_err()
+                .starts_with("INVALID_ID:")
+        );
 
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("package.json");
@@ -1006,9 +1009,11 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), repaired);
 
         fs::write(&path, "{ broken").unwrap();
-        assert!(prepare_at(home.path(), "beta")
-            .unwrap_err()
-            .starts_with("PROFILE_MANIFEST_PARSE_FAILED:"));
+        assert!(
+            prepare_at(home.path(), "beta")
+                .unwrap_err()
+                .starts_with("PROFILE_MANIFEST_PARSE_FAILED:")
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), "{ broken");
         assert_eq!(fs::read_to_string(patch).unwrap(), "# user patch\n[]\n");
     }

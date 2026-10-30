@@ -1,4 +1,3 @@
-
 use rayon::prelude::*;
 use std::fs;
 use std::path::Path;
@@ -105,27 +104,29 @@ pub(super) fn copy_tree(src: &Path, dst: &Path, progress: &CopyProgress) -> Resu
     let entries: Vec<fs::DirEntry> = read_dir
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("DATA_DIR_COPY_ENTRY: {e}"))?;
-    entries.par_iter().try_for_each(|entry| -> Result<(), String> {
-        let name = entry.file_name();
-        if name.to_str().map(is_skipped).unwrap_or(false) {
-            return Ok(());
-        }
-        let src_path = entry.path();
-        let dst_path = dst.join(&name);
-        let meta = fs::symlink_metadata(&src_path)
-            .map_err(|e| format!("DATA_DIR_COPY_META: {}: {e}", src_path.display()))?;
-        if is_reparse_point(&meta) {
-            copy_link(&src_path, &dst_path);
-            progress.record_link();
-        } else if meta.is_dir() {
-            copy_tree(&src_path, &dst_path, progress)?;
-        } else if meta.is_file() {
-            fs::copy(&src_path, &dst_path)
-                .map_err(|e| format!("DATA_DIR_COPY_FILE: {}: {e}", src_path.display()))?;
-            progress.record_file(meta.len());
-        }
-        Ok(())
-    })
+    entries
+        .par_iter()
+        .try_for_each(|entry| -> Result<(), String> {
+            let name = entry.file_name();
+            if name.to_str().map(is_skipped).unwrap_or(false) {
+                return Ok(());
+            }
+            let src_path = entry.path();
+            let dst_path = dst.join(&name);
+            let meta = fs::symlink_metadata(&src_path)
+                .map_err(|e| format!("DATA_DIR_COPY_META: {}: {e}", src_path.display()))?;
+            if is_reparse_point(&meta) {
+                copy_link(&src_path, &dst_path);
+                progress.record_link();
+            } else if meta.is_dir() {
+                copy_tree(&src_path, &dst_path, progress)?;
+            } else if meta.is_file() {
+                fs::copy(&src_path, &dst_path)
+                    .map_err(|e| format!("DATA_DIR_COPY_FILE: {}: {e}", src_path.display()))?;
+                progress.record_file(meta.len());
+            }
+            Ok(())
+        })
 }
 
 fn copy_link(src: &Path, dst: &Path) {
@@ -291,10 +292,42 @@ mod tests {
 
     #[test]
     fn covers_requires_target_not_smaller_than_source() {
-        let source = TreeStats { files: 10, bytes: 100, links: 0 };
-        assert!(TreeStats { files: 10, bytes: 100, links: 0 }.covers(&source));
-        assert!(TreeStats { files: 11, bytes: 100, links: 0 }.covers(&source));
-        assert!(!TreeStats { files: 10, bytes: 99, links: 0 }.covers(&source));
-        assert!(!TreeStats { files: 9, bytes: 100, links: 0 }.covers(&source));
+        let source = TreeStats {
+            files: 10,
+            bytes: 100,
+            links: 0,
+        };
+        assert!(
+            TreeStats {
+                files: 10,
+                bytes: 100,
+                links: 0
+            }
+            .covers(&source)
+        );
+        assert!(
+            TreeStats {
+                files: 11,
+                bytes: 100,
+                links: 0
+            }
+            .covers(&source)
+        );
+        assert!(
+            !TreeStats {
+                files: 10,
+                bytes: 99,
+                links: 0
+            }
+            .covers(&source)
+        );
+        assert!(
+            !TreeStats {
+                files: 9,
+                bytes: 100,
+                links: 0
+            }
+            .covers(&source)
+        );
     }
 }

@@ -1,10 +1,7 @@
-
+use crate::AppHandle;
 use crate::service::cli;
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
-use tauri::Manager;
-use tauri::{Runtime};
-use crate::{AppHandle};
+use tauri::Runtime;
 
 pub(super) struct LocalCore {
     pub(super) package_dir: PathBuf,
@@ -244,6 +241,98 @@ fn read_package_version(dir: &Path) -> Option<String> {
         .map(|s| s.trim_start_matches('v').to_string())
 }
 
+fn has_link_in_path(path: &Path) -> bool {
+    path.ancestors().any(|path| {
+        std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    })
+}
+
+fn managed_folder_core(slot: &Path) -> Option<PathBuf> {
+    let package = slot.join("node_modules/@deepseek-ai/dsh");
+    if has_link_in_path(&package) {
+        return None;
+    }
+    let manifest = package.join("package.json");
+    let bin = package.join("lib/bin.js");
+    let Ok(metadata) = std::fs::symlink_metadata(&manifest) else {
+        return None;
+    };
+    if metadata.file_type().is_symlink() || !bin.is_file() {
+        return None;
+    }
+    let name = std::fs::read_to_string(manifest)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|value| {
+            value
+                .get("name")
+                .and_then(|name| name.as_str())
+                .map(str::to_owned)
+        });
+    (name.as_deref() == Some("@deepseek-ai/dsh")).then_some(package)
+}
+
+fn protected_slot(slot: &Path, protected: &[PathBuf]) -> bool {
+    protected.iter().any(|root| {
+        dunce::canonicalize(root)
+            .ok()
+            .zip(dunce::canonicalize(slot).ok())
+            .is_some_and(|(root, slot)| slot.starts_with(&root) || root.starts_with(&slot))
+    })
+}
+
+pub(crate) async fn cleanup_active_folder_core(
+    slot: &Path,
+    allowed_root: &Path,
+    protected: &[PathBuf],
+) -> Result<(), String> {
+    let Some(package) = managed_folder_core(slot) else {
+        return Ok(());
+    };
+    if slot.join(crate::config::DSH_ASAR_FILE).is_file() {
+        return Ok(());
+    }
+    let safe = crate::service::fs_guard::ensure_within(&package, allowed_root)?;
+    if protected_slot(&safe, protected) {
+        return Err(format!("CORE_CLEANUP_PROTECTED: {}", safe.display()));
+    }
+    if !crate::service::download::remove_dir_with_retry(&safe).await {
+        return Err(format!("CORE_CLEANUP_FAILED: {}", safe.display()));
+    }
+    Ok(())
+}
+
+pub(crate) async fn cleanup_other_folder_cores(
+    deps_root: &Path,
+    active_slot: &Path,
+    protected: &[PathBuf],
+) {
+    let Ok(entries) = std::fs::read_dir(deps_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let slot = entry.path();
+        if slot == active_slot
+            || std::fs::symlink_metadata(&slot)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            || slot.join(crate::config::DSH_ASAR_FILE).is_file()
+            || protected_slot(&slot, protected)
+        {
+            continue;
+        }
+        let Some(package) = managed_folder_core(&slot) else {
+            continue;
+        };
+        let safe = match crate::service::fs_guard::ensure_within(&package, deps_root) {
+            Ok(path) if !protected_slot(&path, protected) => path,
+            _ => continue,
+        };
+        if !crate::service::download::remove_dir_with_retry(&safe).await {
+            log::warn!("CORE_CLEANUP_SLOT_FAILED: {}", safe.display());
+        }
+    }
+}
+
 pub(super) fn local_core<R: Runtime>(app_handle: &AppHandle<R>) -> Option<LocalCore> {
     let package_dir = user_dsh_package_dir(app_handle)?;
     let version = read_package_version(&package_dir)?;
@@ -300,10 +389,12 @@ pub async fn update_local_core<R: Runtime>(app_handle: AppHandle<R>) -> Result<S
     let minimum = crate::config::manifest::minimum_dsh_version(&app_handle)
         .as_deref()
         .and_then(|version| semver::Version::parse(version).ok());
-    if !crate::config::get_dsh_binary_path(&app_handle).is_file()
-        || !managed_version
-            .zip(minimum)
-            .is_some_and(|(version, minimum)| version >= minimum)
+    if !crate::config::dependencies::binary_present(
+        &app_handle,
+        crate::config::dependencies::DEP_DSH,
+    ) || !managed_version
+        .zip(minimum)
+        .is_some_and(|(version, minimum)| version >= minimum)
     {
         return Err(
             "CORE_LOCAL_UPDATE_REQUIRES_APP: a supported managed core must be installed before updating the local core"
@@ -415,6 +506,55 @@ mod local_update_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_managed_core(slot: &Path) -> PathBuf {
+        let package = slot.join("node_modules/@deepseek-ai/dsh");
+        std::fs::create_dir_all(package.join("lib")).unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            r#"{"name":"@deepseek-ai/dsh","version":"legacy-folder"}"#,
+        )
+        .unwrap();
+        std::fs::write(package.join("lib/bin.js"), "").unwrap();
+        package
+    }
+
+    #[tokio::test]
+    async fn managed_folder_cleanup_uses_identity_and_preserves_asar_and_symlink_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        let deps = temp.path().join("dependencies");
+        let active = deps.join("dsh");
+        let old_slot = deps.join("release-slot-without-semver");
+        let asar_slot = deps.join("release-slot-with-asar");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&active).unwrap();
+        std::fs::create_dir_all(&asar_slot).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let active_package = write_managed_core(&active);
+        let old_package = write_managed_core(&old_slot);
+        let asar_package = write_managed_core(&asar_slot);
+        std::fs::write(active.join(crate::config::DSH_ASAR_FILE), "archive").unwrap();
+        std::fs::write(asar_slot.join(crate::config::DSH_ASAR_FILE), "archive").unwrap();
+        std::fs::write(outside.join("sentinel"), "keep").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink(&outside, deps.join("linked-slot")).unwrap();
+        }
+        std::fs::create_dir_all(&deps).unwrap();
+        cleanup_active_folder_core(&active, &deps, &[])
+            .await
+            .unwrap();
+        assert!(active_package.exists());
+        assert!(active.join(crate::config::DSH_ASAR_FILE).is_file());
+        cleanup_other_folder_cores(&deps, &active, &[]).await;
+        assert!(!old_package.exists());
+        assert!(asar_package.exists());
+        assert_eq!(
+            std::fs::read_to_string(outside.join("sentinel")).unwrap(),
+            "keep"
+        );
+    }
 
     #[test]
     fn read_package_version_parses_manifest() {

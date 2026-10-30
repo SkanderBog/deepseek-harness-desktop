@@ -1,4 +1,3 @@
-
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -7,14 +6,14 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
+use crate::AppHandle;
 use crate::config;
 use crate::service::fs_guard;
 use crate::service::plugin::compat::{self, PluginInspect};
 use crate::service::plugin::{
-    inspect_specs, load_presets, packument, parse_patch_layer, render_patch_layer, watch,
-    ProfilePackageJson,
+    ProfilePackageJson, inspect_specs, load_presets, packument, parse_patch_layer,
+    render_patch_layer, watch,
 };
-use crate::{AppHandle};
 
 const POLICY_KEY: &str = "minimumReleaseAgeExclude";
 
@@ -97,7 +96,11 @@ pub(crate) fn pick_nearest(packument: &serde_json::Value, runtime: &str) -> Opti
         let Ok(version) = Version::parse(raw) else {
             continue;
         };
-        if best.as_ref().map(|current| version > *current).unwrap_or(true) {
+        if best
+            .as_ref()
+            .map(|current| version > *current)
+            .unwrap_or(true)
+        {
             best = Some(version);
         }
     }
@@ -149,10 +152,7 @@ async fn nearest(app_handle: &AppHandle, id: &str, runtime: Option<&str>) -> Opt
     pick_nearest(&packument, runtime?)
 }
 
-pub async fn analyze(
-    app_handle: &AppHandle,
-    source_id: &str,
-) -> Result<MigrationAnalysis, String> {
+pub async fn analyze(app_handle: &AppHandle, source_id: &str) -> Result<MigrationAnalysis, String> {
     let root = config::get_dsh_data_path(app_handle).join("profiles");
     let dir = fs_guard::join_safe(&root, source_id)?;
     if !dir.is_dir() {
@@ -170,7 +170,8 @@ pub async fn analyze(
     let runtime = crate::service::core::active_version(app_handle);
     let mut plugins = Vec::with_capacity(entries.len());
     for (index, (id, version)) in entries.into_iter().enumerate() {
-        let (verdict, target_version) = match inspected.get(index).and_then(|item| item.compatible) {
+        let (verdict, target_version) = match inspected.get(index).and_then(|item| item.compatible)
+        {
             Some(true) => (MigrationVerdict::Compatible, None),
             Some(false) => match nearest(app_handle, &id, runtime.as_deref()).await {
                 Some(nearest) => compare_versions(&version, &nearest),
@@ -555,7 +556,10 @@ mod tests {
     fn data_items_lists_only_what_the_source_profile_has() {
         let dir = workspace("items");
         let target = workspace("items-target");
-        assert!(data_items(&dir, &target).is_empty(), "空档案不应列出任何数据项");
+        assert!(
+            data_items(&dir, &target).is_empty(),
+            "空档案不应列出任何数据项"
+        );
 
         fs::write(dir.join(PATCH_FILE), "- id: only-patch\n").unwrap();
         fs::write(dir.join(CREDENTIALS_FILE), "token: x\n").unwrap();
@@ -603,11 +607,7 @@ mod tests {
     fn data_items_marks_fully_contained_entries_as_covered() {
         let source = workspace("covered-source");
         let target = workspace("covered-target");
-        fs::write(
-            source.join(PATCH_FILE),
-            "- id: shared\n- id: extra\n",
-        )
-        .unwrap();
+        fs::write(source.join(PATCH_FILE), "- id: shared\n- id: extra\n").unwrap();
         fs::write(target.join(PATCH_FILE), "- id: shared\n").unwrap();
         fs::write(
             source.join(POLICY_FILE),

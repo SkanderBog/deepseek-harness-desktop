@@ -49,7 +49,7 @@ fn process_integrity_level() -> std::io::Result<u32> {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use windows_sys::Win32::Security::{
         GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, IsValidSid,
-        TokenIntegrityLevel, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+        TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenIntegrityLevel,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -272,12 +272,12 @@ mod tests {
     #[test]
     fn real_low_integrity_process_shows_an_actionable_error_before_app_setup() {
         use std::os::windows::process::CommandExt;
-        use windows_sys::core::BOOL;
         use windows_sys::Win32::Foundation::{HWND, LPARAM};
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW,
             WM_CLOSE,
         };
+        use windows_sys::core::BOOL;
 
         unsafe extern "system" fn dismiss_error(window: HWND, parameter: LPARAM) -> BOOL {
             let probe = &mut *(parameter as *mut (u32, bool));
@@ -354,8 +354,8 @@ mod tests {
         }
         use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
         use windows_sys::Win32::Security::{
-            SetTokenInformation, TokenIntegrityLevel, SID, SID_AND_ATTRIBUTES,
-            SID_IDENTIFIER_AUTHORITY, TOKEN_ADJUST_DEFAULT, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+            SID, SID_AND_ATTRIBUTES, SID_IDENTIFIER_AUTHORITY, SetTokenInformation,
+            TOKEN_ADJUST_DEFAULT, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenIntegrityLevel,
         };
         use windows_sys::Win32::System::SystemServices::SE_GROUP_INTEGRITY;
         use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};

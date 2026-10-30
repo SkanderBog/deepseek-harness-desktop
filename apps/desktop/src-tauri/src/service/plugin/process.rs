@@ -1,4 +1,3 @@
-
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -11,11 +10,11 @@ use tauri::{Emitter, Manager};
 
 use crate::utils::decode_process_line;
 
+use crate::WebviewWindow;
 #[cfg(windows)]
 use crate::service::workflow;
 #[cfg(not(windows))]
 use std::process::{Command, Stdio};
-use crate::{WebviewWindow};
 
 pub(crate) const PREINSTALL_LOG_EVENT: &str = "preinstall-log";
 
@@ -82,7 +81,7 @@ pub(crate) fn active_plugin_processes() -> Vec<(ProcessOwner, ActivePluginProces
 pub(crate) fn plugin_process_has_exited(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{
-        OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, WaitForSingleObject,
     };
     const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
     let handle = unsafe {
@@ -339,6 +338,26 @@ pub(crate) async fn acquire_operation_lock() -> tokio::sync::OwnedMutexGuard<()>
         .await
 }
 
+/// Command for a plugin child process.
+///
+/// The Electron runtime's own binary must run as Node, so it comes from
+/// `client.node()` — the runtime owns both the path and `ELECTRON_RUN_AS_NODE`.
+/// A user-supplied launcher (a real `pnpm`, a standalone `node`) is spawned as
+/// itself and must not receive that switch.
+pub(crate) fn plugin_command(
+    app_handle: &tauri::AppHandle<tauri_runtime_electron::ElectronRuntime>,
+    program: &Path,
+) -> tokio::process::Command {
+    use tauri::Manager;
+    if program == crate::config::get_node_binary_path(app_handle) {
+        return app_handle
+            .state::<tauri_runtime_electron::ElectronClient>()
+            .inner()
+            .node();
+    }
+    tokio::process::Command::new(program)
+}
+
 pub(crate) struct PidGuard {
     owner: ProcessOwner,
     pid: u32,
@@ -399,85 +418,50 @@ pub(crate) async fn run_plugin_process(
     let process_guard = acquire_process_lock().await?;
     let captured = Arc::new(Mutex::new(String::new()));
 
-    #[cfg(windows)]
-    {
-        let (stdout, stderr, pid, handle) =
-            workflow::win_spawn::spawn_with_hidden_console_owned(node, args, Some(cwd), envs)
-                .map_err(|e| format!("PREINSTALL_SPAWN: {e}"))?;
-        let pid_guard = PidGuard::set(owner, pid);
-        log::info!("dsh plugin install started, pid {pid}");
+    let mut child = plugin_command(window.app_handle(), node)
+        .args(args)
+        .current_dir(cwd)
+        .envs(envs)
+        .spawn()
+        .map_err(|e| format!("PREINSTALL_SPAWN: {e}"))?;
+    let pid = child.id().unwrap_or_default();
+    let pid_guard = PidGuard::set(owner, pid);
+    log::info!("dsh plugin install started, pid {pid}");
 
-        spawn_line_emitter(stdout, window.clone(), captured.clone());
-        spawn_line_emitter(stderr, window.clone(), captured.clone());
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let emitter_window = window.clone();
+    let emitter_captured = captured.clone();
+    let emit = tokio::spawn(crate::service::workflow::instances::scope(
+        profile,
+        async move {
+            let _process_guard = process_guard;
+            let _pid_guard = pid_guard;
+            let readers: Vec<_> = [
+                stdout.map(|stream| {
+                    spawn_line_emitter(stream, emitter_window.clone(), emitter_captured.clone())
+                }),
+                stderr.map(|stream| spawn_line_emitter(stream, emitter_window, emitter_captured)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            let exit_code = child
+                .wait()
+                .await
+                .map(|status| status.code().unwrap_or(1))
+                .unwrap_or(1);
+            for reader in readers {
+                let _ = reader.await;
+            }
+            exit_code
+        },
+    ))
+    .await
+    .map_err(|e| format!("PREINSTALL_WAIT: {e}"))?;
 
-        let handle = WaitableHandle(handle);
-        let exit_code = tauri::async_runtime::spawn_blocking(move || {
-            crate::service::workflow::instances::scope_sync(profile, || {
-                let _process_guard = process_guard;
-                let _pid_guard = pid_guard;
-                use windows_sys::Win32::Foundation::CloseHandle;
-                use windows_sys::Win32::System::Threading::{
-                    GetExitCodeProcess, WaitForSingleObject, INFINITE,
-                };
-                let handle = handle;
-                unsafe {
-                    let wait = WaitForSingleObject(handle.0, INFINITE);
-                    let mut code: u32 = 0;
-                    if GetExitCodeProcess(handle.0, &mut code) == 0 {
-                        code = wait;
-                    }
-                    CloseHandle(handle.0);
-                    code as i32
-                }
-            })
-        })
-        .await
-        .map_err(|e| format!("PREINSTALL_WAIT: {e}"))?;
-
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        Ok((exit_code, drain_captured(captured)))
-    }
-
-    #[cfg(not(windows))]
-    {
-        use std::os::unix::process::CommandExt;
-        let mut command = Command::new(node);
-        crate::config::apply_node_env(&mut command);
-        let mut child = command
-            .args(args)
-            .envs(envs)
-            .current_dir(cwd)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .process_group(0)
-            .spawn()
-            .map_err(|e| format!("PREINSTALL_SPAWN: {e}"))?;
-
-        let pid = child.id();
-        let pid_guard = PidGuard::set(owner, pid);
-        log::info!("dsh plugin install started, pid {pid}");
-
-        if let Some(stdout) = child.stdout.take() {
-            spawn_line_emitter(stdout, window.clone(), captured.clone());
-        }
-        if let Some(stderr) = child.stderr.take() {
-            spawn_line_emitter(stderr, window.clone(), captured.clone());
-        }
-
-        let exit_code = tauri::async_runtime::spawn_blocking(move || {
-            crate::service::workflow::instances::scope_sync(profile, || {
-                let _process_guard = process_guard;
-                let _pid_guard = pid_guard;
-                child.wait().map(|s| s.code().unwrap_or(1)).unwrap_or(1)
-            })
-        })
-        .await
-        .map_err(|e| format!("PREINSTALL_WAIT: {e}"))?;
-
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        Ok((exit_code, drain_captured(captured)))
-    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    Ok((emit, drain_captured(captured)))
 }
 
 pub(super) fn drain_captured(captured: Arc<Mutex<String>>) -> String {
@@ -487,24 +471,24 @@ pub(super) fn drain_captured(captured: Arc<Mutex<String>>) -> String {
         .unwrap_or_default()
 }
 
-fn spawn_line_emitter<R: Read + Send + 'static>(
-    reader: R,
+fn spawn_line_emitter(
+    reader: impl tokio::io::AsyncRead + Unpin + Send + 'static,
     window: WebviewWindow,
     captured: Arc<Mutex<String>>,
-) {
-    std::thread::spawn(move || {
-        let mut buf = BufReader::new(reader);
-        let mut acc_buf = Vec::new();
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut buf = tokio::io::BufReader::new(reader);
+        let mut line = Vec::new();
         loop {
-            acc_buf.clear();
-            match buf.read_until(b'\n', &mut acc_buf) {
+            line.clear();
+            match tokio::io::AsyncBufReadExt::read_until(&mut buf, b'\n', &mut line).await {
                 Ok(0) => break,
                 Ok(_) => {
-                    let line = decode_process_line(&acc_buf);
-                    let trimmed = line
+                    let decoded = decode_process_line(&line);
+                    let trimmed = decoded
                         .strip_suffix("\r\n")
-                        .or_else(|| line.strip_suffix('\n'))
-                        .unwrap_or(&line)
+                        .or_else(|| decoded.strip_suffix('\n'))
+                        .unwrap_or(&decoded)
                         .to_string();
                     let _ = window.emit(
                         PREINSTALL_LOG_EVENT,
@@ -523,7 +507,7 @@ fn spawn_line_emitter<R: Read + Send + 'static>(
                 }
             }
         }
-    });
+    })
 }
 
 #[cfg(test)]
@@ -568,12 +552,14 @@ mod tests {
     fn drain_captured_returns_empty_without_recovering_poisoned_buffer() {
         let captured = Arc::new(Mutex::new("retained output".to_string()));
         let writer = captured.clone();
-        assert!(std::thread::spawn(move || {
-            let _guard = writer.lock().unwrap();
-            panic!("poison isolated capture buffer");
-        })
-        .join()
-        .is_err());
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = writer.lock().unwrap();
+                panic!("poison isolated capture buffer");
+            })
+            .join()
+            .is_err()
+        );
 
         assert_eq!(drain_captured(captured.clone()), "");
         assert!(captured.is_poisoned());

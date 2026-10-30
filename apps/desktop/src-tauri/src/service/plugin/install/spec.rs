@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
+use super::PreinstallPluginInfo;
 use super::bundled_dep_spec;
 use super::bundled_plugin_dir;
-use super::PreinstallPluginInfo;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 pub(super) fn local_path_spec(spec: &str) -> Option<PathBuf> {
     let trimmed = unquote(spec.trim());
@@ -278,12 +278,7 @@ mod tests {
 
         // issue #715：清单区间本身就带 `^`，拼接只能再加一个 `@`——出现 `^^` 会让 pnpm
         // 调用，一个坏 spec 就让整批预设都装不上（应用卡在加载中，见 issue #716）。
-        for core in [
-            "0.1.7-rc.1",
-            "0.1.7-rc.2",
-            "0.2.1-rc.1",
-            "0.3.0",
-        ] {
+        for core in ["0.1.7-rc.1", "0.1.7-rc.2", "0.2.1-rc.1", "0.3.0"] {
             let spec = preset_spec_for_install(&p, None, Some(core)).unwrap();
             assert!(!spec.contains("^^"), "core={core}: {spec}");
         }
@@ -346,11 +341,7 @@ mod tests {
     #[test]
     fn install_spec_keeps_space_paths_bare_for_supported_cores() {
         let preset = preset("dsh-tauri", "dsh-tauri", true);
-        for core in [
-            Some("0.1.7-rc.1"),
-            Some("0.2.1-rc.1"),
-            None,
-        ] {
+        for core in [Some("0.1.7-rc.1"), Some("0.2.1-rc.1"), None] {
             for (path, expected) in [
                 (
                     "C:/Program Files/DeepSeek Harness Desktop/resources/node_modules/dsh-tauri",

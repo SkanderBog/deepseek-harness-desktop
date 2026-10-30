@@ -1,4 +1,3 @@
-
 use semver::{Comparator, Op, Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -121,11 +120,7 @@ pub fn range_matches(raw: &str, runtime: &str) -> Option<bool> {
             return Some(true);
         }
     }
-    if parsed_any {
-        Some(false)
-    } else {
-        None
-    }
+    if parsed_any { Some(false) } else { None }
 }
 
 pub fn evaluate(peers: &BTreeMap<String, String>, runtime: &str) -> Option<bool> {

@@ -1,6 +1,6 @@
 use std::fs;
-use std::io::copy;
 use std::io::Cursor;
+use std::io::copy;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -47,12 +47,14 @@ pub fn extract_zip<'a, R: Runtime>(
     log::debug!("ZIP file contains {} files", total_files);
 
     for i in 0..total_files {
-        let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| format!("ZIP_ENTRY_INVALID: {e}"))?;
 
-        let outpath = match file.enclosed_name() {
-            Some(path) => dest.join(path),
-            None => continue,
-        };
+        let path = file
+            .enclosed_name()
+            .ok_or_else(|| format!("ZIP_PATH_INVALID: {}", file.name()))?;
+        let outpath = dest.join(path);
 
         let relative_path = outpath
             .strip_prefix(dest)

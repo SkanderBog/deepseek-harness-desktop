@@ -1,14 +1,10 @@
-
 use std::fs;
 use std::path::Path;
 
+use crate::AppHandle;
 use crate::service::backup;
-use crate::{AppHandle};
 
-pub fn prune_backups_in_dir(
-    backup_dir: &Path,
-    retention_count: u32,
-) -> Result<(), String> {
+pub fn prune_backups_in_dir(backup_dir: &Path, retention_count: u32) -> Result<(), String> {
     if retention_count == 0 {
         return Ok(());
     }
@@ -17,8 +13,7 @@ pub fn prune_backups_in_dir(
     let mut manifest: serde_json::Value = if content.trim().is_empty() {
         serde_json::json!({ "backups": [] })
     } else {
-        serde_json::from_str(&content)
-            .map_err(|e| format!("BACKUP_PRUNE_MANIFEST: {e}"))?
+        serde_json::from_str(&content).map_err(|e| format!("BACKUP_PRUNE_MANIFEST: {e}"))?
     };
     let backups = manifest["backups"]
         .as_array_mut()
@@ -43,8 +38,7 @@ pub fn prune_backups_in_dir(
             .map_err(|e| format!("BACKUP_PRUNE_SERIALIZE: {e}"))?,
     )
     .map_err(|e| format!("BACKUP_PRUNE_WRITE: {e}"))?;
-    fs::rename(&tmp, manifest_path)
-        .map_err(|e| format!("BACKUP_PRUNE_RENAME: {e}"))?;
+    fs::rename(&tmp, manifest_path).map_err(|e| format!("BACKUP_PRUNE_RENAME: {e}"))?;
 
     let canonical_dir =
         fs::canonicalize(backup_dir).map_err(|e| format!("BACKUP_PRUNE_DIR: {e}"))?;
@@ -72,10 +66,7 @@ fn is_direct_child_of(dir: &Path, candidate: &Path) -> bool {
     }
 }
 
-pub fn prune_old_backups(
-    app_handle: &AppHandle,
-    retention_count: u32,
-) -> Result<(), String> {
+pub fn prune_old_backups(app_handle: &AppHandle, retention_count: u32) -> Result<(), String> {
     let backup_dir = backup::get_backup_dir(app_handle);
     prune_backups_in_dir(&backup_dir, retention_count)
 }
@@ -224,8 +215,7 @@ mod tests {
         ));
         fs::write(&outside, b"sentinel").unwrap();
         let mut manifest: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(dir.join(".manifest.json")).unwrap())
-                .unwrap();
+            serde_json::from_str(&fs::read_to_string(dir.join(".manifest.json")).unwrap()).unwrap();
         manifest["backups"][0]["path"] = serde_json::json!(outside.to_string_lossy());
         fs::write(
             dir.join(".manifest.json"),
@@ -243,10 +233,8 @@ mod tests {
 
     #[test]
     fn handles_empty_backup_list() {
-        let dir = std::env::temp_dir().join(format!(
-            "dsh-backup-retention-empty-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("dsh-backup-retention-empty-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let manifest = serde_json::json!({ "backups": [] });

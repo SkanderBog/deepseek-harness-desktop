@@ -1,4 +1,3 @@
-
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -10,7 +9,7 @@ use serde_json::Value;
 
 use super::installed::profile_dir;
 use super::watch::DshPlugin;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 const UPDATES_TTL: Duration = Duration::from_secs(30 * 60);
 
@@ -837,7 +836,9 @@ mod tests {
             target("Owner/Repo", Some("next"))
         );
         assert_eq!(
-            extract_github_target("https://codeload.github.com/omdsh-dev/DSH-better-sidebar/tar.gz/7dbd9b75e2fd65758d4e55f750319399b91255a2"),
+            extract_github_target(
+                "https://codeload.github.com/omdsh-dev/DSH-better-sidebar/tar.gz/7dbd9b75e2fd65758d4e55f750319399b91255a2"
+            ),
             target("omdsh-dev/DSH-better-sidebar", None)
         );
     }
@@ -897,7 +898,9 @@ mod tests {
     #[test]
     fn codeload_archive_commit_is_current_state_not_update_target() {
         assert_eq!(
-            extract_github_target("https://codeload.github.com/owner/repo/tar.gz/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            extract_github_target(
+                "https://codeload.github.com/owner/repo/tar.gz/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ),
             target("owner/repo", None)
         );
         assert_eq!(

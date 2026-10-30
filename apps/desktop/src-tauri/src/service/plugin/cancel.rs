@@ -1,9 +1,8 @@
-
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 use super::process::{ActivePluginProcess, ProcessOwner};
-use crate::{AppHandle};
+use crate::AppHandle;
 
 const PREINSTALL_CANCEL_EVENT: &str = "preinstall-cancelled";
 

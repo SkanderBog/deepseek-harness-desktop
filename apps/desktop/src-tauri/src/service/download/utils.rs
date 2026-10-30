@@ -53,22 +53,64 @@ pub fn fix_recursive_permissions(path: &Path) -> io::Result<()> {
 
 const PRESERVE_DIRS: &[&str] = &["node_modules", ".git"];
 
-pub fn flatten_directory(dest: &PathBuf) -> Result<(), String> {
-    let sub_dirs: Vec<PathBuf> = fs::read_dir(dest)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
+/// Renames the single `*.asar` at `dest` to the stable name the manifest entry
+/// resolves (`dsh.asar`). Upstream names the archive after the platform, but the
+/// entry path must not change per platform.
+pub fn normalize_asar_name(dest: &Path) -> Result<PathBuf, String> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(dest).map_err(|e| format!("ASAR_READ_DIR: {e}"))? {
+        entries.push(entry.map_err(|e| format!("ASAR_READ_DIR: {e}"))?.path());
+    }
+    let archives: Vec<&PathBuf> = entries
+        .iter()
         .filter(|path| {
-            if !path.is_dir() {
-                return false;
-            }
-
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .map(|name| !name.starts_with('.') && !PRESERVE_DIRS.contains(&name))
-                .unwrap_or(false)
+            path.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("asar"))
         })
         .collect();
+    if entries.len() != 1 || archives.len() != 1 {
+        return Err(format!(
+            "ASAR_LAYOUT_INVALID: expected exactly one top-level .asar in {}, found {} entries and {} archives",
+            dest.display(),
+            entries.len(),
+            archives.len()
+        ));
+    }
+    let archive = archives[0];
+    let target = dest.join("dsh.asar");
+    if archive == &target {
+        return Ok(target);
+    }
+    if target.exists() {
+        return Err(format!(
+            "ASAR_LAYOUT_INVALID: duplicate target {}",
+            target.display()
+        ));
+    }
+    fs::rename(archive, &target).map_err(|e| format!("ASAR_RENAME: {e}"))?;
+    log::info!(
+        "Normalized dsh asar: {} -> {}",
+        archive.display(),
+        target.display()
+    );
+    Ok(target)
+}
+
+pub fn flatten_directory(dest: &PathBuf) -> Result<(), String> {
+    let mut sub_dirs = Vec::new();
+    for entry in fs::read_dir(dest).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.is_dir()
+            && path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|name| !name.starts_with('.') && !PRESERVE_DIRS.contains(&name))
+        {
+            sub_dirs.push(path);
+        }
+    }
 
     if sub_dirs.len() != 1 {
         return Ok(());
@@ -117,6 +159,21 @@ fn force_move(from: &Path, to: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::github_api;
+    use std::fs;
+
+    #[test]
+    fn asar_normalization_requires_one_archive_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("package-linux.asar");
+        fs::write(&source, b"archive").unwrap();
+        assert_eq!(
+            super::normalize_asar_name(dir.path()).unwrap(),
+            dir.path().join("dsh.asar")
+        );
+        let extra = dir.path().join("README.txt");
+        fs::write(&extra, b"extra").unwrap();
+        assert!(super::normalize_asar_name(dir.path()).is_err());
+    }
 
     #[test]
     fn rate_limit_cooldown_activates_after_mark() {

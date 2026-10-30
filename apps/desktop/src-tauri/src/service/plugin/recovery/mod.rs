@@ -1,14 +1,13 @@
-
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use super::errors;
 
+use crate::AppHandle;
 use extract::{
     classify_reason, extract_duplicate_loader_entry, extract_plugin_refs, extract_slot_conflict,
 };
 use ownership::resolve_recovery_plugins;
-use crate::{AppHandle};
 pub(crate) use uninstall::patch_entry_targets;
 use uninstall::{remove_plugin_dir, remove_plugin_from_manifest, strip_cordis_patch_for};
 

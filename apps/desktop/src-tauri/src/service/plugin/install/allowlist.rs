@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use serde_yaml::{Mapping, Value};
 
 use super::profile_dir;
+use crate::AppHandle;
 use crate::service::profile::parse_workspace_document;
-use crate::{AppHandle};
 
 pub(super) fn parse_allowlist_keys(output: &str) -> Vec<String> {
     let mut keys: Vec<String> = Vec::new();
@@ -556,8 +556,7 @@ onlyBuiltDependencies:
 
     #[test]
     fn apply_overwrites_placeholder_value_without_duplicate() {
-        let corrupted =
-            "allowBuilds:\n  'dsh-better-sidebar@https://code...': true\n  node-pty: set this to true or false\n  'node-pty': true\n";
+        let corrupted = "allowBuilds:\n  'dsh-better-sidebar@https://code...': true\n  node-pty: set this to true or false\n  'node-pty': true\n";
         let out = apply_allow_build_keys(corrupted, &["node-pty".to_string()]).unwrap();
         let map = allow_builds_map(&out);
         assert_eq!(map.get("node-pty"), Some(&serde_yaml::Value::Bool(true)));
@@ -572,8 +571,7 @@ onlyBuiltDependencies:
 
     #[test]
     fn collapse_dedupes_allow_builds_keys() {
-        let corrupted =
-            "packages:\n  - .\nallowBuilds:\n  node-pty: set this to true or false\n  'node-pty': true\n  keep: true\n";
+        let corrupted = "packages:\n  - .\nallowBuilds:\n  node-pty: set this to true or false\n  'node-pty': true\n  keep: true\n";
         let normalized = collapse_allow_builds_duplicates(corrupted);
         let node_pty = normalized
             .lines()

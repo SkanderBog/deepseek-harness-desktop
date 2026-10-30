@@ -1,7 +1,7 @@
-
 use crate::config;
 use crate::desktop::pet as pet_window;
-use base64::{engine::general_purpose::STANDARD, Engine};
+use crate::{AppHandle, WebviewWindow};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::{StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,7 +13,6 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 use zip::ZipArchive;
-use crate::{AppHandle, WebviewWindow};
 
 pub const PET_SIZE_MIN: f64 = pet_window::PET_SIZE_MIN_PERCENT;
 pub const PET_SIZE_MAX: f64 = pet_window::PET_SIZE_MAX_PERCENT;
@@ -318,7 +317,7 @@ pub fn delete_pet(app: AppHandle, id: String) -> Result<PetStatus, String> {
         Err(_) => {
             return Err(
                 "PET_ID_INVALID: pet id must be a preset id or source-qualified".to_string(),
-            )
+            );
         }
     }
     let setting = config::get_store_dat_setting(&app);
@@ -686,7 +685,7 @@ fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
             _ => {
                 return Err(
                     "PET_PATH_INVALID: path must not be absolute or contain traversal".to_string(),
-                )
+                );
             }
         }
     }
@@ -826,7 +825,7 @@ fn sprite_grid(declared: Option<u8>, width: u32, height: u32) -> Result<SpriteGr
         (false, false) => {
             return Err(format!(
                 "PET_ASSET_DIMENSIONS_INVALID: spritesheet height must be divisible by {PET_SPRITE_V1_ROWS} (v1) or {PET_SPRITE_V2_ROWS} (v2) rows"
-            ))
+            ));
         }
         (true, false) => PET_SPRITE_V1,
         (false, true) => PET_SPRITE_V2,
@@ -880,7 +879,7 @@ fn spritesheet_dimensions(
             _ => {
                 return Err(
                     "PET_ASSET_FORMAT_INVALID: unsupported or malformed WebP header".to_string(),
-                )
+                );
             }
         };
         ("image/webp", width, height)
@@ -954,7 +953,7 @@ fn animation_names(config: &Value) -> Result<HashSet<String>, String> {
                 return Err(
                     "PET_CONFIG_INVALID: animation slot must be a string or string array"
                         .to_string(),
-                )
+                );
             }
         };
         for value in values {
@@ -1165,7 +1164,7 @@ fn immediate_pet_directories(root: &Path) -> Result<Vec<PathBuf>, String> {
             return Err(format!(
                 "PET_LIST_FAILED: failed to read {}: {error}",
                 root.display()
-            ))
+            ));
         }
     };
     let mut directories = Vec::new();
@@ -1878,8 +1877,8 @@ pub async fn import_pet_repository(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zip::write::FileOptions;
     use zip::CompressionMethod;
+    use zip::write::FileOptions;
 
     struct TestDirectory(PathBuf);
 
@@ -1957,9 +1956,11 @@ mod tests {
                 );
             }
             if missing_media {
-                assert!(result
-                    .unwrap_err()
-                    .starts_with("PET_ASSET_INVALID: HTTP 404"));
+                assert!(
+                    result
+                        .unwrap_err()
+                        .starts_with("PET_ASSET_INVALID: HTTP 404")
+                );
                 continue;
             }
             let spec = result.unwrap();
@@ -2014,13 +2015,15 @@ mod tests {
         );
         assert_eq!(spec.ext.unwrap().mac.as_deref(), Some("webm"));
         assert!(spec.uri.mac.is_none());
-        assert!(repository_spec(
-            "https://raw.githubusercontent.com/o/r/HEAD/",
-            "unsafe.name",
-            None
-        )
-        .unwrap_err()
-        .starts_with("PET_ID_INVALID:"));
+        assert!(
+            repository_spec(
+                "https://raw.githubusercontent.com/o/r/HEAD/",
+                "unsafe.name",
+                None
+            )
+            .unwrap_err()
+            .starts_with("PET_ID_INVALID:")
+        );
     }
 
     #[test]
@@ -2049,17 +2052,21 @@ mod tests {
             "C:/private",
             "\\private",
         ] {
-            assert!(repository_asset_url(base, path)
-                .unwrap_err()
-                .starts_with("PET_PATH_INVALID:"));
+            assert!(
+                repository_asset_url(base, path)
+                    .unwrap_err()
+                    .starts_with("PET_PATH_INVALID:")
+            );
         }
-        assert!(repository_spec(
-            base,
-            "pet",
-            Some(br#"{"id":"pet","spritesheetPath":"sprite.webp"}"#)
-        )
-        .unwrap_err()
-        .starts_with("PET_KIND_FORBIDDEN:"));
+        assert!(
+            repository_spec(
+                base,
+                "pet",
+                Some(br#"{"id":"pet","spritesheetPath":"sprite.webp"}"#)
+            )
+            .unwrap_err()
+            .starts_with("PET_KIND_FORBIDDEN:")
+        );
     }
 
     #[test]
@@ -2085,9 +2092,11 @@ mod tests {
             "https://raw.githubusercontent.com/o/r/HEAD/c?x=1",
         ] {
             spec.config = url.into();
-            assert!(pet_repository_revision(&spec)
-                .unwrap_err()
-                .starts_with("PET_REPOSITORY_INVALID:"));
+            assert!(
+                pet_repository_revision(&spec)
+                    .unwrap_err()
+                    .starts_with("PET_REPOSITORY_INVALID:")
+            );
         }
     }
 
@@ -2386,15 +2395,21 @@ mod tests {
             parse_qualified_id("chat:pet_1").unwrap(),
             (PetSource::Chat, "pet_1")
         );
-        assert!(parse_qualified_id("pet_1")
-            .unwrap_err()
-            .starts_with("PET_ID_INVALID:"));
-        assert!(parse_qualified_id("other:pet_1")
-            .unwrap_err()
-            .starts_with("PET_SOURCE_INVALID:"));
-        assert!(parse_qualified_id("codex:../pet")
-            .unwrap_err()
-            .starts_with("PET_ID_INVALID:"));
+        assert!(
+            parse_qualified_id("pet_1")
+                .unwrap_err()
+                .starts_with("PET_ID_INVALID:")
+        );
+        assert!(
+            parse_qualified_id("other:pet_1")
+                .unwrap_err()
+                .starts_with("PET_SOURCE_INVALID:")
+        );
+        assert!(
+            parse_qualified_id("codex:../pet")
+                .unwrap_err()
+                .starts_with("PET_ID_INVALID:")
+        );
     }
 
     #[test]
@@ -2412,9 +2427,11 @@ mod tests {
             );
         }
         assert!(safe_archive_entry("pet/spritesheet.webp", Some(0o100644)).is_ok());
-        assert!(safe_archive_entry("pet/link", Some(0o120777))
-            .unwrap_err()
-            .starts_with("PET_ARCHIVE_LINK_FORBIDDEN:"));
+        assert!(
+            safe_archive_entry("pet/link", Some(0o120777))
+                .unwrap_err()
+                .starts_with("PET_ARCHIVE_LINK_FORBIDDEN:")
+        );
     }
 
     #[test]
@@ -2450,17 +2467,21 @@ mod tests {
             (PathBuf::from("my-pet/pet.json"), false),
             (PathBuf::from("outside.txt"), false),
         ];
-        assert!(archive_root_prefix(&mixed)
-            .unwrap_err()
-            .starts_with("PET_ARCHIVE_LAYOUT_INVALID:"));
+        assert!(
+            archive_root_prefix(&mixed)
+                .unwrap_err()
+                .starts_with("PET_ARCHIVE_LAYOUT_INVALID:")
+        );
 
         let duplicate_manifests = vec![
             (PathBuf::from("pet.json"), false),
             (PathBuf::from("wrapper/pet.json"), false),
         ];
-        assert!(archive_root_prefix(&duplicate_manifests)
-            .unwrap_err()
-            .starts_with("PET_ARCHIVE_LAYOUT_INVALID:"));
+        assert!(
+            archive_root_prefix(&duplicate_manifests)
+                .unwrap_err()
+                .starts_with("PET_ARCHIVE_LAYOUT_INVALID:")
+        );
     }
 
     #[test]
@@ -2545,21 +2566,27 @@ mod tests {
 
         let mut invalid_grid = valid.clone();
         invalid_grid[24] = 86;
-        assert!(spritesheet_dimensions(&invalid_grid, None)
-            .unwrap_err()
-            .starts_with("PET_ASSET_DIMENSIONS_INVALID:"));
+        assert!(
+            spritesheet_dimensions(&invalid_grid, None)
+                .unwrap_err()
+                .starts_with("PET_ASSET_DIMENSIONS_INVALID:")
+        );
 
         let mut invalid_height = valid.clone();
         invalid_height[27..30].copy_from_slice(&[99, 0, 0]);
-        assert!(spritesheet_dimensions(&invalid_height, None)
-            .unwrap_err()
-            .starts_with("PET_ASSET_DIMENSIONS_INVALID:"));
+        assert!(
+            spritesheet_dimensions(&invalid_height, None)
+                .unwrap_err()
+                .starts_with("PET_ASSET_DIMENSIONS_INVALID:")
+        );
 
         let mut oversized = valid;
         oversized[24..27].copy_from_slice(&[0xff, 0xff, 0x00]);
-        assert!(spritesheet_dimensions(&oversized, None)
-            .unwrap_err()
-            .starts_with("PET_ASSET_DIMENSIONS_INVALID:"));
+        assert!(
+            spritesheet_dimensions(&oversized, None)
+                .unwrap_err()
+                .starts_with("PET_ASSET_DIMENSIONS_INVALID:")
+        );
     }
 
     #[test]
@@ -2601,10 +2628,11 @@ mod tests {
         assert_eq!(item.source, "codex");
         assert_eq!(item.kind, "codex");
         assert_eq!(item.thumbnail_type, "spritesheet");
-        assert!(item
-            .thumbnail
-            .unwrap()
-            .starts_with("data:image/webp;base64,"));
+        assert!(
+            item.thumbnail
+                .unwrap()
+                .starts_with("data:image/webp;base64,")
+        );
     }
 
     #[test]
@@ -2659,9 +2687,11 @@ mod tests {
             .unwrap();
         }
 
-        assert!(delete_pet_directory(&root.0, PetSource::Codex, "missing")
-            .unwrap_err()
-            .starts_with("PET_NOT_FOUND:"));
+        assert!(
+            delete_pet_directory(&root.0, PetSource::Codex, "missing")
+                .unwrap_err()
+                .starts_with("PET_NOT_FOUND:")
+        );
         assert_eq!(
             delete_pet_directory(&root.0, PetSource::Codex, "alpha"),
             Ok(())
@@ -2883,18 +2913,22 @@ mod tests {
             b"GIF89a\x01\x10\x01\x10\x00\x00\x00",
         ] {
             fs::write(root.path().join("preview/preview.gif"), bytes).unwrap();
-            assert!(gif_data_url(root.path(), "preview/preview.gif")
-                .unwrap_err()
-                .starts_with("PET_PREVIEW_INVALID:"));
+            assert!(
+                gif_data_url(root.path(), "preview/preview.gif")
+                    .unwrap_err()
+                    .starts_with("PET_PREVIEW_INVALID:")
+            );
         }
         let gif = fs::OpenOptions::new()
             .write(true)
             .open(root.path().join("preview/preview.gif"))
             .unwrap();
         gif.set_len(PET_SPRITESHEET_MAX_BYTES + 1).unwrap();
-        assert!(gif_data_url(root.path(), "preview/preview.gif")
-            .unwrap_err()
-            .starts_with("PET_PREVIEW_READ_FAILED:"));
+        assert!(
+            gif_data_url(root.path(), "preview/preview.gif")
+                .unwrap_err()
+                .starts_with("PET_PREVIEW_READ_FAILED:")
+        );
     }
 
     #[test]
@@ -2931,15 +2965,19 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let manifest = dsh_fixture(root.path());
         assert!(validate_pet_source(PetSource::Chat, &manifest).is_ok());
-        assert!(validate_pet_source(PetSource::Codex, &manifest)
-            .unwrap_err()
-            .starts_with("PET_KIND_FORBIDDEN:"));
+        assert!(
+            validate_pet_source(PetSource::Codex, &manifest)
+                .unwrap_err()
+                .starts_with("PET_KIND_FORBIDDEN:")
+        );
         let bytes = fs::read(root.path().join("pet.json")).unwrap();
         let archive = build_archive(&[("pet.json", &bytes)]);
         let staging = root.path().join("staging");
-        assert!(extract_pet_archive(&archive, &staging)
-            .unwrap_err()
-            .starts_with("PET_KIND_FORBIDDEN:"));
+        assert!(
+            extract_pet_archive(&archive, &staging)
+                .unwrap_err()
+                .starts_with("PET_KIND_FORBIDDEN:")
+        );
         let legacy =
             parse_manifest_bytes(br#"{"id":"old","spritesheetPath":"sprite.webp"}"#).unwrap();
         assert!(validate_pet_source(PetSource::Codex, &legacy).is_ok());
@@ -2980,9 +3018,11 @@ mod tests {
             "external/preview/preview.gif",
             "external/webm/idle.webm",
         ] {
-            assert!(contained_file(root.path(), relative)
-                .unwrap_err()
-                .starts_with("PET_PATH_INVALID:"));
+            assert!(
+                contained_file(root.path(), relative)
+                    .unwrap_err()
+                    .starts_with("PET_PATH_INVALID:")
+            );
         }
         for field in ["config", "preview", "video"] {
             match field {
@@ -3022,13 +3062,17 @@ mod tests {
             fs::write(&target, &original).unwrap();
             fs::remove_file(&path).unwrap();
             std::os::unix::fs::symlink(&target, &path).unwrap();
-            assert!(contained_file(root.path(), relative)
-                .unwrap_err()
-                .starts_with("PET_PATH_INVALID:"));
-            if relative == "pet.json" {
-                assert!(read_manifest(root.path())
+            assert!(
+                contained_file(root.path(), relative)
                     .unwrap_err()
-                    .starts_with("PET_PATH_INVALID:"));
+                    .starts_with("PET_PATH_INVALID:")
+            );
+            if relative == "pet.json" {
+                assert!(
+                    read_manifest(root.path())
+                        .unwrap_err()
+                        .starts_with("PET_PATH_INVALID:")
+                );
             } else {
                 assert!(
                     read_dsh_asset(root.path(), &manifest, "chat:video-pet".to_string())

@@ -1,13 +1,12 @@
-
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::AppHandle;
 use crate::service::download::ProgressTracker;
 use tauri::{Manager, Runtime};
-use crate::{AppHandle};
 
 pub async fn download_file<'a, R: Runtime>(
     tracker: &'a ProgressTracker<'a, R>,
@@ -244,7 +243,10 @@ pub fn verify_sha256(buffer: &[u8], expected: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn fetch_node_sha256(app_handle: &AppHandle, download_url: &str) -> Result<String, String> {
+pub async fn fetch_node_sha256(
+    app_handle: &AppHandle,
+    download_url: &str,
+) -> Result<String, String> {
     let (base, filename) = download_url.rsplit_once('/').ok_or_else(|| {
         "INTEGRITY_METADATA_INVALID: Node.js download URL has no filename".to_string()
     })?;
@@ -341,8 +343,10 @@ pub(crate) async fn rename_with_retry(from: &Path, to: &Path) -> Result<(), std:
             Err(e) if e.raw_os_error() == Some(32) => {
                 return Err(std::io::Error::new(
                     e.kind(),
-                    format!("{e}; end node.exe processes still using the core directory in Task Manager or restart Windows, then retry"),
-                ))
+                    format!(
+                        "{e}; end node.exe processes still using the core directory in Task Manager or restart Windows, then retry"
+                    ),
+                ));
             }
             Err(e) => return Err(e),
         }
@@ -410,8 +414,14 @@ pub async fn ensure_extract<'a, R: Runtime>(
 
     let pure_name = name.split('?').next().unwrap_or(&name).to_lowercase();
     let is_tgz = pure_name.ends_with(".tar.gz") || pure_name.ends_with(".tgz");
+    let is_asar_zip = pure_name.ends_with(".asar.zip");
     let is_zip = pure_name.ends_with(".zip");
-    log::debug!("File type: tgz={}, zip={}", is_tgz, is_zip);
+    log::debug!(
+        "File type: tgz={}, zip={}, asar_zip={}",
+        is_tgz,
+        is_zip,
+        is_asar_zip
+    );
 
     if !is_tgz && !is_zip {
         log::debug!("Non-compressed file, writing directly");
@@ -453,6 +463,11 @@ pub async fn ensure_extract<'a, R: Runtime>(
         log::error!("Failed to flatten directory: {}", e);
         e.to_string()
     })?;
+
+    if is_asar_zip {
+        let archive = super::utils::normalize_asar_name(&staging)?;
+        super::asar::validate_dsh_archive(&archive)?;
+    }
 
     #[cfg(unix)]
     {

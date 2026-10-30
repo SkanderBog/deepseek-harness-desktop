@@ -1,4 +1,3 @@
-
 use std::path::Path;
 
 mod build;
@@ -180,7 +179,9 @@ mod tests {
         let root = Path::new(r"C:\Users\小蔡\AppData\Roaming");
         assert_eq!(
             under_root(
-                Path::new(r"C:\Users\小蔡\AppData\Roaming\dsh-tauri\dependencies\pnpm\bin\pnpm.cjs"),
+                Path::new(
+                    r"C:\Users\小蔡\AppData\Roaming\dsh-tauri\dependencies\pnpm\bin\pnpm.cjs"
+                ),
                 root,
                 "%APPDATA%",
             )
@@ -188,8 +189,12 @@ mod tests {
             Some(r"%APPDATA%\dsh-tauri\dependencies\pnpm\bin\pnpm.cjs")
         );
         assert_eq!(
-            under_root(Path::new(r"C:\Users\小蔡\.dsh"), Path::new(r"C:\Users\小蔡"), "%USERPROFILE%")
-                .as_deref(),
+            under_root(
+                Path::new(r"C:\Users\小蔡\.dsh"),
+                Path::new(r"C:\Users\小蔡"),
+                "%USERPROFILE%"
+            )
+            .as_deref(),
             Some(r"%USERPROFILE%\.dsh")
         );
         assert_eq!(under_root(root, root, "%APPDATA%"), None);
@@ -198,8 +203,12 @@ mod tests {
             None
         );
         assert_eq!(
-            under_root(Path::new(r"C:\Users\小蔡\a%20b"), Path::new(r"C:\Users\小蔡"), "%USERPROFILE%")
-                .as_deref(),
+            under_root(
+                Path::new(r"C:\Users\小蔡\a%20b"),
+                Path::new(r"C:\Users\小蔡"),
+                "%USERPROFILE%"
+            )
+            .as_deref(),
             Some(r"%USERPROFILE%\a%%20b")
         );
     }
@@ -207,7 +216,9 @@ mod tests {
     #[test]
     fn portable_path_cmd_keeps_ascii_paths_verbatim() {
         assert_eq!(
-            portable_path_cmd(Path::new(r"C:\Users\test\AppData\Roaming\dsh-tauri\pnpm.cjs")),
+            portable_path_cmd(Path::new(
+                r"C:\Users\test\AppData\Roaming\dsh-tauri\pnpm.cjs"
+            )),
             r"C:\Users\test\AppData\Roaming\dsh-tauri\pnpm.cjs"
         );
         assert_eq!(

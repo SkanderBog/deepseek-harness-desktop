@@ -55,6 +55,10 @@ pub const APP_DATA_DEV_DIR_NAME: &str = "dev";
 
 pub const DSH_MANIFEST_RELATIVE: &str = "package.json";
 
+/// The single archive the dsh package installs as, and the manifest entry inside it.
+pub const DSH_ASAR_FILE: &str = "dsh.asar";
+pub const DSH_MANIFEST_IN_ASAR: &str = "node_modules/@deepseek-ai/dsh/package.json";
+
 #[cfg_attr(not(windows), allow(dead_code))] // 仅 Windows 的 bin 目录计算使用
 pub const CLI_ROOT_DEV_DIR_NAME: &str = "dev-dsh";
 

@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
-use crate::{AppHandle};
+use crate::AppHandle;
+use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
 
 const CLIENT: &str = "node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js";
 const CLASS: &str = "var ScrollFollow = class ScrollFollow {";
@@ -82,9 +82,7 @@ mod tests {
     use super::*;
 
     fn fixture() -> String {
-        format!(
-            "{CLASS}\n\t\tinterrupt(element, metrics) {{\n\t\t}}\n\t\t{ORIGINAL}\n}};"
-        )
+        format!("{CLASS}\n\t\tinterrupt(element, metrics) {{\n\t\t}}\n\t\t{ORIGINAL}\n}};")
     }
 
     #[test]

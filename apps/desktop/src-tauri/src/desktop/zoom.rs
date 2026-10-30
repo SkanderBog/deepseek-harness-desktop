@@ -1,8 +1,7 @@
-
+use crate::WebviewWindow;
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSOperatingSystemVersion, NSProcessInfo};
-use tauri::{Runtime};
-use crate::{WebviewWindow};
+use tauri::Runtime;
 
 #[cfg(any(target_os = "macos", test))]
 const MINIMUM_MACOS_ZOOM_MAJOR: isize = 11;
@@ -53,7 +52,7 @@ pub fn apply_native_zoom<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::{macos_zoom_support_error, MINIMUM_MACOS_ZOOM_MAJOR};
+    use super::{MINIMUM_MACOS_ZOOM_MAJOR, macos_zoom_support_error};
 
     #[test]
     fn native_zoom_requires_macos_11_or_newer() {

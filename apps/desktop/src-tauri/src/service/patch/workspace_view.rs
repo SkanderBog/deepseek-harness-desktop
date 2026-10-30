@@ -1,19 +1,15 @@
 use std::path::Path;
 
-use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
-use crate::{AppHandle};
+use crate::AppHandle;
+use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
 
 const PATCH_MARKER: &str = "dsh-tauri: tolerate workspace view state written by a newer core";
 
-const GROUP_EXPANSION_ORIGINAL: &str =
-    "d.groupExpansion = Object.fromEntries(Object.entries(d.groupExpansion).filter(([key]) => retained.has(key)));";
-const SESSION_ORDER_ORIGINAL: &str =
-    "d.sessionOrderByAccount = Object.fromEntries(Object.entries(d.sessionOrderByAccount).filter(([key]) => retained.has(key)));";
+const GROUP_EXPANSION_ORIGINAL: &str = "d.groupExpansion = Object.fromEntries(Object.entries(d.groupExpansion).filter(([key]) => retained.has(key)));";
+const SESSION_ORDER_ORIGINAL: &str = "d.sessionOrderByAccount = Object.fromEntries(Object.entries(d.sessionOrderByAccount).filter(([key]) => retained.has(key)));";
 
-const GROUP_EXPANSION_PATCHED: &str =
-    "d.groupExpansion = Object.fromEntries(Object.entries(d.groupExpansion ?? {}).filter(([key]) => retained.has(key))); /* dsh-tauri: tolerate workspace view state written by a newer core */";
-const SESSION_ORDER_PATCHED: &str =
-    "d.sessionOrderByAccount = Object.fromEntries(Object.entries(d.sessionOrderByAccount ?? {}).filter(([key]) => retained.has(key))); /* dsh-tauri: tolerate workspace view state written by a newer core */";
+const GROUP_EXPANSION_PATCHED: &str = "d.groupExpansion = Object.fromEntries(Object.entries(d.groupExpansion ?? {}).filter(([key]) => retained.has(key))); /* dsh-tauri: tolerate workspace view state written by a newer core */";
+const SESSION_ORDER_PATCHED: &str = "d.sessionOrderByAccount = Object.fromEntries(Object.entries(d.sessionOrderByAccount ?? {}).filter(([key]) => retained.has(key))); /* dsh-tauri: tolerate workspace view state written by a newer core */";
 
 const WORKSPACE_CLIENT_JS: &str = "node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js";
 

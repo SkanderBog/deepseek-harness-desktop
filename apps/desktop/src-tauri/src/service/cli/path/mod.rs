@@ -1,8 +1,7 @@
-
 #[cfg(not(windows))]
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::{Manager};
+use tauri::Manager;
 
 #[cfg(windows)]
 use super::shim::SHIM_CMD_NAME;
@@ -12,7 +11,7 @@ use super::shim::SHIM_SH_NAME;
 use crate::config::CLI_ROOT_DEV_DIR_NAME;
 
 #[cfg(not(windows))]
-use rc::{inject_shell_rc, strip_shell_rc, RC_FILES, RC_MARK_START};
+use rc::{RC_FILES, RC_MARK_START, inject_shell_rc, strip_shell_rc};
 #[cfg(windows)]
 use registry::{path_contains_token, read_user_path, remove_path_token, write_user_path};
 
@@ -20,7 +19,7 @@ mod pnpm;
 mod rc;
 #[cfg(windows)]
 mod registry;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 #[cfg(windows)]
 pub(crate) use pnpm::find_user_pnpm_executable;

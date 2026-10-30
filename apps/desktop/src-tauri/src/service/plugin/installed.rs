@@ -1,10 +1,9 @@
-
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use super::preset::{load_deprecated_ids, load_presets, PreinstallPluginInfo};
-use crate::{AppHandle};
+use super::preset::{PreinstallPluginInfo, load_deprecated_ids, load_presets};
+use crate::AppHandle;
 
 #[derive(Deserialize)]
 pub(crate) struct ProfilePackageJson {

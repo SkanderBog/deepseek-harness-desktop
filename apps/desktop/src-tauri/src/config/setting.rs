@@ -1,9 +1,9 @@
 use super::constants::*;
+use crate::AppHandle;
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, OnceLock};
 use tauri::{Emitter, Manager, Runtime};
 use tauri_plugin_store::StoreExt;
-use crate::{AppHandle};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -376,11 +376,11 @@ pub fn set_dsh_pkg_identity(app_handle: &AppHandle, commit: String, tag: String)
 #[cfg(test)]
 mod tests {
     use super::{
-        default_close_action, default_zoom_factor, force_xwayland_in_store_json,
-        normalize_close_action, normalize_setting, normalize_zoom_factor,
-        preserve_persisted_fields, resolve_e2e_app_data_dir, resolve_store_dat_file,
-        setting_from_value, unwrap_json_value, Setting, STORE_DAT_DEV_FILE, STORE_DAT_FILE,
-        STORE_DAT_TEST_FILE, STORE_SETTING_KEY, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
+        STORE_DAT_DEV_FILE, STORE_DAT_FILE, STORE_DAT_TEST_FILE, STORE_SETTING_KEY, Setting,
+        ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN, default_close_action, default_zoom_factor,
+        force_xwayland_in_store_json, normalize_close_action, normalize_setting,
+        normalize_zoom_factor, preserve_persisted_fields, resolve_e2e_app_data_dir,
+        resolve_store_dat_file, setting_from_value, unwrap_json_value,
     };
 
     #[test]

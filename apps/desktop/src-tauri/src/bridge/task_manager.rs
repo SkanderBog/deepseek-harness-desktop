@@ -6,8 +6,8 @@ use serde::Serialize;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tauri::Manager;
 
+use crate::Webview;
 use crate::service::workflow;
-use crate::{Webview};
 
 #[derive(Clone, Serialize)]
 pub struct TaskManagerProcess {
@@ -281,17 +281,23 @@ mod tests {
             start_time: 102,
             can_end: true,
         };
-        assert!(validate_end(&process, 101)
-            .unwrap_err()
-            .starts_with("TASK_MANAGER_STALE:"));
-        assert!(validate_end(&process, 0)
-            .unwrap_err()
-            .starts_with("TASK_MANAGER_STALE:"));
+        assert!(
+            validate_end(&process, 101)
+                .unwrap_err()
+                .starts_with("TASK_MANAGER_STALE:")
+        );
+        assert!(
+            validate_end(&process, 0)
+                .unwrap_err()
+                .starts_with("TASK_MANAGER_STALE:")
+        );
         assert_eq!(validate_end(&process, 102), Ok(()));
         process.can_end = false;
-        assert!(validate_end(&process, 102)
-            .unwrap_err()
-            .starts_with("TASK_MANAGER_PROTECTED:"));
+        assert!(
+            validate_end(&process, 102)
+                .unwrap_err()
+                .starts_with("TASK_MANAGER_PROTECTED:")
+        );
     }
 
     #[test]

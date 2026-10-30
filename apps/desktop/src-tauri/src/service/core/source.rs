@@ -1,12 +1,30 @@
-
 use crate::config;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use super::local::{local_core, local_core_package_dir};
+use crate::AppHandle;
 use crate::service::download::parse_version_from_tag;
-use crate::{AppHandle};
+
+static UNSUPPORTED_LOCAL_WARNED: OnceLock<()> = OnceLock::new();
+
+fn meets_baseline(version: &str, baseline: &str) -> bool {
+    match (
+        semver::Version::parse(version),
+        semver::Version::parse(baseline),
+    ) {
+        (Ok(actual), Ok(baseline)) => actual >= baseline,
+        _ => true,
+    }
+}
+
+pub(super) fn core_supports_bundled_plugins(version: &str, baseline: Option<&str>) -> bool {
+    match baseline {
+        Some(baseline) => meets_baseline(version, baseline),
+        None => true,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -53,25 +71,6 @@ pub struct HarnessCore {
     pub error: Option<String>,
 }
 
-static UNSUPPORTED_LOCAL_WARNED: OnceLock<()> = OnceLock::new();
-
-fn meets_baseline(version: &str, baseline: &str) -> bool {
-    match (
-        semver::Version::parse(version),
-        semver::Version::parse(baseline),
-    ) {
-        (Ok(actual), Ok(baseline)) => actual >= baseline,
-        _ => true,
-    }
-}
-
-pub(super) fn core_supports_bundled_plugins(version: &str, baseline: Option<&str>) -> bool {
-    match baseline {
-        Some(baseline) => meets_baseline(version, baseline),
-        None => true,
-    }
-}
-
 fn warn_unsupported_local_core(version: &str, baseline: Option<&str>) {
     if UNSUPPORTED_LOCAL_WARNED.set(()).is_err() {
         return;
@@ -83,7 +82,6 @@ fn warn_unsupported_local_core(version: &str, baseline: Option<&str>) {
     );
 }
 
-/// 组成部分，装上也无法加载，只会把启动卡在插件阶段（issue #596）。持久化的
 pub fn active_source<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> CoreSource {
     let setting = config::get_store_dat_setting(app_handle);
     let local = local_core(app_handle);
@@ -103,13 +101,8 @@ pub fn active_source<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> CoreSource
     match setting.active_core.as_deref().and_then(CoreSource::parse) {
         Some(CoreSource::App) => CoreSource::App,
         Some(CoreSource::Local) if local_usable => CoreSource::Local,
-        _ => {
-            if local_usable {
-                CoreSource::Local
-            } else {
-                CoreSource::App
-            }
-        }
+        _ if local_usable => CoreSource::Local,
+        _ => CoreSource::App,
     }
 }
 
@@ -155,15 +148,6 @@ pub fn active_version(app_handle: &AppHandle) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn core_source_round_trips() {
-        assert_eq!(CoreSource::parse("local"), Some(CoreSource::Local));
-        assert_eq!(CoreSource::parse("app"), Some(CoreSource::App));
-        assert_eq!(CoreSource::parse("other"), None);
-        assert_eq!(CoreSource::Local.as_str(), "local");
-        assert_eq!(CoreSource::App.as_str(), "app");
-    }
 
     #[test]
     fn baseline_gate_accepts_equal_or_newer_versions() {

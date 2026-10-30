@@ -1,4 +1,3 @@
-
 use serde_yaml::Value;
 
 const SECONDARY_HANDLE: &str = "%TAG !! !dsh-secondary-\n";
@@ -70,7 +69,9 @@ mod tests {
     #[test]
     fn rewrite_keeps_js_expressions() {
         assert_eq!(
-            rewrite("- id: x\n  name: !!js \"process.env.X ? 'a' : 'b'\"\n  config:\n    token: !!js process.env.TOKEN\n    port: !!js 0x10\n    dirs:\n      - !!js process.cwd()\n"),
+            rewrite(
+                "- id: x\n  name: !!js \"process.env.X ? 'a' : 'b'\"\n  config:\n    token: !!js process.env.TOKEN\n    port: !!js 0x10\n    dirs:\n      - !!js process.cwd()\n"
+            ),
             "- id: x\n  name: !!js 'process.env.X ? ''a'' : ''b'''\n  config:\n    token: !!js process.env.TOKEN\n    port: !!js '0x10'\n    dirs:\n    - !!js process.cwd()\n"
         );
     }

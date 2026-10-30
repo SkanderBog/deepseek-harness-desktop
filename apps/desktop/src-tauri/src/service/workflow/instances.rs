@@ -3,7 +3,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::status::Status;
-use crate::{AppHandle};
+use crate::AppHandle;
 
 tokio::task_local! {
     static PROFILE: String;
@@ -252,9 +252,11 @@ mod tests {
             }),
             scope("concurrent-profile-b".into(), async {
                 tokio::task::yield_now().await;
-                assert!(!instance()
-                    .launching
-                    .load(std::sync::atomic::Ordering::SeqCst));
+                assert!(
+                    !instance()
+                        .launching
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                );
                 assert_eq!(current_profile().as_deref(), Some("concurrent-profile-b"));
                 instance()
             })

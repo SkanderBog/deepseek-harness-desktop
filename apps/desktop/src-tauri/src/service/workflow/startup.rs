@@ -46,7 +46,9 @@ pub(super) fn note_client_modules_ready(ready: usize, total: usize) {
     if READY_RECORDED.swap(true, Ordering::SeqCst) {
         return;
     }
-    log::info!("STARTUP_READY: client modules {ready}/{total} ready, spawn_to_ready_ms={elapsed_ms}");
+    log::info!(
+        "STARTUP_READY: client modules {ready}/{total} ready, spawn_to_ready_ms={elapsed_ms}"
+    );
     let spawn_at = SPAWN_AT_MS.load(Ordering::SeqCst);
     let http_at = HTTP_AT_MS.load(Ordering::SeqCst);
     let http_ms = (http_at > 0 && http_at >= spawn_at).then(|| http_at - spawn_at);

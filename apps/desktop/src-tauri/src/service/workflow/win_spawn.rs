@@ -1,4 +1,3 @@
-
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::File;
@@ -12,24 +11,24 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, SetHandleInformation, ERROR_BROKEN_PIPE, GENERIC_READ, GENERIC_WRITE, HANDLE,
-    HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, ERROR_BROKEN_PIPE, GENERIC_READ, GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT,
+    INVALID_HANDLE_VALUE, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
-    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
-    TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+    QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::Pipes::{CreatePipe, PeekNamedPipe};
 use windows_sys::Win32::System::Threading::{
-    CreateProcessW, GetExitCodeProcess, ResumeThread, TerminateProcess, WaitForSingleObject,
-    CREATE_NEW_CONSOLE, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION,
-    STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOW,
+    CREATE_NEW_CONSOLE, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
+    GetExitCodeProcess, PROCESS_INFORMATION, ResumeThread, STARTF_USESHOWWINDOW,
+    STARTF_USESTDHANDLES, STARTUPINFOW, TerminateProcess, WaitForSingleObject,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
@@ -673,7 +672,9 @@ mod tests {
         let job = ProcessJob::new().unwrap();
         let args = [
             OsString::from("-e"),
-            OsString::from("const child=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>process.exit(0),60000)'],{stdio:'ignore',windowsHide:true});child.once('spawn',()=>require('fs').writeFileSync(process.argv[1],String(child.pid)));child.once('error',error=>{throw error});setTimeout(()=>process.exit(0),60000)"),
+            OsString::from(
+                "const child=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>process.exit(0),60000)'],{stdio:'ignore',windowsHide:true});child.once('spawn',()=>require('fs').writeFileSync(process.argv[1],String(child.pid)));child.once('error',error=>{throw error});setTimeout(()=>process.exit(0),60000)",
+            ),
             ready.clone().into_os_string(),
         ];
         let (_stdout, _stderr, _, handle) =
@@ -732,7 +733,7 @@ mod tests {
         use std::os::windows::process::CommandExt;
         use windows_sys::Win32::Foundation::{DuplicateHandle, ERROR_ACCESS_DENIED};
         use windows_sys::Win32::System::SystemServices::JOB_OBJECT_QUERY;
-        use windows_sys::Win32::System::Threading::{GetCurrentProcess, CREATE_NO_WINDOW};
+        use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, GetCurrentProcess};
 
         let node = find_node_on_path().expect("node.exe required for job tests");
         let root = tempfile::tempdir().unwrap();
@@ -817,7 +818,11 @@ mod tests {
                 "Object.assign(process.env,{});const fs=require('fs');const child=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>process.exit(0),60000)'],{{stdio:'inherit',windowsHide:true,env:{{...process.env,NODE_NO_WARNINGS:'1'}}}});child.once('error',error=>{{throw error}});child.once('spawn',()=>{{fs.writeFileSync({},String(child.pid));fs.writeSync(1,Buffer.alloc(131072,111));fs.writeSync(2,Buffer.alloc(131072,101));{}}});",
                 serde_json::to_string(&envs).unwrap(),
                 serde_json::to_string(&ready).unwrap(),
-                if timeout { "setTimeout(()=>process.exit(0),60000)" } else { "process.exit(0)" },
+                if timeout {
+                    "setTimeout(()=>process.exit(0),60000)"
+                } else {
+                    "process.exit(0)"
+                },
             );
             let started = Instant::now();
             let result = probe_in_job(

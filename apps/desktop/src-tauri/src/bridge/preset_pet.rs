@@ -1,8 +1,7 @@
-
+use crate::AppHandle;
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 use tauri_plugin_store::StoreExt;
-use crate::{AppHandle};
 
 const REMOTE_PET_CATALOG_KEY: &str = "remote_pet_catalog";
 
@@ -269,9 +268,11 @@ mod tests {
         assert_eq!(catalog[0].name, "Old");
         updated.name = "New".into();
         updated.id = "builtin".into();
-        assert!(replace_registered(&mut catalog, &updated)
-            .unwrap_err()
-            .starts_with("PET_NOT_FOUND:"));
+        assert!(
+            replace_registered(&mut catalog, &updated)
+                .unwrap_err()
+                .starts_with("PET_NOT_FOUND:")
+        );
         assert_eq!(catalog[0].name, "Old");
         updated.id = "remote".into();
         updated.config = "https://e/new".into();
@@ -323,14 +324,16 @@ mod tests {
             [("shared", false), ("registered", true)]
         );
         assert_eq!(entries[0].spec.config, "https://builtin/config.jsonc");
-        assert!(merge_entries(
-            Vec::new(),
-            vec![
-                spec("dup", "https://a/config.jsonc"),
-                spec("dup", "https://b/config.jsonc"),
-            ],
-        )
-        .is_err());
+        assert!(
+            merge_entries(
+                Vec::new(),
+                vec![
+                    spec("dup", "https://a/config.jsonc"),
+                    spec("dup", "https://b/config.jsonc"),
+                ],
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -347,23 +350,31 @@ mod tests {
         let catalog = remote_catalog(Some(value.clone())).unwrap();
         assert_eq!(serde_json::to_value(&catalog).unwrap(), value);
         assert_eq!(remote_catalog(None).unwrap().len(), 0);
-        assert!(ensure_new_pet(&catalog, &spec)
-            .unwrap_err()
-            .starts_with("PET_ALREADY_IMPORTED:"));
+        assert!(
+            ensure_new_pet(&catalog, &spec)
+                .unwrap_err()
+                .starts_with("PET_ALREADY_IMPORTED:")
+        );
         let mut renamed = spec.clone();
         renamed.id = "renamed".into();
-        assert!(ensure_new_pet(&catalog, &renamed)
-            .unwrap_err()
-            .starts_with("PET_ALREADY_IMPORTED:"));
+        assert!(
+            ensure_new_pet(&catalog, &renamed)
+                .unwrap_err()
+                .starts_with("PET_ALREADY_IMPORTED:")
+        );
         renamed.config = "https://raw.githubusercontent.com/O/R/0123456789abcdef0123456789abcdef01234567/new/config.jsonc".into();
-        assert!(ensure_new_pet(&catalog, &renamed)
-            .unwrap_err()
-            .starts_with("PET_ALREADY_IMPORTED:"));
+        assert!(
+            ensure_new_pet(&catalog, &renamed)
+                .unwrap_err()
+                .starts_with("PET_ALREADY_IMPORTED:")
+        );
         renamed.config = "https://raw.githubusercontent.com/o/other/HEAD/config.jsonc".into();
         assert_eq!(ensure_new_pet(&catalog, &renamed), Ok(()));
-        assert!(remote_catalog(Some(serde_json::json!({})))
-            .unwrap_err()
-            .starts_with("PET_REMOTE_CATALOG_INVALID:"));
+        assert!(
+            remote_catalog(Some(serde_json::json!({})))
+                .unwrap_err()
+                .starts_with("PET_REMOTE_CATALOG_INVALID:")
+        );
     }
 
     #[test]
@@ -389,9 +400,11 @@ mod tests {
             remote_catalog(Some(persisted[REMOTE_PET_CATALOG_KEY].clone())).unwrap()[0].id,
             "remote"
         );
-        assert!(persisted[REMOTE_PET_CATALOG_KEY][0]
-            .get("motions")
-            .is_none());
+        assert!(
+            persisted[REMOTE_PET_CATALOG_KEY][0]
+                .get("motions")
+                .is_none()
+        );
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
     }
 
@@ -565,9 +578,11 @@ mod tests {
         let bad_kind = r#"[{ "id": "x", "name": "X", "kind": "sprite", "config": "https://e.com/c.jsonc", "uri": { "default": "https://e.com/w" } }]"#;
         let catalog: Vec<PresetPetSpec> = serde_json::from_str(bad_kind).unwrap();
         assert_eq!(catalog[0].kind.as_deref(), Some("sprite"));
-        assert!(catalog[0]
-            .kind
-            .as_deref()
-            .is_some_and(|kind| kind != "dsh" && kind != "codex"));
+        assert!(
+            catalog[0]
+                .kind
+                .as_deref()
+                .is_some_and(|kind| kind != "dsh" && kind != "codex")
+        );
     }
 }

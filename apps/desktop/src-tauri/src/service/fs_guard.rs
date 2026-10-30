@@ -1,4 +1,3 @@
-
 use std::path::{Path, PathBuf};
 
 pub fn validate_id(id: &str) -> Result<(), String> {
@@ -118,7 +117,11 @@ mod tests {
             use std::os::windows::process::CommandExt;
             let status = std::process::Command::new("cmd")
                 .arg("/C")
-                .raw_arg(format!("mklink /J \"{}\" \"{}\"", link.display(), root.display()))
+                .raw_arg(format!(
+                    "mklink /J \"{}\" \"{}\"",
+                    link.display(),
+                    root.display()
+                ))
                 .creation_flags(0x08000000)
                 .status()
                 .unwrap();

@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
-use crate::{AppHandle};
+use crate::AppHandle;
+use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
 
 const CLIENT: &str = "node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js";
 const MARKER: &str = "isDshMobileComposer() && t.hasAttribute(\"data-composer-input\")";
@@ -39,11 +39,11 @@ fn patch_source(source: &str) -> PatchOutcome {
         {
             return PatchOutcome::AnchorMissing;
         }
-        return PatchOutcome::Patched(
-            source
-                .replacen(LEGACY_MOBILE, MOBILE, 1)
-                .replacen(root, ROOT_PATCHED, 1),
-        );
+        return PatchOutcome::Patched(source.replacen(LEGACY_MOBILE, MOBILE, 1).replacen(
+            root,
+            ROOT_PATCHED,
+            1,
+        ));
     }
     if source.contains("function isDshMobileComposer()") {
         return PatchOutcome::AnchorMissing;
@@ -76,7 +76,9 @@ mod tests {
     use super::*;
 
     fn fixture() -> String {
-        format!("{KEYMAP}\n{ENTER}\n}}\n{AUTOFOCUS}\nfocusDraftEditor(editor, revealSelection);\n{ROOT}\n")
+        format!(
+            "{KEYMAP}\n{ENTER}\n}}\n{AUTOFOCUS}\nfocusDraftEditor(editor, revealSelection);\n{ROOT}\n"
+        )
     }
 
     #[test]

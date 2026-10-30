@@ -1,25 +1,24 @@
-
 use crate::config;
 use crate::service::cli;
 use crate::service::core;
 use crate::service::profile::{
     active_profile, allow_profile_release_age, profile_dir_of, release_age_excludes_at,
 };
+use crate::{AppHandle, WebviewWindow};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path;
-use tauri::{Emitter};
-use crate::{AppHandle, WebviewWindow};
+use tauri::Emitter;
 
 pub(crate) use super::ensure_profile_npmrc;
 pub(crate) use super::errors;
 pub(crate) use super::installed::{installed_name, is_installed, profile_dir};
 pub(crate) use super::preset::{
-    bundled_dep_spec, bundled_plugin_dir, load_presets, PreinstallPluginInfo,
+    PreinstallPluginInfo, bundled_dep_spec, bundled_plugin_dir, load_presets,
 };
 pub(crate) use super::process::{
-    acquire_operation_lock, acquire_process_lock, new_process_owner, run_plugin_process, PidGuard,
-    PreinstallLogPayload, ProcessOwner, PREINSTALL_LOG_EVENT,
+    PREINSTALL_LOG_EVENT, PidGuard, PreinstallLogPayload, ProcessOwner, acquire_operation_lock,
+    acquire_process_lock, new_process_owner, run_plugin_process,
 };
 pub(crate) use super::recovery::is_actionable_plugin_ref;
 pub(crate) use super::uninstall_recovery;
@@ -34,6 +33,7 @@ mod pnpm;
 mod single;
 mod spec;
 
+pub use diagnose::{IncompatibleVersion, PolicyBlockedVersion};
 pub(crate) use env::build_plugin_envs;
 pub use inspect::inspect_specs;
 pub(crate) use inspect::packument;
@@ -42,7 +42,6 @@ pub(crate) use pnpm::{
     pnpm_major_version_at_bounded, profile_store_major,
 };
 pub use single::{remove_many, update_many};
-pub use diagnose::{IncompatibleVersion, PolicyBlockedVersion};
 
 use allowlist::{add_allow_build_keys, parse_allowlist_keys};
 use artifact::{ensure_plugin_entry_built, verify_installed_products};
@@ -283,7 +282,7 @@ async fn install_with_cancel(
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
     }
-    if !dsh_bin.exists() {
+    if !crate::config::dependencies::binary_at_present(&dsh_bin) {
         return Err("HARNESS_NOT_FOUND: dsh CLI missing".to_string());
     }
 
@@ -487,7 +486,7 @@ pub async fn allow_version_exemptions(
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
     }
-    if !dsh_bin.exists() {
+    if !crate::config::dependencies::binary_at_present(&dsh_bin) {
         return Err("HARNESS_NOT_FOUND: dsh CLI missing".to_string());
     }
 

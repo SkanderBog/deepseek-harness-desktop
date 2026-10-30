@@ -1,4 +1,3 @@
-
 use crate::config;
 use crate::service::{download, fs_guard, workflow};
 use std::collections::HashSet;
@@ -6,9 +5,9 @@ use std::path::{Path, PathBuf};
 
 use super::local::{find_user_dsh_bin, local_core};
 use super::source::{
-    active_is_bundled, active_source, core_supports_bundled_plugins, CoreSource, HarnessCore,
+    CoreSource, HarnessCore, active_is_bundled, active_source, core_supports_bundled_plugins,
 };
-use crate::{AppHandle};
+use crate::AppHandle;
 
 const BUNDLED_CORE_ID: &str = "app-bundled";
 
@@ -152,7 +151,8 @@ fn rows_with_release_catalog(
 
     let active_tag = config::get_dsh_pkg_tag(app_handle);
     let active_dir = config::get_dsh_install_path(app_handle);
-    let active_present = config::get_dsh_binary_path(app_handle).exists();
+    let active_present =
+        config::dependencies::binary_present(app_handle, config::dependencies::DEP_DSH);
     let manifest_version = config::get_dsh_version(app_handle).or_else(|| {
         (source == CoreSource::App && active_present)
             .then(|| read_manifest_dsh_version(&active_dir))
@@ -359,7 +359,6 @@ pub async fn set_active(app_handle: &AppHandle, id: &str) -> Result<HarnessCore,
         let Some(core) = local_core(app_handle) else {
             return Err("CORE_LOCAL_NOT_FOUND: no local core detected".to_string());
         };
-        // 低于最低支持版本的本地核心无法加载随包插件（issue #596）：显式切换同样
         let baseline = config::manifest::minimum_dsh_version(app_handle);
         if !core_supports_bundled_plugins(&core.version, baseline.as_deref()) {
             return Err(format!(
@@ -388,7 +387,7 @@ pub async fn set_active(app_handle: &AppHandle, id: &str) -> Result<HarnessCore,
         });
         config::dependencies::record(app_handle, config::dependencies::DEP_DSH, Some(bundled));
     } else if id == "app" {
-        if !config::get_dsh_binary_path(app_handle).exists() {
+        if !config::dependencies::binary_present(app_handle, config::dependencies::DEP_DSH) {
             return Err("CORE_APP_NOT_FOUND: bundled core is not installed".to_string());
         }
         stop_harness_for_core_switch(app_handle).await?;
@@ -417,7 +416,9 @@ async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), Str
     fs_guard::validate_id(tag)?;
     let cur_tag = config::get_dsh_pkg_tag(app_handle);
 
-    if cur_tag.as_deref() == Some(tag) && config::get_dsh_binary_path(app_handle).is_file() {
+    if cur_tag.as_deref() == Some(tag)
+        && config::dependencies::binary_present(app_handle, config::dependencies::DEP_DSH)
+    {
         stop_harness_for_core_switch(app_handle).await?;
         config::update_store_dat_setting(app_handle, |setting| {
             setting.active_core = Some(CoreSource::App.as_str().to_string());

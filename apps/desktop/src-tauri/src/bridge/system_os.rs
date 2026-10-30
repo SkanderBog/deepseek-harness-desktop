@@ -1,9 +1,8 @@
-
 use crate::config;
 use crate::logger;
 use crate::service::{core, plugin, profile};
-use tauri_plugin_opener::OpenerExt;
 use crate::{AppHandle, WebviewWindow};
+use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
 pub async fn proxy_health_check(
@@ -19,10 +18,7 @@ pub async fn proxy_health_check(
 }
 
 #[tauri::command]
-pub fn harness_ownership(
-    app_handle: AppHandle,
-    window: WebviewWindow,
-) -> Result<(), String> {
+pub fn harness_ownership(app_handle: AppHandle, window: WebviewWindow) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::service::workflow::instances::scope_sync(
         profile,
@@ -46,10 +42,7 @@ pub async fn get_runtime_info(
 }
 
 #[tauri::command]
-pub async fn open_in_browser(
-    window: WebviewWindow,
-    app_handle: AppHandle,
-) -> Result<(), String> {
+pub async fn open_in_browser(window: WebviewWindow, app_handle: AppHandle) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::service::workflow::instances::scope(profile, async move {
         let url =
@@ -63,10 +56,7 @@ pub async fn open_in_browser(
 }
 
 #[tauri::command]
-pub async fn copy_service_url(
-    window: WebviewWindow,
-    app_handle: AppHandle,
-) -> Result<(), String> {
+pub async fn copy_service_url(window: WebviewWindow, app_handle: AppHandle) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::service::workflow::instances::scope(profile, async move {
         let url =
@@ -174,10 +164,7 @@ fn format_env_info(
 }
 
 #[tauri::command]
-pub async fn read_run_logs(
-    window: WebviewWindow,
-    app_handle: AppHandle,
-) -> Result<String, String> {
+pub async fn read_run_logs(window: WebviewWindow, app_handle: AppHandle) -> Result<String, String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::service::workflow::instances::scope(profile, async move {
     const MAX_LINES: usize = 100;

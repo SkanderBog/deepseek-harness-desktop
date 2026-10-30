@@ -46,7 +46,11 @@ fn probe(dir: &Path, remedy_root: &Path, prefix: &str) -> Result<(), String> {
             Ok(())
         }
         Err(error) if is_permission_error(&error) => {
-            let remedy = if remedy_root.is_dir() { remedy_root } else { dir };
+            let remedy = if remedy_root.is_dir() {
+                remedy_root
+            } else {
+                dir
+            };
             Err(dir_error(prefix, dir, remedy, &error))
         }
         Err(error) => {

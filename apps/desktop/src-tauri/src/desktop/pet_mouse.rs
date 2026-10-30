@@ -1,12 +1,12 @@
 //! macOS 仅订阅鼠标事件，避免后台线程调用 HIToolbox 导致崩溃（issue #397）；
 
+use crate::WebviewWindow;
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::{Emitter, State};
-use crate::{WebviewWindow};
 
 pub const PET_MOUSE_MOVE_EVENT: &str = "device-mouse-move";
 pub const PET_MOUSE_BUTTON_EVENT: &str = "device-mouse-button";
@@ -225,7 +225,7 @@ fn tap_disabled_notice(event_type: core_graphics::event::CGEventType) -> bool {
 /// # 为什么自己持有 tap（issue #559）
 #[cfg(target_os = "macos")]
 fn listen_mouse_macos(store: Arc<MouseStateStore>) -> Result<(), String> {
-    use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
+    use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
     use core_graphics::event::{
         CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
         CallbackResult,

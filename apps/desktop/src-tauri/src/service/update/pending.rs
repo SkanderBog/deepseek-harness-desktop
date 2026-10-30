@@ -1,12 +1,11 @@
-
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tauri_plugin_store::StoreExt;
 
-use crate::config::{store_dat_file_name, STORE_PENDING_INSTALLER_KEY};
+use crate::AppHandle;
+use crate::config::{STORE_PENDING_INSTALLER_KEY, store_dat_file_name};
 use crate::service::workflow;
-use crate::{AppHandle};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingInstaller {

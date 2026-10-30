@@ -1,4 +1,3 @@
-
 use std::path::PathBuf;
 
 use crate::config::{DSH_HOME_DEV_DIR_NAME, DSH_HOME_DIR_NAME};
@@ -81,12 +80,8 @@ pub(super) fn now_stamp() -> String {
         .map(|elapsed| elapsed.as_secs() as libc::time_t)
         .unwrap_or_default();
     let mut local: libc::tm = unsafe { std::mem::zeroed() };
-    let filled = unsafe {
-        libc::localtime_r(
-            &seconds as *const libc::time_t,
-            &mut local as *mut libc::tm,
-        )
-    };
+    let filled =
+        unsafe { libc::localtime_r(&seconds as *const libc::time_t, &mut local as *mut libc::tm) };
     if !filled.is_null() {
         return format!(
             "{:04}-{:02}-{:02}T{:02}-{:02}-{:02}",
@@ -205,7 +200,9 @@ mod tests {
         };
         let migrated = "E:\\DSH 数据\\DSHHome";
         let inherited = "D:\\Old Home";
-        unsafe { std::env::set_var("DSH_TEST_EXPAND_ROOT", "E:\\DSH 数据"); }
+        unsafe {
+            std::env::set_var("DSH_TEST_EXPAND_ROOT", "E:\\DSH 数据");
+        }
         let persisted = match mode.as_str() {
             "missing" | "stale" => Ok(Some(migrated.to_string())),
             "expanded" => Ok(Some("%DSH_TEST_EXPAND_ROOT%\\DSHHome".to_string())),
@@ -216,9 +213,13 @@ mod tests {
             _ => panic!("unknown home restoration mode: {mode}"),
         };
         if mode == "expanded" {
-            unsafe { std::env::set_var(DATA_DIR_ENV, migrated); }
+            unsafe {
+                std::env::set_var(DATA_DIR_ENV, migrated);
+            }
         } else if mode != "missing" && mode != "default" {
-            unsafe { std::env::set_var(DATA_DIR_ENV, inherited); }
+            unsafe {
+                std::env::set_var(DATA_DIR_ENV, inherited);
+            }
         }
         restore_process_env(persisted);
         let expected = match mode.as_str() {
@@ -255,9 +256,11 @@ mod tests {
     fn stamp_has_the_script_compatible_shape() {
         let stamp = now_stamp();
         assert_eq!(stamp.len(), 19);
-        assert!(stamp
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == 'T' || c == '-'));
+        assert!(
+            stamp
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == 'T' || c == '-')
+        );
         assert_eq!(&stamp[10..11], "T");
     }
 

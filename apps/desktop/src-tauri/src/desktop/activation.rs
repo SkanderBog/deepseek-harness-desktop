@@ -1,13 +1,12 @@
-
 pub use crate::config::{CLOSE_ACTION_QUIT, CLOSE_ACTION_TRAY};
 
 #[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
 
-use tauri::{Runtime, Window};
+use crate::{AppHandle, WebviewWindow};
 #[cfg(target_os = "macos")]
 use tauri::{ActivationPolicy, Manager};
-use crate::{AppHandle, WebviewWindow};
+use tauri::{Runtime, Window};
 
 #[cfg(any(target_os = "macos", test))]
 pub fn should_switch_to_accessory(is_fullscreen: bool, close_action: &str) -> bool {
@@ -120,7 +119,7 @@ pub fn rearm_pending_accessory_if_fullscreen<R: Runtime>(window: &WebviewWindow<
 
 #[cfg(test)]
 mod tests {
-    use super::{should_switch_to_accessory, CLOSE_ACTION_QUIT, CLOSE_ACTION_TRAY};
+    use super::{CLOSE_ACTION_QUIT, CLOSE_ACTION_TRAY, should_switch_to_accessory};
 
     #[test]
     fn close_action_constants_match_store_values() {

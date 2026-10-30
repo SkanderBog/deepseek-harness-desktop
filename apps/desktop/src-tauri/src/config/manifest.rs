@@ -1,10 +1,9 @@
-
+use crate::AppHandle;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use tauri::{Manager, Runtime};
-use crate::{AppHandle};
 
 pub const MANIFEST_FILE: &str = "manifest.jsonc";
 
@@ -308,7 +307,9 @@ pub fn with_manifest<R: Runtime, T>(
     let path = match manifest_path(app) {
         Some(path) => path,
         None => {
-            log::warn!("RESOURCE_MANIFEST_MISSING: {MANIFEST_FILE} not found in resource dir or source resources dir");
+            log::warn!(
+                "RESOURCE_MANIFEST_MISSING: {MANIFEST_FILE} not found in resource dir or source resources dir"
+            );
             return None;
         }
     };
