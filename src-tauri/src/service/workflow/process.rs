@@ -812,8 +812,10 @@ pub(super) fn terminate_stale_harness_processes_at(dsh_bin: &Path) -> Result<(),
     // 结束进程后不再固定补睡：端口释放实测是毫秒级（taskkill 返回后约 1ms），
     // 而紧随其后的启动会以 `wait_for_port_release` 等到端口真正回落，固定睡眠
     // 只是把这段滞后放大成白等。
+    // 入口路径无法转成合法的正则时无事可做：与旧的逐行 `Regex::new(..).ok()?` 一致，
+    // 判不出孤儿就不动任何进程。
     let Some(matcher) = HarnessMatcher::new(dsh_bin) else {
-        return Err("HARNESS_SWEEP_FAILED: invalid entry path".to_string());
+        return Ok(());
     };
     let targets = select_orphan_harness_pids(&output, &matcher, owned_pid);
     for &(pid, created) in &targets {
@@ -983,11 +985,12 @@ pub(super) fn reclaim_orphan_port(dsh_bin: &Path, port: u16) -> Result<bool, Str
     let entry = dsh_bin
         .to_str()
         .ok_or("HARNESS_SWEEP_FAILED: invalid entry path")?;
-    let Some(matcher) = HarnessMatcher::new(entry) else {
-        log::warn!("PORT_OWNER: port={port} pid={pid} ownership=unknown: invalid entry path");
-        return Ok(false);
-    };
-    let targets = select_orphan_harness_pids(&output, &matcher, owned_process_pid());
+    // 入口路径无法转成合法正则时判不出归属，按「不可判定」走与空目标相同的分支。
+    let matcher = HarnessMatcher::new(entry);
+    let targets = matcher
+        .as_ref()
+        .map(|matcher| select_orphan_harness_pids(&output, matcher, owned_process_pid()))
+        .unwrap_or_default();
     log::warn!(
         "PORT_OWNER: port={port} pid={pid} ownership={} process={}",
         if targets.is_empty() {
