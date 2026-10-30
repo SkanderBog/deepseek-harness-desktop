@@ -583,8 +583,7 @@ mod tests {
     fn empty_machine_id_is_rejected_before_url_validation() {
         // 空白 machineId 直接拒绝（label 无法生成），错误前缀与窗口失败族一致
         let err = super::open_window_args("  ", "http://127.0.0.1:3080")
-            .err()
-            .expect("blank machineId should be rejected");
+            .expect_err("blank machineId should be rejected");
         assert!(err.starts_with("REMOTE_WINDOW_FAILED:"));
     }
 }

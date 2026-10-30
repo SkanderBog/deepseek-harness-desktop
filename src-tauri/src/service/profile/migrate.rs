@@ -630,9 +630,9 @@ mod tests {
             vec![MigrationDataKind::Patch, MigrationDataKind::Credentials]
         );
         assert_eq!(items[0].count, Some(1));
-        assert_eq!(items[0].covered, false, "目标档案没有这些条目，必须可迁移");
+        assert!(!items[0].covered, "目标档案没有这些条目，必须可迁移");
         assert_eq!(items[1].count, None);
-        assert_eq!(items[1].covered, false);
+        assert!(!items[1].covered);
 
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&target);

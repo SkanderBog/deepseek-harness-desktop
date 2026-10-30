@@ -679,8 +679,8 @@ fn prepare_internal_plugins(
     let mut sources_ready = true;
     for preset in internal {
         let name = installed_name(preset);
-        if super::disable::has_patch_disable(&profile, &preset.id)
-            || super::disable::has_patch_disable(&profile, name)
+        if super::disable::has_patch_disable(profile, &preset.id)
+            || super::disable::has_patch_disable(profile, name)
         {
             continue;
         }
@@ -867,7 +867,7 @@ fn prepare_early_plugins_from(
         .map(|profile| profile.bundles.as_slice())
         .unwrap_or_default();
     if !super::verify::missing_plugin_ids(
-        &presets,
+        presets,
         &parsed.dependencies,
         bundles,
         &profile.join("node_modules"),

@@ -1071,7 +1071,7 @@ mod tests {
         };
 
         assert_eq!(
-            locked_release_age_exemptions(&dir, &[locked.clone()]),
+            locked_release_age_exemptions(&dir, std::slice::from_ref(&locked)),
             Some(vec!["dshmarket@2.12.0".to_string()])
         );
         let transitive = PolicyBlockedVersion {

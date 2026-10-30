@@ -13,6 +13,7 @@ use std::process::Command;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
+#[cfg(test)]
 use tauri::AppHandle;
 
 use super::status;
@@ -437,10 +438,10 @@ fn decode_windows_command_line(buffer: &[usize], returned: usize) -> Option<Stri
     let command = unsafe { std::ptr::read(buffer.as_ptr().cast::<WindowsCommandLine>()) };
     let base = buffer.as_ptr() as usize;
     let start = command.buffer as usize;
-    if command.length % 2 != 0
-        || command.maximum_length % 2 != 0
+    if !command.length.is_multiple_of(2)
+        || !command.maximum_length.is_multiple_of(2)
         || command.length > command.maximum_length
-        || start % std::mem::align_of::<u16>() != 0
+        || !start.is_multiple_of(std::mem::align_of::<u16>())
         || start < base.checked_add(header)?
         || start.checked_add(usize::from(command.maximum_length))? > base.checked_add(returned)?
     {
@@ -520,8 +521,8 @@ fn windows_process_cwd(pid: u32, query: QueryProcess) -> Option<String> {
     if parameters == 0 || !read(parameters + 0x38, header.as_mut_ptr().cast(), 16) {
         return None;
     }
-    let length = (header[0] & 0xffff) as usize;
-    if length == 0 || length % 2 != 0 || header[1] == 0 {
+    let length = header[0] & 0xffff;
+    if length == 0 || !length.is_multiple_of(2) || header[1] == 0 {
         return None;
     }
     let mut units = vec![0u16; length / 2];
@@ -599,7 +600,7 @@ fn windows_process_snapshot(
     }
     let query: QueryProcess = unsafe {
         std::mem::transmute(
-            GetProcAddress(module, b"NtQueryInformationProcess\0".as_ptr())
+            GetProcAddress(module, c"NtQueryInformationProcess".as_ptr().cast())
                 .ok_or("HARNESS_SWEEP_FAILED: process query unavailable")?,
         )
     };
@@ -2512,8 +2513,8 @@ setTimeout(() => process.exit(0), 60000);
         let alive = child.try_wait().unwrap().is_none();
         let _ = child.kill();
         let _ = child.wait();
-        assert_eq!(result.unwrap(), false);
-        assert_eq!(precise_result.unwrap(), false);
+        assert!(!result.unwrap());
+        assert!(!precise_result.unwrap());
         assert!(
             alive,
             "PID creation time mismatch must preserve the process"

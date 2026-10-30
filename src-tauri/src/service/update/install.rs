@@ -894,7 +894,7 @@ mod tests {
         for i in 0..8 {
             assert_eq!(
                 dir.path().join(format!("installer-{i}.exe")).exists(),
-                i < 2 || i >= 5,
+                !(2..5).contains(&i),
                 "{i}"
             );
         }
