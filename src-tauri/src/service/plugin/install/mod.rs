@@ -373,8 +373,6 @@ async fn install_with_cancel(
     cli::ensure_shims(app_handle)?;
 
     let node = config::get_node_binary_path(app_handle);
-    // 活动核心的 dsh 入口：本地核心存在时用本地 CLI，否则预打包。
-    // 同一次安装后面还要取核心目录作 cwd，故解析一次快照复用。
     let active = core::resolve_active(app_handle);
     let dsh_bin = active.dsh_binary(app_handle);
     if !node.exists() {

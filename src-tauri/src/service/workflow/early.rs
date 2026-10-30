@@ -2,7 +2,6 @@ use std::sync::{Arc, OnceLock};
 
 /// 早启动准备阶段的结果：`Ok(true)` 表示早启动已接管，`Ok(false)` 表示退回常规启动。
 type Prepared = Result<bool, String>;
-/// 准备与装配两段各自的结算结果。
 type Settled = Result<(), String>;
 
 struct Preparation {

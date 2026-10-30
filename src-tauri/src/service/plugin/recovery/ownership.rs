@@ -122,10 +122,6 @@ fn plugin_references_packages(profile: &Path, plugin: &str, packages: &HashSet<S
     false
 }
 
-/// 判断某个根插件的 patch 层是否声明了重复的 loader entry id。
-///
-/// 正则与 `entry_id` 绑定，无法静态化；调用方按根插件逐个扫描，因此在循环外
-/// 构造一次匹配器并复用。
 fn loader_entry_pattern(entry_id: &str) -> Option<Regex> {
     Regex::new(&format!(
         r#"^\s*-\s+id:\s*["']?{}["']?(?:\s*(?:#.*)?)?$"#,
@@ -134,6 +130,7 @@ fn loader_entry_pattern(entry_id: &str) -> Option<Regex> {
     .ok()
 }
 
+/// 判断某个根插件的 patch 层是否声明了重复的 loader entry id。
 fn plugin_declares_loader_entry(profile: &Path, plugin: &str, pattern: &Regex) -> bool {
     let dir = profile.join("node_modules").join(plugin);
     let Some(meta) = read_plugin_meta(&dir) else {

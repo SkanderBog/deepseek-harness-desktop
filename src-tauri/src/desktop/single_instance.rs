@@ -358,7 +358,6 @@ pub struct SingleInstance {
 }
 
 impl SingleInstance {
-    // 仅 release 的 Windows 启动路径调用；`cfg(test)` 构建里模块被编进来但不走那条分支。
     #[cfg_attr(test, allow(dead_code))]
     pub fn attach(&self, app: &AppHandle) -> Result<(), String> {
         if crate::utils::shell_window(app).is_none()

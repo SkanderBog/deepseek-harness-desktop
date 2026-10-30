@@ -671,7 +671,6 @@ mod help_menu_tests {
 }
 
 #[derive(serde::Deserialize)]
-// 三个字段只在 macOS 的 `sync_view_menu` 里被读取，其它平台的函数体整体被 cfg 掉。
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub struct ViewMenuEntry {
     id: String,

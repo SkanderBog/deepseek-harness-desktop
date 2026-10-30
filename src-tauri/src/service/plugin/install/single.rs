@@ -589,7 +589,6 @@ async fn run_plugin_command(
     cli::ensure_shims(app_handle)?;
 
     let node = config::get_node_binary_path(app_handle);
-    // 同一次操作后面还要取核心目录作 cwd，故解析一次快照复用。
     let active = core::resolve_active(app_handle);
     let dsh_bin = active.dsh_binary(app_handle);
     if !node.exists() {

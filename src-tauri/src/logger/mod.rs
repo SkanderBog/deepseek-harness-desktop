@@ -27,7 +27,6 @@ const MAX_BACKUPS: usize = 3;
 
 static FILE_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 static FRONTDESK_WRITER: OnceLock<Arc<Mutex<SizeRotatingWriter>>> = OnceLock::new();
-/// `desktop.frontdesk.log` 的行首时间格式；解析一次即可，格式描述是纯字面量。
 static FRONTDESK_TIME_FORMAT: std::sync::LazyLock<Vec<time::format_description::FormatItem<'static>>> =
     std::sync::LazyLock::new(|| {
         time::format_description::parse_borrowed::<2>(

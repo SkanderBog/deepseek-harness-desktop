@@ -1166,8 +1166,6 @@ fn select_orphan_harness_pids(
     targets
 }
 
-/// 便捷入口：按入口路径现场构造匹配器。仅测试与单次调用方使用；批量场景应直接用
-/// [`select_orphan_harness_pids`]，避免逐行重复编译边界正则。
 #[cfg(all(windows, test))]
 fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> Vec<(u32, u64)> {
     match HarnessMatcher::new(dsh_bin) {

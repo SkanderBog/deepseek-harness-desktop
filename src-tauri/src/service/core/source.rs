@@ -134,7 +134,6 @@ pub struct ActiveCore {
 }
 
 impl ActiveCore {
-    /// 当前活动核心的 dsh 入口（bin.js 绝对路径）。
     pub fn dsh_binary<R: tauri::Runtime>(&self, app_handle: &AppHandle<R>) -> PathBuf {
         match self.source {
             CoreSource::Local => self
@@ -146,7 +145,7 @@ impl ActiveCore {
         }
     }
 
-    /// 当前活动核心的安装目录：本地核心用其包目录，预打包用桌面端目录。
+    /// 本地核心用其包目录，预打包用桌面端目录。
     pub fn core_dir<R: tauri::Runtime>(&self, app_handle: &AppHandle<R>) -> PathBuf {
         match self.source {
             CoreSource::Local => self
@@ -158,7 +157,6 @@ impl ActiveCore {
         }
     }
 
-    /// 当前活动核心的版本号。
     pub fn version<R: tauri::Runtime>(&self, app_handle: &AppHandle<R>) -> Option<String> {
         match self.source {
             CoreSource::Local => self.local.as_ref().map(|core| core.version.clone()),

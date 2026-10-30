@@ -336,10 +336,6 @@ fn wait_harness(
     }
 }
 
-// 8 个参数各是一个独立职责：退出回调、日志路径、就绪回执、两个守卫，以及
-// spawn / reset / bump_port / persist 四个由调用方定制的动作。后四个是闭包，
-// 无法用状态结构体收敛（打包成结构体只会把同样的值挪到调用点上再摆一遍），
-// 因此这里保留扁平签名并局部放行该 lint。
 #[allow(clippy::too_many_arguments)]
 fn supervise_harness(
     mut on_exit: impl FnMut(u32, Option<i64>, Option<&Path>),

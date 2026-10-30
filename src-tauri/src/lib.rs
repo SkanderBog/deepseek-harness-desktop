@@ -209,7 +209,7 @@ pub(crate) fn should_disable_dmabuf_renderer(
         && gdk_backend != "x11"
 }
 
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // 仅 Linux 的建窗路径与单测读取
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn should_opaque_shell_window(
     opt_in: bool,
     nvidia_driver: bool,

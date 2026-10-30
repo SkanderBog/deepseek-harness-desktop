@@ -101,7 +101,6 @@ fn content_type(path: &Path) -> &'static str {
     }
 }
 
-/// 入口 `<script>` 提取正则：字面量，全进程只编译一次。
 static ENTRY_SCRIPT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r#"<script type="module" crossorigin src="([^"<>]+)"></script>"#)
         .expect("literal")
