@@ -671,6 +671,7 @@ mod help_menu_tests {
 }
 
 #[derive(serde::Deserialize)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub struct ViewMenuEntry {
     id: String,
     enabled: bool,

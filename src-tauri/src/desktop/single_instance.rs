@@ -134,6 +134,11 @@ struct NativeWindow {
     hwnd: HWND,
     class: Vec<u16>,
     module: HINSTANCE,
+    // 外层 `Box` 不是冗余分配：`CreateWindowExW` 拿到的是这个 box 的地址，窗口过程
+    // 此后按该指针读 `GWLP_USERDATA`。`NativeWindow` 本身会被按值移动，若直接用
+    // `Arc`（指针在内联的 Arc 里），移动会让已交给系统的地址失效；`Box` 让内容留在
+    // 稳定的堆地址上，`Option` 则用于销毁失败时故意泄漏。
+    #[allow(clippy::redundant_allocation)]
     inbox: Option<Box<Arc<Mutex<Inbox>>>>,
 }
 
@@ -353,6 +358,7 @@ pub struct SingleInstance {
 }
 
 impl SingleInstance {
+    #[cfg_attr(test, allow(dead_code))]
     pub fn attach(&self, app: &AppHandle) -> Result<(), String> {
         if crate::utils::shell_window(app).is_none()
             || app.try_state::<DeepLink<tauri::Wry>>().is_none()

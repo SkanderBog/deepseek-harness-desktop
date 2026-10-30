@@ -143,8 +143,9 @@ pub(crate) struct InstallTarget {
 }
 
 pub async fn install(app_handle: &AppHandle, ids: &[String]) -> Result<(), String> {
-    let targets = preset_targets(app_handle, ids)?;
-    install_with_cancel(app_handle, &targets, None, new_process_owner()).await
+    let active = core::resolve_active(app_handle);
+    let targets = preset_targets(app_handle, &active, ids)?;
+    install_with_cancel(app_handle, &active, &targets, None, new_process_owner()).await
 }
 
 /// 内置插件启动自愈专用入口：取消信号会阻止被结束的 pnpm/dsh 进程再次进入
@@ -155,18 +156,20 @@ pub(crate) async fn install_internal(
     cancel: tokio::sync::watch::Receiver<bool>,
     owner: ProcessOwner,
 ) -> Result<(), String> {
-    let targets = preset_targets(app_handle, ids)?;
-    install_with_cancel(app_handle, &targets, Some(cancel), owner).await
+    let active = core::resolve_active(app_handle);
+    let targets = preset_targets(app_handle, &active, ids)?;
+    install_with_cancel(app_handle, &active, &targets, Some(cancel), owner).await
 }
 
 /// 按原始 spec 安装（插件市场 / 手动输入）：与预装路径共用同一套编排，只是目标
 /// 不再来自预设清单，因而没有捆绑目录与版本矩阵——spec 原样交给 pnpm 解析。
 pub async fn install_specs(app_handle: &AppHandle, specs: &[String]) -> Result<(), String> {
-    let targets = spec_targets(app_handle, specs)?;
+    let active = core::resolve_active(app_handle);
+    let targets = spec_targets(app_handle, &active, specs)?;
     if targets.is_empty() {
         return Err("PLUGIN_SPECS_EMPTY: no plugin specs provided".to_string());
     }
-    install_with_cancel(app_handle, &targets, None, new_process_owner()).await
+    install_with_cancel(app_handle, &active, &targets, None, new_process_owner()).await
 }
 
 /// 预设 id → 安装目标：解析捆绑目录与清单 spec，规范化为 `git+https://`。
@@ -178,7 +181,11 @@ pub async fn install_specs(app_handle: &AppHandle, specs: &[String]) -> Result<(
 /// 缺陷（pnpm issue #3948 / #7243 / #13276）：公开仓库一旦落进 git+ssh，在没有
 /// SSH 配置的桌面机上必然 `Host key verification failed` / `Permission denied
 /// (publickey)`。
-fn preset_targets(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<InstallTarget>, String> {
+fn preset_targets(
+    app_handle: &AppHandle,
+    active: &crate::service::core::ActiveCore,
+    ids: &[String],
+) -> Result<Vec<InstallTarget>, String> {
     if ids.is_empty() {
         return Err("PREINSTALL_EMPTY: no plugins selected".to_string());
     }
@@ -187,7 +194,7 @@ fn preset_targets(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<InstallT
     let presets = load_presets(app_handle);
     let preset_map: HashMap<&str, &PreinstallPluginInfo> =
         presets.iter().map(|p| (p.id.as_str(), p)).collect();
-    let core_version = crate::service::core::active_version(app_handle);
+    let core_version = active.version(app_handle);
 
     let mut targets = Vec::with_capacity(ids.len());
     for id in ids {
@@ -220,13 +227,17 @@ fn preset_targets(app_handle: &AppHandle, ids: &[String]) -> Result<Vec<InstallT
 /// 本地目录在交给 pnpm 之前先校验：目录与 `package.json` 缺一都会让 pnpm 装出
 /// 一个没有清单的联接，随后的产物核验只会报出「命令成功但没有产物」这种与真实
 /// 原因无关的错误。
-fn spec_targets(app_handle: &AppHandle, specs: &[String]) -> Result<Vec<InstallTarget>, String> {
-    let core_version = crate::service::core::active_version(app_handle);
+fn spec_targets(
+    app_handle: &AppHandle,
+    active: &crate::service::core::ActiveCore,
+    specs: &[String],
+) -> Result<Vec<InstallTarget>, String> {
+    let core_version = active.version(app_handle);
     let presets = load_presets(app_handle);
     // 相对路径的基准：`dsh plugin` 不切换 cwd，pnpm 在活动核心目录下执行（与
     // [`install_with_cancel`] 传入的 cwd 同源），故本地 spec 必须在这里先绝对化，
     // 用户输入的 `./plugins/x` 才不会被解析到应用安装目录里。
-    let base = crate::service::core::active_core_dir(app_handle);
+    let base = active.core_dir(app_handle);
     let mut targets = Vec::with_capacity(specs.len());
     for spec in specs {
         let spec = spec.trim();
@@ -341,6 +352,7 @@ fn heal_locked_release_age(profile: &Path, output: &str) -> bool {
 
 async fn install_with_cancel(
     app_handle: &AppHandle,
+    active: &crate::service::core::ActiveCore,
     targets: &[InstallTarget],
     cancel: Option<tokio::sync::watch::Receiver<bool>>,
     owner: ProcessOwner,
@@ -372,8 +384,7 @@ async fn install_with_cancel(
     cli::ensure_shims(app_handle)?;
 
     let node = config::get_node_binary_path(app_handle);
-    // 活动核心的 dsh 入口：本地核心存在时用本地 CLI，否则预打包
-    let dsh_bin = core::active_dsh_binary(app_handle);
+    let dsh_bin = active.dsh_binary(app_handle);
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
     }
@@ -416,7 +427,7 @@ async fn install_with_cancel(
     ];
     args.extend(specs.iter().map(OsString::from));
 
-    let cwd = crate::service::core::active_core_dir(app_handle);
+    let cwd = active.core_dir(app_handle);
     // 日志打印实际传给 dsh 的 spec（此前打印 id 会误导排查：安装用的是 spec）
     log::info!("Running dsh plugin install for {specs:?}");
 
@@ -632,7 +643,8 @@ pub async fn allow_version_exemptions(
     let window = crate::utils::operation_window(app_handle)
         .ok_or("WINDOW_NOT_FOUND: current profile window missing")?;
     let node = config::get_node_binary_path(app_handle);
-    let dsh_bin = core::active_dsh_binary(app_handle);
+    let active = core::resolve_active(app_handle);
+    let dsh_bin = active.dsh_binary(app_handle);
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
     }
@@ -643,7 +655,7 @@ pub async fn allow_version_exemptions(
     // 豁免分支不进 pnpm（见函数文档），这里不做 pnpm 就绪探测：探测失败不该
     // 让一条本不需要 pnpm 的授权落不了地。
     let envs = build_plugin_envs(app_handle, false);
-    let cwd = crate::service::core::active_core_dir(app_handle);
+    let cwd = active.core_dir(app_handle);
     let profile = active_profile(app_handle);
     let owner = new_process_owner();
     let mut failures: Vec<String> = Vec::new();
@@ -1071,7 +1083,7 @@ mod tests {
         };
 
         assert_eq!(
-            locked_release_age_exemptions(&dir, &[locked.clone()]),
+            locked_release_age_exemptions(&dir, std::slice::from_ref(&locked)),
             Some(vec!["dshmarket@2.12.0".to_string()])
         );
         let transitive = PolicyBlockedVersion {

@@ -336,6 +336,7 @@ fn wait_harness(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn supervise_harness(
     mut on_exit: impl FnMut(u32, Option<i64>, Option<&Path>),
     log_path: &PathBuf,
@@ -526,7 +527,10 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
             _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}
         }
     };
-    let dsh_binary_path = crate::service::core::active_dsh_binary(&app_handle);
+    // 入口与核心目录必须来自同一次解析：分两次取时，若本地核心在两次调用之间被
+    // 卸载，会拿到「本地入口 + 预打包目录」的错位组合。
+    let active_core = crate::service::core::resolve_active(&app_handle);
+    let dsh_binary_path = active_core.dsh_binary(&app_handle);
 
     log::debug!("Checking Node.js path: {:?}", node_binary_path);
     if !node_binary_path.exists() {
@@ -849,7 +853,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         profile,
         node: node_binary_path,
         dsh_binary: dsh_binary_path,
-        core_dir: crate::service::core::active_core_dir(&app_handle),
+        core_dir: active_core.core_dir(&app_handle),
         dsh_home,
         base: config::get_base_dir(&app_handle),
         bin_dir: crate::service::cli::get_bin_dir(&app_handle),

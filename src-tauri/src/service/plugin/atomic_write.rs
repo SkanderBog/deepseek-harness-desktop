@@ -366,6 +366,9 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), ORIGINAL);
         let mut permissions = path.metadata().unwrap().permissions();
+        // Windows 专用分支：这里的 `set_readonly(false)` 只清只读属性，不涉及 Unix 的
+        // 「所有人可写」语义，因此不采纳该 lint 的通用建议。
+        #[allow(clippy::permissions_set_readonly_false)]
         permissions.set_readonly(false);
         std::fs::set_permissions(&path, permissions).unwrap();
         let lock = File::options()

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use tauri::AppHandle;
 
-use super::local::{local_core, local_core_package_dir};
+use super::local::{local_core, LocalCore};
 use crate::service::download::parse_version_from_tag;
 
 /// 核心来源
@@ -116,12 +116,73 @@ fn warn_unsupported_local_core(version: &str, baseline: Option<&str>) {
     );
 }
 
-/// 当前活动核心来源（需求 3：本地核心存在时优先，除非用户显式选择预打包）。
+/// 一次解析出的活动核心快照。
 ///
-/// 本地核心低于最低支持版本时不参与优先，一律回退预打包核心：内置插件是桌面壳的
-/// 组成部分，装上也无法加载，只会把启动卡在插件阶段（issue #596）。持久化的
-/// `active_core` 设置不改写——用户升级本地核心后自动恢复「本地优先」。
-pub fn active_source<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> CoreSource {
+/// `active_source` / `active_dsh_binary` / `active_core_dir` / `active_version` 各自
+/// 都要重跑一遍「读 store + 扫 PATH 找本地核心 + 读清单基线」，同一条启动或插件链路
+/// 里连着取两次就是两次全量文件系统探测（PATH 每个目录最多 3 个候选名，命中还要读
+/// 文件内容判 shim）。[`resolve_active`] 只解析一次，其余入口从快照取值。
+///
+/// 快照是**调用瞬间**的结论，不缓存、不跨调用复用：本地核心可能在两次调用之间被
+/// 安装或删除，把它做成进程级缓存会引入失效条件（`rust.optimize.md` §5.1）。
+pub struct ActiveCore {
+    pub source: CoreSource,
+    /// 命中的本地核心；`source == Local` 且解析成功时存在。
+    local: Option<LocalCore>,
+    /// 来源为 App 且生效根就是随包内核目录（离线包把内核托管到 `$Resources/dsh`）。
+    bundled: bool,
+}
+
+impl ActiveCore {
+    pub fn dsh_binary<R: tauri::Runtime>(&self, app_handle: &AppHandle<R>) -> PathBuf {
+        match self.source {
+            CoreSource::Local => self
+                .local
+                .as_ref()
+                .map(|core| core.bin.clone())
+                .unwrap_or_else(|| config::get_dsh_binary_path(app_handle)),
+            CoreSource::App => config::get_dsh_binary_path(app_handle),
+        }
+    }
+
+    /// 本地核心用其包目录，预打包用桌面端目录。
+    pub fn core_dir<R: tauri::Runtime>(&self, app_handle: &AppHandle<R>) -> PathBuf {
+        match self.source {
+            CoreSource::Local => self
+                .local
+                .as_ref()
+                .map(|core| core.package_dir.clone())
+                .unwrap_or_else(|| config::get_dsh_install_path(app_handle)),
+            CoreSource::App => config::get_dsh_install_path(app_handle),
+        }
+    }
+
+    pub fn version<R: tauri::Runtime>(&self, app_handle: &AppHandle<R>) -> Option<String> {
+        match self.source {
+            CoreSource::Local => self.local.as_ref().map(|core| core.version.clone()),
+            CoreSource::App => bundled_or_pkg_version(app_handle, self.bundled),
+        }
+    }
+}
+
+/// 预打包核心的版本：随包内核没有对应 pkg tag，store 里的 tag 属于上一次下载的版本。
+///
+/// 判据与 [`active_is_bundled`] 一致，但直接接受已知来源，避免再解析一次活动核心。
+fn bundled_or_pkg_version<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    bundled: bool,
+) -> Option<String> {
+    if bundled {
+        return config::get_dsh_version(app_handle);
+    }
+    config::get_dsh_pkg_tag(app_handle)
+        .as_deref()
+        .and_then(parse_version_from_tag)
+        .or_else(|| config::get_dsh_version(app_handle))
+}
+
+/// 解析一次活动核心，得到可在同一条链路上复用的快照。
+pub fn resolve_active<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> ActiveCore {
     let setting = config::get_store_dat_setting(app_handle);
     let local = local_core(app_handle);
     let baseline = config::manifest::minimum_dsh_version(app_handle);
@@ -137,7 +198,7 @@ pub fn active_source<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> CoreSource
             baseline.as_deref(),
         );
     }
-    match setting.active_core.as_deref().and_then(CoreSource::parse) {
+    let source = match setting.active_core.as_deref().and_then(CoreSource::parse) {
         Some(CoreSource::App) => CoreSource::App,
         // 显式选择本地但本地已失效/低于基线 → 回退预打包
         Some(CoreSource::Local) if local_usable => CoreSource::Local,
@@ -149,20 +210,33 @@ pub fn active_source<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> CoreSource
                 CoreSource::App
             }
         }
+    };
+    let bundled = source == CoreSource::App
+        && config::dependencies::bundled_core_dir(app_handle).is_some_and(|dir| {
+            config::dependencies::active_root(app_handle, config::dependencies::DEP_DSH) == dir
+        });
+    ActiveCore {
+        source,
+        local,
+        bundled,
     }
+}
+
+/// 当前活动核心来源（需求 3：本地核心存在时优先，除非用户显式选择预打包）。
+///
+/// 本地核心低于最低支持版本时不参与优先，一律回退预打包核心：内置插件是桌面壳的
+/// 组成部分，装上也无法加载，只会把启动卡在插件阶段（issue #596）。
+pub fn active_source<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> CoreSource {
+    resolve_active(app_handle).source
 }
 
 /// 当前活动核心的 dsh 入口（bin.js 绝对路径）。
 ///
 /// 供服务启动（workflow::launch）与插件操作（plugin::install 等）统一取用，
-/// 本地核心解析在调用瞬间失效时回退预打包入口。
-pub fn active_dsh_binary(app_handle: &AppHandle) -> PathBuf {
-    match active_source(app_handle) {
-        CoreSource::Local => local_core(app_handle)
-            .map(|c| c.bin)
-            .unwrap_or_else(|| config::get_dsh_binary_path(app_handle)),
-        CoreSource::App => config::get_dsh_binary_path(app_handle),
-    }
+/// 本地核心解析在调用瞬间失效时回退预打包入口。需要同时取多个字段的调用方
+/// 应改用 [`resolve_active`]，避免重复解析。
+pub fn active_dsh_binary<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
+    resolve_active(app_handle).dsh_binary(app_handle)
 }
 
 /// 当前活动核心的安装目录：本地核心用其包目录（全局安装路径），预打包用桌面端目录。
@@ -173,41 +247,21 @@ pub fn active_dsh_binary(app_handle: &AppHandle) -> PathBuf {
 /// `PREINSTALL_SPAWN: 目录名称无效。 (os error 267)`。
 ///
 /// 与 [`active_dsh_binary`] 的取舍一致——本地核心解析在调用瞬间失效时回退预打包目录。
-pub fn active_core_dir(app_handle: &AppHandle) -> PathBuf {
-    match active_source(app_handle) {
-        CoreSource::Local => local_core_package_dir(app_handle)
-            .unwrap_or_else(|| config::get_dsh_install_path(app_handle)),
-        CoreSource::App => config::get_dsh_install_path(app_handle),
-    }
+pub fn active_core_dir<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> PathBuf {
+    resolve_active(app_handle).core_dir(app_handle)
 }
 
 /// 当前生效的核心是否就是随安装包分发的那份（离线包把内核托管到 `$Resources/dsh`）。
 ///
 /// 判定「来源是 App **且** 生效根就是随包内核目录」：切到本地核心时映射被记为系统环境、
 /// 生效根回落到随包目录，此时不能再算作随包内核。
-pub fn active_is_bundled(app_handle: &AppHandle) -> bool {
-    active_source(app_handle) == CoreSource::App
-        && config::dependencies::bundled_core_dir(app_handle).is_some_and(|dir| {
-            config::dependencies::active_root(app_handle, config::dependencies::DEP_DSH) == dir
-        })
+pub fn active_is_bundled<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> bool {
+    resolve_active(app_handle).bundled
 }
 
 /// 当前活动核心的版本号（`--no-open` 等按版本判定的能力以它为准）。
-pub fn active_version(app_handle: &AppHandle) -> Option<String> {
-    match active_source(app_handle) {
-        CoreSource::Local => local_core(app_handle).map(|c| c.version),
-        CoreSource::App => {
-            // 随包内核没有对应的 pkg tag：store 里的 tag 属于上一次下载的版本，直接采用
-            // 会把随包内核当成那个版本（能力判定、补丁与插件兼容性都会走错分支）。
-            if active_is_bundled(app_handle) {
-                return config::get_dsh_version(app_handle);
-            }
-            config::get_dsh_pkg_tag(app_handle)
-                .as_deref()
-                .and_then(parse_version_from_tag)
-                .or_else(|| config::get_dsh_version(app_handle))
-        }
-    }
+pub fn active_version<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> Option<String> {
+    resolve_active(app_handle).version(app_handle)
 }
 
 #[cfg(test)]

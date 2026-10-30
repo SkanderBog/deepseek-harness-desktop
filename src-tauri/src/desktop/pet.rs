@@ -795,7 +795,8 @@ mod tests {
         let pos = PetWindowPosition {
             x: Some(120),
             y: Some(240),
-            ..PetWindowPosition::default()
+            #[cfg(target_os = "macos")]
+            scale_factor: None,
         };
         let json = serde_json::to_string(&pos).expect("serialize");
         let parsed: PetWindowPosition = serde_json::from_str(&json).expect("deserialize");

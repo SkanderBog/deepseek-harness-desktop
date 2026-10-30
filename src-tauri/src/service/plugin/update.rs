@@ -143,6 +143,11 @@ fn read_specs(app_handle: &AppHandle) -> HashMap<String, String> {
     out
 }
 
+static CODELOAD_COMMIT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"codeload\.github\.com/([^/\s]+)/([^/\s]+)/tar\.gz/([0-9a-fA-F]{7,40})")
+        .expect("static codeload regex")
+});
+
 /// 从 pnpm-lock.yaml 的当前 importer 中提取「直接依赖 id → 提交 SHA」映射。
 ///
 /// 必须经 importer 归属，不能全局扫描 codeload URL：同一 GitHub 仓库可被
@@ -152,9 +157,7 @@ fn read_locked_commits(profile: &Path, specs: &HashMap<String, String>) -> HashM
     let Ok(text) = std::fs::read_to_string(profile.join("pnpm-lock.yaml")) else {
         return out;
     };
-    let re =
-        regex::Regex::new(r"codeload\.github\.com/([^/\s]+)/([^/\s]+)/tar\.gz/([0-9a-fA-F]{7,40})")
-            .expect("static codeload regex");
+    let re = &*CODELOAD_COMMIT;
     let mut has_project_dependencies = false;
     for document in serde_yaml::Deserializer::from_str(&text) {
         let Ok(lockfile) = serde_yaml::Value::deserialize(document) else {

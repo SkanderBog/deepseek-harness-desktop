@@ -1,9 +1,13 @@
 use std::sync::{Arc, OnceLock};
 
+/// 早启动准备阶段的结果：`Ok(true)` 表示早启动已接管，`Ok(false)` 表示退回常规启动。
+type Prepared = Result<bool, String>;
+type Settled = Result<(), String>;
+
 struct Preparation {
-    worker: tokio::sync::watch::Receiver<Option<Result<bool, String>>>,
-    settled: tokio::sync::watch::Receiver<Option<Result<(), String>>>,
-    setup_done: std::sync::Mutex<Option<tokio::sync::watch::Sender<Option<Result<(), String>>>>>,
+    worker: tokio::sync::watch::Receiver<Option<Prepared>>,
+    settled: tokio::sync::watch::Receiver<Option<Settled>>,
+    setup_done: std::sync::Mutex<Option<tokio::sync::watch::Sender<Option<Settled>>>>,
 }
 
 static PREPARATION: OnceLock<Preparation> = OnceLock::new();
@@ -149,7 +153,7 @@ impl Preparation {
             .ok()
             .and_then(|ready| ready.as_ref().cloned())
             .unwrap_or_else(|| Err("STARTUP_PREPARATION_INTERRUPTED".to_string()));
-        let result = prepared.map(|prepared| setup(prepared));
+        let result = prepared.map(setup);
         if let Err(error) = &result {
             log::error!("STARTUP_PREPARATION_FAILED: {error}");
         }

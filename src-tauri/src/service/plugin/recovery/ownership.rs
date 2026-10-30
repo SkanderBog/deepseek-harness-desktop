@@ -122,8 +122,16 @@ fn plugin_references_packages(profile: &Path, plugin: &str, packages: &HashSet<S
     false
 }
 
+fn loader_entry_pattern(entry_id: &str) -> Option<Regex> {
+    Regex::new(&format!(
+        r#"^\s*-\s+id:\s*["']?{}["']?(?:\s*(?:#.*)?)?$"#,
+        regex::escape(entry_id)
+    ))
+    .ok()
+}
+
 /// 判断某个根插件的 patch 层是否声明了重复的 loader entry id。
-fn plugin_declares_loader_entry(profile: &Path, plugin: &str, entry_id: &str) -> bool {
+fn plugin_declares_loader_entry(profile: &Path, plugin: &str, pattern: &Regex) -> bool {
     let dir = profile.join("node_modules").join(plugin);
     let Some(meta) = read_plugin_meta(&dir) else {
         return false;
@@ -134,12 +142,7 @@ fn plugin_declares_loader_entry(profile: &Path, plugin: &str, entry_id: &str) ->
     let Ok(content) = fs::read_to_string(dir.join(patch)) else {
         return false;
     };
-    let re = Regex::new(&format!(
-        r#"^\s*-\s+id:\s*["']?{}["']?(?:\s*(?:#.*)?)?$"#,
-        regex::escape(entry_id)
-    ))
-    .ok();
-    re.map(|re| re.is_match(&content)).unwrap_or(false)
+    pattern.is_match(&content)
 }
 
 /// 判断某个根插件的文件是否包含给定槽位名。
@@ -270,12 +273,14 @@ pub(super) fn resolve_recovery_plugins(
 
     // 2) 重复 loader entry：命中唯一根插件。
     if let Some(entry) = duplicate_entry {
-        let owners: Vec<&String> = roots
-            .iter()
-            .filter(|root| plugin_declares_loader_entry(&profile, root, entry))
-            .collect();
-        if owners.len() == 1 {
-            return owners.into_iter().cloned().collect();
+        if let Some(pattern) = loader_entry_pattern(entry) {
+            let owners: Vec<&String> = roots
+                .iter()
+                .filter(|root| plugin_declares_loader_entry(&profile, root, &pattern))
+                .collect();
+            if owners.len() == 1 {
+                return owners.into_iter().cloned().collect();
+            }
         }
     }
 

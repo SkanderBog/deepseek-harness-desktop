@@ -195,9 +195,7 @@ fn is_stable_tag(tag: &str) -> bool {
 fn parse_latest_tag(url: &str) -> Option<String> {
     const MARKER: &str = "/releases/tag/";
     let rest = &url[url.find(MARKER)? + MARKER.len()..];
-    let end = rest
-        .find(|c| matches!(c, '?' | '#' | '/'))
-        .unwrap_or(rest.len());
+    let end = rest.find(['?', '#', '/']).unwrap_or(rest.len());
     let tag = &rest[..end];
     (!tag.is_empty()).then(|| tag.to_string())
 }
@@ -216,7 +214,7 @@ fn parse_release_listing_tags(html: &str) -> Vec<String> {
         let tail = &html[start..];
         // 形如 `…/releases/tag/v0.22.3"`（相对链接）或 `…/releases/tag/v0.22.3?expanded=true`
         let end = tail
-            .find(|c: char| matches!(c, '"' | '\'' | '?' | '#' | '>'))
+            .find(['"', '\'', '?', '#', '>'])
             .unwrap_or(tail.len());
         let tag = &tail[..end];
         if !tag.is_empty() && !tags.iter().any(|t| t == tag) {

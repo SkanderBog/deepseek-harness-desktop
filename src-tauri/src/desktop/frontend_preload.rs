@@ -101,6 +101,11 @@ fn content_type(path: &Path) -> &'static str {
     }
 }
 
+static ENTRY_SCRIPT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"<script type="module" crossorigin src="([^"<>]+)"></script>"#)
+        .expect("literal")
+});
+
 fn load_frontend(
     core: &Path,
     profile: String,
@@ -110,9 +115,7 @@ fn load_frontend(
 ) -> Option<Frontend> {
     let root = frontend_root(core)?;
     let index = std::fs::read_to_string(root.join("index.html")).ok()?;
-    let script =
-        regex::Regex::new(r#"<script type="module" crossorigin src="([^"<>]+)"></script>"#).ok()?;
-    let entry = script
+    let entry = ENTRY_SCRIPT
         .captures(&index)?
         .get(1)?
         .as_str()

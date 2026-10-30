@@ -589,7 +589,8 @@ async fn run_plugin_command(
     cli::ensure_shims(app_handle)?;
 
     let node = config::get_node_binary_path(app_handle);
-    let dsh_bin = core::active_dsh_binary(app_handle);
+    let active = core::resolve_active(app_handle);
+    let dsh_bin = active.dsh_binary(app_handle);
     if !node.exists() {
         return Err("NODE_NOT_FOUND: Node.js runtime missing".to_string());
     }
@@ -621,7 +622,7 @@ async fn run_plugin_command(
     let mut args = vec![dsh_bin.as_os_str().to_os_string()];
     args.extend(single_plugin_args(&profile, action, sub_args));
 
-    let cwd = crate::service::core::active_core_dir(app_handle);
+    let cwd = active.core_dir(app_handle);
     log::info!("Running dsh plugin {action} for {ids:?}");
     let (exit_code, output, last_attempt) = run_plugin_with_allow_build_retry(
         app_handle, &node, &args, &cwd, &envs, &window, action, None, owner,
@@ -735,6 +736,7 @@ async fn run_plugin_command(
 ///    退出且**不打印任何说明**——实测 bundled pnpm 11.7.0 在 `^2.10.15` 上
 ///    `update --latest` 静默停在 2.10.15。用户授权该精确版本后，档案豁免让
 ///    解析与 lockfile 校验放行该版本。因此这条消息不能只归因于 catalog 钉死。
+///
 /// 必须如实报「没升级」——报成功会让用户以为已在新版本上（与 [`remove_many`] 的
 /// 「卸载后核验」同理）；但**不**记进插件错误：插件没坏，记了会让列表挂上
 /// 「可能已损坏或与当前环境不兼容」的误导标记（安装/升级真失败各有记录点）。

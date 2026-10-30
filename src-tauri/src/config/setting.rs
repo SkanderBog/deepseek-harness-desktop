@@ -448,12 +448,12 @@ pub fn get_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>) -> Setting {
 }
 
 /// 已安装 Harness 发行版对应的 GitHub release commit hash
-pub fn get_dsh_pkg_commit(app_handle: &AppHandle) -> Option<String> {
+pub fn get_dsh_pkg_commit<R: Runtime>(app_handle: &AppHandle<R>) -> Option<String> {
     get_store_dat_setting(app_handle).dsh_pkg_commit
 }
 
 /// 已安装 Harness 发行版对应的 GitHub release tag
-pub fn get_dsh_pkg_tag(app_handle: &AppHandle) -> Option<String> {
+pub fn get_dsh_pkg_tag<R: Runtime>(app_handle: &AppHandle<R>) -> Option<String> {
     get_store_dat_setting(app_handle).dsh_pkg_tag
 }
 
