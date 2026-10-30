@@ -27,6 +27,14 @@ const MAX_BACKUPS: usize = 3;
 
 static FILE_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 static FRONTDESK_WRITER: OnceLock<Arc<Mutex<SizeRotatingWriter>>> = OnceLock::new();
+/// `desktop.frontdesk.log` 的行首时间格式；解析一次即可，格式描述是纯字面量。
+static FRONTDESK_TIME_FORMAT: std::sync::LazyLock<Vec<time::format_description::FormatItem<'static>>> =
+    std::sync::LazyLock::new(|| {
+        time::format_description::parse_borrowed::<2>(
+            "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]Z",
+        )
+        .expect("literal")
+    });
 
 /// 平台应用数据根目录下的本应用目录（`identifier` 一层；dev 与 release 相同）。
 ///
@@ -350,12 +358,8 @@ pub fn log_frontend(level: FrontendLevel, target: &str, message: &str) {
     };
     let formatted = {
         let now = time::OffsetDateTime::now_utc();
-        let fmt = time::format_description::parse_borrowed::<2>(
-            "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]Z",
-        )
-        .unwrap();
         let ts = now
-            .format(&fmt)
+            .format(&FRONTDESK_TIME_FORMAT)
             .unwrap_or_else(|_| "1970-01-01 00:00:00.000Z".to_string());
         if is_generic_frontend {
             format!("[{}] {:>5} frontend: {}\n", ts, level_str, message)
