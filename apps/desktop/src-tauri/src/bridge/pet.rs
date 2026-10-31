@@ -442,6 +442,13 @@ pub fn push_pet_session(app: AppHandle, action: String, session: Value) -> Resul
 
 const SESSION_STREAM_PATH: &str = "/api/tauri/pet/session/stream";
 
+fn pet_session_stream_url<R: tauri::Runtime>(app: &AppHandle<R>, profile: String) -> String {
+    let port = crate::service::workflow::instances::scope_sync(profile, || {
+        crate::service::workflow::instances::port(app)
+    });
+    format!("http://127.0.0.1:{port}{SESSION_STREAM_PATH}")
+}
+
 /// 「宿主累计态已丢弃」注释帧文本（与
 /// `packages/dsh-tauri-pet/src/shared/constants.ts` 的 `SSE_STATE_LOST_COMMENT` 逐字一致）。
 ///
@@ -634,8 +641,8 @@ pub fn sync_pet_session_stream(app: &AppHandle, wanted: bool) {
         // 会刷满日志并挤掉真正的错误，因此按状态节流（见 [`PetStreamLogThrottle`]）。
         let mut throttle = PetStreamLogThrottle::new();
         loop {
-            let setting = config::get_store_dat_setting(&app);
-            let url = format!("http://127.0.0.1:{}{}", setting.port, SESSION_STREAM_PATH);
+            let profile = crate::service::workflow::instances::window_profile(&app, "main");
+            let url = pet_session_stream_url(&app, profile);
             match consume_pet_session_stream(&app, &url).await {
                 Ok(()) => {
                     if throttle.should_log(PET_STREAM_ENDED) {
@@ -2358,8 +2365,39 @@ mod tests {
         format!("http://127.0.0.1:{port}/session/stream")
     }
 
-    /// 宿主宣告累计态已丢弃（接入时已无其他消费者）时必须先整批作废：宿主不会把累计态重放
-    /// 给新消费者，桌宠窗口里上一轮的气泡只能靠这一帧清掉（重启后残留气泡的根因）。
+    #[tokio::test]
+    async fn stream_url_uses_profile_runtime_port_after_spawn() {
+        let app = tauri::test::mock_app();
+        let server =
+            spawn_single_frame_sse_server("", "update", "{\"id\":\"running\",\"running\":true}");
+        let port = reqwest::Url::parse(&server).unwrap().port().unwrap();
+        let profile = format!("pet-stream-test-{port}");
+        crate::service::workflow::instances::scope_sync(profile.clone(), || {
+            crate::service::workflow::instances::set_port(port);
+        });
+        let handle = app.handle().clone();
+        let url = tokio::spawn(async move { pet_session_stream_url(&handle, profile) })
+            .await
+            .unwrap();
+        assert_eq!(
+            url,
+            format!("http://127.0.0.1:{port}/api/tauri/pet/session/stream")
+        );
+        let mut frames = Vec::new();
+        consume_pet_session_stream_with(&url, |action, payload| {
+            frames.push((action.to_string(), payload.clone()));
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            frames,
+            vec![(
+                "update".into(),
+                serde_json::json!({"id": "running", "running": true})
+            )]
+        );
+    }
+
     #[tokio::test]
     async fn stream_connect_clears_stale_bubbles_when_host_state_was_dropped() {
         let url = spawn_single_frame_sse_server(": state-lost\n\n", "create", "{\"id\":\"s1\"}");

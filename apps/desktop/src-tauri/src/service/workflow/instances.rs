@@ -195,7 +195,7 @@ pub fn emit<R: tauri::Runtime, S: serde::Serialize + Clone>(
     }
 }
 
-pub fn port(app: &crate::AppHandle) -> u16 {
+pub fn port<R: tauri::Runtime>(app: &crate::AppHandle<R>) -> u16 {
     instance()
         .port
         .lock()
