@@ -75,7 +75,7 @@ jobs:
       # 不注入任何签名/公证 secrets，产出未签名（unsigned/no-notarized）bundle，
       # 依然完整走一遍 beforeBuildCommand（build:plugins + 前端）+ cargo release 构建。
       - name: Build package
-        run: pnpm tauri build --target ${{ matrix.target }} ${{ inputs.nightly && '--config src-tauri/tauri.nightly.conf.json' || '' }}
+        run: pnpm tauri build --target ${{ matrix.target }} ${{ inputs.nightly && '--config src-tauri/tauri.nightly.conf.json' || '' }} --config src-tauri/tauri.macos-bundle.conf.json
 
       - name: Normalize release asset names
         run: node scripts/rename-release-assets.mjs apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg
