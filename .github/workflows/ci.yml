@@ -334,7 +334,14 @@ jobs:
       - name: Runtime IPC readiness regression
         shell: bash
         run: |
-          args=(cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --package tauri-runtime-electron --locked --lib ipc_readiness_)
+          root=$(node -p 'process.cwd().split(String.fromCharCode(92)).join(String.fromCharCode(47))')
+          config=(--manifest-path crates/tauri-runtime-electron/Cargo.toml --features tauri
+            --config "patch.crates-io.tauri-runtime.path=\"$root/apps/desktop/src-tauri/vendor/tauri-runtime\""
+            --config "patch.\"https://github.com/hairyf/electron-rs.git\".electron-rs.path=\"$root/crates/electron-rs\"")
+          cp apps/desktop/src-tauri/Cargo.lock crates/tauri-runtime-electron/Cargo.lock
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          cargo metadata "${config[@]}" --offline --filter-platform "$host" --format-version 1 > /dev/null
+          args=(cargo test "${config[@]}" --target-dir apps/desktop/src-tauri/target --locked --offline --lib ipc_readiness_)
           listing=$("${args[@]}" -- --list)
           if [[ "$listing" != *"runtime::tests::ipc_readiness_waits_for_manager_across_iterations: test"* ]]; then
             echo "Runtime IPC readiness regression was not collected"
