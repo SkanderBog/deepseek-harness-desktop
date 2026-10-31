@@ -331,6 +331,16 @@ jobs:
       - name: Build debug binary
         run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --features tauri/custom-protocol
 
+      - name: Runtime IPC readiness regression
+        shell: bash
+        run: |
+          args=(cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --package tauri-runtime-electron --all-features --locked --lib runtime::tests::ipc_waits_for_manager_across_iterations -- --exact)
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            xvfb-run --auto-servernum "${args[@]}"
+          else
+            "${args[@]}"
+          fi
+
       - name: Desktop E2E (Linux, headless)
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum node node_modules/vitest/vitest.mjs run --project desktop
