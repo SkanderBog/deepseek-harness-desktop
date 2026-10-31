@@ -37,6 +37,7 @@ pub async fn set_active_profile(
     } else {
         profile::select(&app_handle, &id)?
     };
+    crate::service::workflow::instances::set_safe_mode(false);
     selected.active = true;
     crate::service::workflow::instances::bind_window(window.label(), &id);
     if old != id && !crate::service::workflow::instances::is_attached(&old) {
@@ -186,6 +187,82 @@ mod tests {
             guard < persist && guard < transient,
             "切换档案必须先按窗口区分：只有主窗口持久化下次启动档案"
         );
+    }
+
+    #[test]
+    fn safe_mode_is_transient_and_never_written_to_the_startup_profile() {
+        use crate::{config, service::profile, service::workflow::instances};
+        use tauri::utils::config::AppDirectoriesOverride;
+
+        if std::env::var_os("DSH_TEST_PROFILE_PERSISTENCE").is_none() {
+            let scratch = tempfile::tempdir().unwrap();
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "bridge::profile::tests::safe_mode_is_transient_and_never_written_to_the_startup_profile",
+                    "--nocapture",
+                ])
+                .env("DSH_TEST_PROFILE_PERSISTENCE", scratch.path())
+                .env("HOME", scratch.path())
+                .env("USERPROFILE", scratch.path())
+                .env("APPDATA", scratch.path().join("AppData/Roaming"))
+                .env("LOCALAPPDATA", scratch.path().join("AppData/Local"))
+                .env("XDG_DATA_HOME", scratch.path().join(".local/share"))
+                .env("DSH_HOME", scratch.path().join(".dsh"))
+                .env("DSH_E2E_HOME", scratch.path())
+                .env("TAURI_WEBDRIVER_PORT", "4445");
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000);
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let root = std::path::PathBuf::from(std::env::var_os("DSH_TEST_PROFILE_PERSISTENCE").unwrap());
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().app.app_directories_override =
+            Some(AppDirectoriesOverride::Root(root.join("store")));
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_store::Builder::default().build())
+            .build(context)
+            .unwrap();
+        let app = app.handle();
+        for id in ["custom", profile::SAFE_PROFILE] {
+            std::fs::create_dir_all(profile::profile_dir_of(app, id)).unwrap();
+        }
+        assert!(profile::set_active(app, "custom").unwrap().active);
+        assert_eq!(config::get_store_dat_setting(app).active_profile, "custom");
+        instances::set_safe_mode(true);
+        assert_eq!(profile::active_profile(app), "safe");
+        assert_eq!(config::get_store_dat_setting(app).active_profile, "custom");
+        instances::scope_sync("custom".into(), || {
+            assert_eq!(profile::active_profile(app), "custom");
+        });
+        let mut stale = config::get_store_dat_setting(app);
+        stale.active_profile = "safe".into();
+        config::set_store_dat_setting(app, stale);
+        assert_eq!(config::get_store_dat_setting(app).active_profile, "custom");
+        assert!(
+            profile::set_active(app, "missing")
+                .unwrap_err()
+                .starts_with("PROFILE_NOT_FOUND:")
+        );
+        assert_eq!(profile::active_profile(app), "safe");
+        instances::set_safe_mode(false);
+        assert_eq!(profile::active_profile(app), "custom");
+        instances::set_safe_mode(true);
+        assert!(profile::set_active(app, "desktop").unwrap().active);
+        assert!(!instances::safe_mode());
+        assert_eq!(config::get_store_dat_setting(app).active_profile, "desktop");
     }
 
     #[test]

@@ -524,7 +524,7 @@ async fn receive_flight_result(
 pub(crate) async fn cancel() -> Result<(), String> {
     let mut result = {
         let profile =
-            crate::service::workflow::instances::current_profile().unwrap_or_else(|| "web".into());
+            crate::service::workflow::instances::current_profile().unwrap_or_else(|| crate::service::profile::DEFAULT_PROFILE.into());
         let lock = ensure_lock(&profile);
         let mut coordinator = lock.lock().await;
         let Some(active) = &coordinator.active else {

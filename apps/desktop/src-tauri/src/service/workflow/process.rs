@@ -2809,6 +2809,14 @@ setTimeout(() => process.exit(0), 60000);
     #[cfg(windows)]
     #[test]
     fn windows_harness_command_line_matches_only_the_active_core_service() {
+        let carrier = crate::service::profile::carrier_node_args(true);
+        let bin = r"C:\sandbox\dsh\lib\bin.js";
+        let command = format!(r#"node.exe {} "{}" "{bin}" --profile desktop --patch "C:\data path\patch.yml" --port 3080 --no-open"#, carrier[0].to_string_lossy(), carrier[1].to_string_lossy());
+        assert!(is_windows_harness_command_line(&command, bin));
+        let arguments = windows_harness_arguments(&command, bin).unwrap();
+        assert_eq!(arguments[0], carrier[0].to_string_lossy());
+        assert!(is_windows_harness_command_line(&command.replace("3080", "3081"), bin));
+        assert!(!is_windows_harness_command_line(&command.replace("--profile desktop", "plugin --profile desktop"), bin));
         let bin = r"C:\Users\Example User\AppData\Roaming\dsh-tauri\dev\dependencies\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js";
         let command = format!(r#""C:\node.exe" "{bin}" --profile web --port 3081 --no-open"#);
         assert!(is_windows_harness_command_line(&command, bin));

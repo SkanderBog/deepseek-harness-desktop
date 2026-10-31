@@ -86,6 +86,13 @@ export function Setup() {
           {/* 错误态操作区：重试 / 复制日志 / 安全模式 三按钮放同一行，避免叠罗汉 */}
           <div className="flex flex-wrap items-center justify-center gap-2">
             <button
+              className={button({ tone: 'ghost', size: 'sm' })}
+              onClick={() => copyLogsHandler(t)}
+            >
+              <Copy className="size-4" />
+              {t('buttons.copy_logs')}
+            </button>
+            <button
               className={button({ tone: 'primary', size: 'sm' })}
               onClick={() => {
                 void store.harness.boot()
@@ -113,13 +120,6 @@ export function Setup() {
                 {t('buttons.strip_patch_entries')}
               </button>
             </If>
-            <button
-              className={button({ tone: 'ghost', size: 'sm' })}
-              onClick={() => copyLogsHandler(t)}
-            >
-              <Copy className="size-4" />
-              {t('buttons.copy_logs')}
-            </button>
             <button
               className={button({ tone: 'primary', size: 'sm' })}
               onClick={() => {
