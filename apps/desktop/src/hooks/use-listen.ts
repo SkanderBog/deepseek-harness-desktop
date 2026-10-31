@@ -14,10 +14,9 @@ export function useListen<T>(event: string, handler: EventCallback<T>, options?:
     let disposed = false
 
     const options = optionsRef.current
-    void listen<T>(event, payload => handlerRef.current(payload),
-      event.startsWith('dsh://') && options?.target === undefined
-        ? { ...options, target: { kind: 'Window', label: getCurrentWindow().label } }
-        : options)
+    void listen<T>(event, payload => handlerRef.current(payload), event.startsWith('dsh://') && options?.target === undefined
+      ? { ...options, target: { kind: 'Window', label: getCurrentWindow().label } }
+      : options)
       .then((fn) => {
         if (disposed)
           fn()

@@ -247,6 +247,7 @@ mod imp {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) fn apply_at(_profile: &std::path::Path) -> Result<(), String> {
         Ok(())
     }
@@ -262,6 +263,7 @@ pub fn apply(app_handle: &crate::AppHandle) -> Result<(), String> {
     imp::apply(app_handle)
 }
 
+#[cfg(any(windows, test))]
 pub(crate) fn apply_at(profile: &std::path::Path) -> Result<(), String> {
     imp::apply_at(profile)
 }

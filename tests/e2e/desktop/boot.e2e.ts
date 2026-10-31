@@ -26,7 +26,7 @@ const app = shellAppScope()
 
 beforeAll(async () => {
   await completePreinstall(app.get().window.page, ASSEMBLY_TIMEOUT_MS)
-})
+}, ASSEMBLY_TIMEOUT_MS)
 
 async function waitHealthy(page: Page): Promise<HealthCheck> {
   let health: HealthCheck | undefined

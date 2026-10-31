@@ -20,6 +20,7 @@ pub(crate) mod win_inspector;
 pub(crate) mod win_spawn;
 
 pub(crate) mod early;
+#[cfg(any(windows, test))]
 mod early_plan;
 mod health;
 mod heap;

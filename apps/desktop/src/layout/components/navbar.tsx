@@ -37,9 +37,6 @@ import { RemoteShare } from './remote-share'
 import { RemoteSwitcher } from './remote-switcher'
 import { IS_MACOS, onDragRegionPointerDown, useMacOSFullscreen, useMaximized } from './window-chrome'
 
-
-
-
 const TAURI_PLUGIN_ID = 'dsh-tauri'
 
 const APP_IDENTIFIER_QUERY = {
@@ -54,12 +51,9 @@ const HELP_LINKS = {
   'harness-feedback': 'https://trtgsjkv6r.feishu.cn/share/base/form/shrcnlCoGElW7MQznGy9r3YYXcg?hide_uid=1&hide_device_info=1&hide_harness_version=1',
 }
 
-
 type FileAction = 'new-window' | 'new-chat' | 'open-folder' | 'close' | 'quit'
 
-
 type HelpAction = 'toggle-devtools' | 'task-manager' | 'keyboard-shortcuts' | 'copy-run-logs' | 'check-update' | 'about' | keyof typeof HELP_LINKS
-
 
 const CONFIG_TABS = [
   { id: 'application', labelKey: 'config.application' },
@@ -87,7 +81,6 @@ function handleWindowAction(action: 'minimize' | 'maximize' | 'close') {
       break
   }
 }
-
 
 export function WindowControls() {
   const { t } = useTranslation()
@@ -135,7 +128,6 @@ export function WindowControls() {
     </>
   )
 }
-
 
 function ShortcutLabel({ label, hint }: { label: string, hint?: string }) {
   if (hint == null)
@@ -230,7 +222,6 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
     }
   }
 
-
   async function createWindow() {
     try {
       await invoke('create_app_window')
@@ -240,7 +231,6 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
     }
   }
 
-
   async function quitApp() {
     try {
       await invoke('quit_app')
@@ -249,7 +239,6 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
       console.error('[Navbar] failed to quit app:', error)
     }
   }
-
 
   async function toggleDevtools() {
     try {
@@ -285,7 +274,6 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
     void openConfigDialog({ tab }).catch(() => {})
   }
 
-
   function handleQuickRestart() {
     setRunMenuOpen(false)
     void store.harness.restart()
@@ -295,11 +283,9 @@ export function Navbar({ onRemoteChange, sidebarCollapsed = false, onToggleSideb
     void openAboutDialog().catch(() => {})
   }
 
-
   function handleOpenUpdateDialog() {
     void openUpdateDialog().catch(() => {})
   }
-
 
   async function handleCheckUpdate() {
     try {

@@ -10,8 +10,9 @@ mod logger;
 mod service;
 mod utils;
 
-#[cfg(target_os = "macos")]
-use tauri::Manager;
+fn application_context() -> tauri::Context<tauri_runtime_electron::ElectronRuntime> {
+    tauri::generate_context!()
+}
 
 /// 对显式给定的核心安装目录施加全套 dsh 补丁（`--patch-core <dir>` 的入口）。
 ///
@@ -46,7 +47,7 @@ pub fn run() -> Result<(), String> {
     // 否则首次 get_dsh_data_path 会落到默认目录，日志、store 与 shim 全部写错位置。
     service::data_dir::restore_process_env();
 
-    let mut context = tauri::generate_context!();
+    let mut context = application_context();
     if let Some(directory) = config::e2e_app_data_dir()? {
         context.config_mut().app.app_directories_override = Some(
             tauri::utils::config::AppDirectoriesOverride::Root(directory),

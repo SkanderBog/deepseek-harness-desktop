@@ -9,9 +9,14 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args: Record<string, unknown>) => Promise<unknown>>(),
   zoom: vi.fn().mockResolvedValue(undefined),
   harness: {
-    serviceHealthy: true, webviewSrc: 'http://127.0.0.1:3081', webviewKey: 0,
-    showWebviewError: false, startupStatusKey: 'status.loading_plugins',
-    markWebviewLoaded: vi.fn(), markWebviewError: vi.fn(), refreshWebview: vi.fn(),
+    serviceHealthy: true,
+    webviewSrc: 'http://127.0.0.1:3081',
+    webviewKey: 0,
+    showWebviewError: false,
+    startupStatusKey: 'status.loading_plugins',
+    markWebviewLoaded: vi.fn(),
+    markWebviewError: vi.fn(),
+    refreshWebview: vi.fn(),
     markWebviewAlive: vi.fn(),
     markWebviewLeaving: vi.fn(),
     markWebviewBootReady: vi.fn(),
@@ -23,7 +28,9 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
-vi.mock('@/store', () => ({ store: { harness: mocks.harness, setting: { zoom: mocks.zoom, get zoom_factor() { return mocks.setting.zoom_factor } } } }))
+vi.mock('@/store', () => ({ store: { harness: mocks.harness, setting: { zoom: mocks.zoom, get zoom_factor() {
+  return mocks.setting.zoom_factor
+} } } }))
 vi.mock('@/hooks/use-listen', () => ({ useListen: (event: string, handler: () => void) => {
   mocks.listeners.set(event, handler)
 } }))
@@ -64,10 +71,14 @@ it('keeps one native registration through StrictMode and a reload during pending
       }
       const label = `guest-${++sequence}`
       active.set(url, label)
-      await new Promise<void>((resolve) => { finishPrepare = resolve })
+      await new Promise<void>((resolve) => {
+        finishPrepare = resolve
+      })
       return label
     }
-    await new Promise<void>((resolve) => { finishRelease = resolve })
+    await new Promise<void>((resolve) => {
+      finishRelease = resolve
+    })
     for (const [url, label] of active) {
       if (label === args.label)
         active.delete(url)
@@ -80,19 +91,27 @@ it('keeps one native registration through StrictMode and a reload during pending
   view.rerender(<StrictMode><HarnessWebview /></StrictMode>)
   await act(async () => {})
   expect(duplicates).toBe(0)
-  await act(async () => { finishPrepare() })
+  await act(async () => {
+    finishPrepare()
+  })
   await waitFor(() => expect(finishRelease).toBeTypeOf('function'))
   expect(screen.queryByTitle('Harness')).toBeNull()
   expect([...active.values()]).toEqual(['guest-1'])
-  await act(async () => { finishRelease!() })
+  await act(async () => {
+    finishRelease!()
+  })
   await waitFor(() => expect([...active.values()]).toEqual(['guest-2']))
-  await act(async () => { finishPrepare() })
+  await act(async () => {
+    finishPrepare()
+  })
   expect(screen.getByTitle('Harness').getAttribute('src')).toBe('http://127.0.0.1:3081')
   expect(duplicates).toBe(0)
   finishRelease = undefined
   view.unmount()
   await waitFor(() => expect(finishRelease).toBeTypeOf('function'))
-  await act(async () => { finishRelease!() })
+  await act(async () => {
+    finishRelease!()
+  })
   expect(active.size).toBe(0)
 })
 
@@ -100,11 +119,17 @@ it('waits for native registration before loading a guest and releases it on unmo
   const navigation = { sessionId: 'session-existing' }
   Object.defineProperty(window, '__DSH_NAVIGATION__', { configurable: true, value: navigation })
   let prepared!: (label: string) => void
-  mocks.invoke.mockImplementation(command => command === 'prepare_harness_webview' ? new Promise(resolve => { prepared = resolve }) : Promise.resolve())
+  mocks.invoke.mockImplementation(command => command === 'prepare_harness_webview'
+    ? new Promise((resolve) => {
+        prepared = resolve
+      })
+    : Promise.resolve())
   const view = render(<HarnessWebview />)
   expect(screen.queryByTitle('Harness')).toBeNull()
   await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('prepare_harness_webview', { url: 'http://127.0.0.1:3081', navigation }))
-  await act(async () => { prepared('guest-registered') })
+  await act(async () => {
+    prepared('guest-registered')
+  })
   expect(screen.getByTitle('Harness').getAttribute('src')).toBe('http://127.0.0.1:3081')
   view.unmount()
   await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('release_harness_webview', { label: 'guest-registered' }))
@@ -277,15 +302,19 @@ it('does not write local Harness health for a remote guest', async () => {
 it('releases a stale registration when the selected URL changes', async () => {
   const pending = new Map<string, (label: string) => void>()
   mocks.invoke.mockImplementation((command, args) => command === 'prepare_harness_webview'
-    ? new Promise(resolve => { pending.set(String(args.url), resolve) })
+    ? new Promise((resolve) => { pending.set(String(args.url), resolve) })
     : Promise.resolve())
   const view = render(<HarnessWebview srcOverride="https://alpha.test" />)
   await waitFor(() => expect(pending.has('https://alpha.test')).toBe(true))
   view.rerender(<HarnessWebview srcOverride="https://beta.test" />)
-  await act(async () => { pending.get('https://alpha.test')!('stale-guest') })
+  await act(async () => {
+    pending.get('https://alpha.test')!('stale-guest')
+  })
   expect(screen.queryByTitle('Harness')).toBeNull()
   expect(mocks.invoke).toHaveBeenCalledWith('release_harness_webview', { label: 'stale-guest' })
-  await act(async () => { pending.get('https://beta.test')!('active-guest') })
+  await act(async () => {
+    pending.get('https://beta.test')!('active-guest')
+  })
   expect(screen.getByTitle('Harness').getAttribute('src')).toBe('https://beta.test')
 })
 

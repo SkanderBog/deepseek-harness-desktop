@@ -252,6 +252,7 @@ pub fn write_shims<R: Runtime>(app_handle: &AppHandle<R>, bin_dir: &Path) -> Res
 mod tests {
     use super::super::test_util::{sample_dsh_home, sample_shim_paths, shim_paths_for};
     use super::*;
+    #[cfg(windows)]
     use tauri::test::{mock_builder, mock_context, noop_assets};
 
     #[test]

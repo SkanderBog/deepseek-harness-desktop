@@ -322,6 +322,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/next' }}
 
       # dist 必须存在：缺失时 debug 构建回落到 devUrl，页面为空、选择器全部落空。
+      - name: Build bundled plugins
+        run: pnpm run build:plugins
+
       - name: Build renderer
         run: pnpm --filter dsh-desktop build
 

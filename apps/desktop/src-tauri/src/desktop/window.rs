@@ -195,7 +195,7 @@ pub async fn release_harness_webview(
 fn application_capabilities_separate_shell_and_harness_commands() {
     use tauri::ipc::Origin;
 
-    let mut context: tauri::Context<tauri_runtime_electron::ElectronRuntime> = tauri::generate_context!();
+    let mut context = crate::application_context();
     let authority = context.runtime_authority_mut();
     let url = harness_guest_url("http://127.0.0.1:3080/?token=x").unwrap();
     authority

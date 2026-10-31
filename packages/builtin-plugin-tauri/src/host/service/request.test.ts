@@ -25,7 +25,7 @@ beforeEach(async () => {
 
   const connection = {
     requestRejection(request: IncomingMessage): 401 | 403 | undefined {
-      return request.headers.origin === 'https://untrusted.example' ? 403 : 401
+      return request.method === 'POST' ? 401 : request.headers.origin === 'https://untrusted.example' ? 403 : 401
     },
   }
   const context = { connection }
@@ -35,6 +35,7 @@ beforeEach(async () => {
   })
   app.use(guard)
   app.get('/api/known', () => 'authorized route')
+  app.post('/api/mutation', () => 'mutation route')
   listener = createServer(toNodeHandler(app))
   const listening = once(listener, 'listening')
   listener.listen(0, '127.0.0.1')
@@ -81,11 +82,37 @@ describe('desktop carrier request authorization', () => {
     expect(await response.text(), '放行后必须到达真实 H3 路由').toBe('authorized route')
   })
 
-  it('keeps a cross-origin 403 when the embedded carrier is enabled', async () => {
+  it('keeps a cross-origin 403 when the embedded carrier is enabled, while the gate is enabled', async () => {
     enableEmbedded()
     const response = await fetch(`${origin}/api/known`, { headers: { origin: 'https://untrusted.example' } })
     expect(response.status, '跨源拒绝不得被嵌入载体绕过').toBe(403)
     expect(await response.json(), '403 必须返回 forbidden 错误体').toEqual({ error: 'forbidden' })
+  })
+
+  it('allows an embedded same-origin POST through the request guard', async () => {
+    enableEmbedded()
+    const response = await fetch(`${origin}/api/mutation`, { method: 'POST', headers: { origin } })
+    expect(response.status, '同源 POST 必须通过 request guard').toBe(200)
+    expect(await response.text(), '同源 POST 必须到达真实 H3 路由').toBe('mutation route')
+  })
+
+  it('rejects an embedded cross-origin POST in the request guard', async () => {
+    enableEmbedded()
+    const response = await fetch(`${origin}/api/mutation`, { method: 'POST', headers: { origin: 'https://untrusted.example' } })
+    expect(response.status, '跨源 POST 必须由 request guard 拒绝').toBe(403)
+    expect(await response.json(), 'request guard 必须返回 cross-origin-request').toEqual({ error: 'cross-origin-request' })
+  })
+
+  it('restores the 401 rejection after disposing the embedded gate', async () => {
+    enableEmbedded()
+    const embedded = await fetch(`${origin}/api/known`)
+    expect(embedded.status, 'dispose 前嵌入载体应被放行').toBe(200)
+
+    disposeGate?.()
+    disposeGate = undefined
+    const restored = await fetch(`${origin}/api/known`)
+    expect(restored.status, 'dispose 后必须恢复 401').toBe(401)
+    expect(await restored.json(), '恢复后的 401 必须返回 unauthorized 错误体').toEqual({ error: 'unauthorized' })
   })
 
   it('returns 401 before embedding and 404 after embedding for an unmounted route', async () => {

@@ -33,7 +33,9 @@ vi.mock('./use-listen', () => ({
   useListen: (event: string, handler: (event: { event: string, id: number, payload: unknown }) => void) => {
     useEffect(() => {
       mocks.listeners.set(event, handler)
-      return () => { mocks.listeners.delete(event) }
+      return () => {
+        mocks.listeners.delete(event)
+      }
     }, [event, handler])
   },
 }))

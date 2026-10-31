@@ -23,6 +23,7 @@ use crate::config::{store_dat_file_name, STORE_PET_WINDOW_STATE_KEY};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+#[cfg(not(target_os = "macos"))]
 use tauri::PhysicalPosition;
 use tauri::{ Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;

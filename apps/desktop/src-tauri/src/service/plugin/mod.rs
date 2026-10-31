@@ -75,10 +75,9 @@ pub(crate) use installed::{
 pub use installed::{list, PreinstallPlugin};
 pub(crate) use internal::cancel as cancel_internal_plugins;
 pub(crate) use internal::ensure as ensure_internal_plugins;
-pub(crate) use internal::{
-    internal_plugin_entry_is_ready, prepare_early_plugins, skip_unavailable_plugins,
-    EarlyPluginState,
-};
+pub(crate) use internal::{internal_plugin_entry_is_ready, skip_unavailable_plugins};
+#[cfg(any(windows, test))]
+pub(crate) use internal::{prepare_early_plugins, EarlyPluginState};
 pub(crate) use patch_entries::{strip_active_unresolved_entries, PatchEntryStripReport};
 pub(crate) use patch_guard::preflight_at as preflight_patch_entries_at;
 pub(crate) use patch_guard::{

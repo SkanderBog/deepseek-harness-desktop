@@ -34,8 +34,12 @@ vi.mock('@tauri-apps/api/event', () => ({
     return mocks.emit(event, payload)
   },
 }))
-vi.mock('@/hooks/use-notification-action', () => ({ useNotificationAction: (handler: typeof mocks.action) => { mocks.action = handler } }))
-vi.mock('@/hooks/use-notification-clicked', () => ({ useNotificationClicked: (handler: typeof mocks.clicked) => { mocks.clicked = handler } }))
+vi.mock('@/hooks/use-notification-action', () => ({ useNotificationAction: (handler: typeof mocks.action) => {
+  mocks.action = handler
+} }))
+vi.mock('@/hooks/use-notification-clicked', () => ({ useNotificationClicked: (handler: typeof mocks.clicked) => {
+  mocks.clicked = handler
+} }))
 vi.mock('@tauri-apps/plugin-os', () => ({ type: () => 'windows' }))
 vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
 vi.mock('@/store', () => ({ store: { harness: mocks.harness, recovery: mocks.recovery } }))
@@ -48,7 +52,9 @@ vi.mock('@/hooks/use-dsh-shortcuts', () => ({
   shortcutHint: vi.fn(),
   useDshShortcuts: () => [mocks.shortcuts, mocks.setShortcuts],
 }))
-vi.mock('@/hooks/use-listen', () => ({ useListen: (event: string, handler: (event: { payload: unknown }) => void) => { mocks.listeners.set(event, handler) } }))
+vi.mock('@/hooks/use-listen', () => ({ useListen: (event: string, handler: (event: { payload: unknown }) => void) => {
+  mocks.listeners.set(event, handler)
+} }))
 vi.mock('@/ui/plugin/recovery', () => ({ Recovery: () => null }))
 vi.mock('./setup', () => ({ Setup: () => null }))
 vi.mock('./setup-preinstall', () => ({ PreinstallSetup: () => null }))
@@ -160,7 +166,9 @@ it('coalesces duplicate notification actions without losing the response text', 
 it('activates a minimized window before delivering a native notification click', async () => {
   mocks.window.isMinimized.mockResolvedValue(true)
   render(<Webview />)
-  await act(async () => { await mocks.clicked!({ data: { tag: 'session-tag' } }) })
+  await act(async () => {
+    await mocks.clicked!({ data: { tag: 'session-tag' } })
+  })
   expect(mocks.window.unminimize).toHaveBeenCalledOnce()
   expect(mocks.window.show).toHaveBeenCalledOnce()
   expect(mocks.window.setFocus).toHaveBeenCalledOnce()

@@ -10,15 +10,15 @@ import { zoomActionFromShortcut } from '@/utils/zoom'
 import { Loadable } from './loadable'
 
 export interface DshWebviewElement extends HTMLElement {
-  setZoomFactor(factor: number): void
+  setZoomFactor: (factor: number) => void
   executeJavaScript: <T>(script: string) => Promise<T>
 }
 
-type NativeWebviewProps = {
-  ref: RefObject<DshWebviewElement | null>
-  src: string
-  title: string
-  style?: CSSProperties
+interface NativeWebviewProps {
+  'ref': RefObject<DshWebviewElement | null>
+  'src': string
+  'title': string
+  'style'?: CSSProperties
   'data-testid': string
 }
 
@@ -31,12 +31,12 @@ export interface HarnessWebviewProps {
 
 export function HarnessWebview({ srcOverride = null, borderTint = null }: HarnessWebviewProps) {
   const webviewRef = useRef<DshWebviewElement>(null)
-  const documentReady = useRef(false)
-  const lifecycle = useRef(Promise.resolve())
+  const documentReadyRef = useRef(false)
+  const lifecycleRef = useRef(Promise.resolve())
   const harness = useStore(store.harness)
   const setting = useStore(store.setting)
-  const zoomFactor = useRef(setting.zoom_factor)
-  zoomFactor.current = setting.zoom_factor
+  const zoomFactorRef = useRef(setting.zoom_factor)
+  zoomFactorRef.current = setting.zoom_factor
   const { t } = useTranslation()
   const remoteMode = srcOverride !== null && srcOverride !== ''
   const mounted = remoteMode || harness.serviceHealthy
@@ -53,7 +53,7 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
     let disposed = false
     let activeLabel: string | undefined
     setPreparationError('')
-    lifecycle.current = lifecycle.current.then(async () => {
+    lifecycleRef.current = lifecycleRef.current.then(async () => {
       if (disposed)
         return
       const label = await invoke<string>('prepare_harness_webview', { url: src, navigation: (window as Window & { __DSH_NAVIGATION__?: unknown }).__DSH_NAVIGATION__ ?? null })
@@ -67,7 +67,7 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
     return () => {
       disposed = true
       setPrepared(null)
-      lifecycle.current = lifecycle.current.then(async () => {
+      lifecycleRef.current = lifecycleRef.current.then(async () => {
         if (activeLabel)
           await invoke('release_harness_webview', { label: activeLabel })
       }).catch(error => console.error('[Webview] failed to release guest:', error))
@@ -81,10 +81,10 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
     let disposed = false
     let documentVersion = 0
     const current = () => !disposed && store.harness.webviewKey === generation
-    documentReady.current = false
+    documentReadyRef.current = false
     const ready = () => {
-      documentReady.current = true
-      webview.setZoomFactor(zoomFactor.current)
+      documentReadyRef.current = true
+      webview.setZoomFactor(zoomFactorRef.current)
     }
     const loaded = () => {
       if (remoteMode || !current())
@@ -103,13 +103,13 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
       if (isMainFrame !== true || isInPlace || remoteMode || !current())
         return
       documentVersion++
-      documentReady.current = false
+      documentReadyRef.current = false
       store.harness.markWebviewLeaving()
     }
     const crashed = () => {
       if (!remoteMode && current()) {
         documentVersion++
-        documentReady.current = false
+        documentReadyRef.current = false
         store.harness.markWebviewLeaving()
         store.harness.markWebviewError()
       }
@@ -126,7 +126,7 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
     webview.addEventListener('render-process-gone', crashed)
     return () => {
       disposed = true
-      documentReady.current = false
+      documentReadyRef.current = false
       webview.removeEventListener('dom-ready', ready)
       webview.removeEventListener('did-finish-load', loaded)
       webview.removeEventListener('did-fail-load', failed)
@@ -136,7 +136,7 @@ export function HarnessWebview({ srcOverride = null, borderTint = null }: Harnes
   }, [guest, src, generation, remoteMode])
 
   useEffect(() => {
-    if (documentReady.current)
+    if (documentReadyRef.current)
       webviewRef.current?.setZoomFactor(setting.zoom_factor)
   }, [setting.zoom_factor])
 

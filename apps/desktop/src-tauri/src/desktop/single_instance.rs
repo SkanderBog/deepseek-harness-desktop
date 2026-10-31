@@ -357,6 +357,7 @@ pub struct SingleInstance {
 }
 
 impl SingleInstance {
+    #[cfg(not(debug_assertions))]
     pub fn attach(&self, app: &AppHandle) -> Result<(), String> {
         if crate::utils::shell_window(app).is_none()
             || app.try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>().is_none()

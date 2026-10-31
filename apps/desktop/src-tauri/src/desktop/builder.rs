@@ -2,6 +2,7 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(any(windows, target_os = "macos"))]
 use std::sync::OnceLock;
 use tauri::{Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, ipc::Invoke};
 use tauri_runtime_electron::ElectronRuntime;
@@ -623,7 +624,12 @@ pub fn sync_view_menu(
         }
     }
     #[cfg(not(target_os = "macos"))]
-    let _ = (window, entries);
+    {
+        let _ = window;
+        for entry in entries {
+            let _ = (entry.id, entry.enabled, entry.shortcut);
+        }
+    }
     Ok(())
 }
 

@@ -1,5 +1,5 @@
 import type { EventCallback, EventName, Options } from '@tauri-apps/api/event'
-import { emit as tauriEmit, emitTo, listen as tauriListen, once as tauriOnce } from '@tauri-apps/api/event'
+import { emitTo, emit as tauriEmit, listen as tauriListen, once as tauriOnce } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
 export { invoke } from '@tauri-apps/api/core'

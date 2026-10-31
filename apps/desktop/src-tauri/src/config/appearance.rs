@@ -51,6 +51,7 @@ impl From<serde_json::Value> for Appearance {
 }
 
 impl Appearance {
+    #[cfg(any(windows, target_os = "macos", test))]
     pub fn native_blur_enabled(&self) -> bool {
         self.transparency && self.blur
     }

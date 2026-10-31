@@ -1,9 +1,9 @@
-
 import type { ReadinessPollResult, ReadinessProbeResult, StartupPhase } from './readiness'
 import type { InternalPluginsPhasePayload, StartupError } from './types'
 import type { PatchEntryStripReport, PatchQuarantineReport } from '@/types/plugin'
 import { promiseTimeout } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
+import Anser from 'anser'
 import i18next from 'i18next'
 import { containsHeapOomError, containsInotifyLimitError, containsPortInUseError, heapPeakFromLogs, pickErrorLines } from '@/components/logs.utils'
 import { toast } from '@/utils/toast'
@@ -23,8 +23,6 @@ import {
   quarantineFailureDetail,
 } from './patch-layer'
 import { pollReadiness } from './readiness'
-
-
 
 export function generateTimestampedUrl(baseUrl: string): string {
   const timestamp = Date.now()
@@ -167,7 +165,7 @@ export async function readServiceLogTail(): Promise<string[]> {
     const raw = await invoke<string>('read_service_logs', { maxBytes: LOG_TAIL_MAX_BYTES })
     return raw
       .split(/\r?\n/)
-      .map(line => line.replace(/\x1B\[[0-9;]*m/g, '').trim())
+      .map(line => Anser.ansiToText(line).trim())
       .filter(Boolean)
   }
   catch (err) {

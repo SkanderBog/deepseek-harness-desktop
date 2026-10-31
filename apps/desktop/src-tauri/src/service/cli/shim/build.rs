@@ -625,6 +625,7 @@ pub fn build_npm_cmd_shim(paths: &ShimPaths) -> String {
     )
 }
 
+#[cfg(windows)]
 fn build_npm_cli_ps1_shim(
     paths: &ShimPaths,
     shim_name: &str,
@@ -715,7 +716,7 @@ exit $LASTEXITCODE
 }
 
 /// Windows `npx.ps1` 内容（见 npx/npm shim 段注释）。
-#[cfg_attr(all(not(windows), not(test)), allow(dead_code))]
+#[cfg(windows)]
 pub fn build_npx_ps1_shim(paths: &ShimPaths) -> String {
     build_npm_cli_ps1_shim(
         paths,
@@ -731,7 +732,7 @@ pub fn build_npx_ps1_shim(paths: &ShimPaths) -> String {
 }
 
 /// Windows `npm.ps1` 内容（见 npx/npm shim 段注释）。
-#[cfg_attr(all(not(windows), not(test)), allow(dead_code))]
+#[cfg(windows)]
 pub fn build_npm_ps1_shim(paths: &ShimPaths) -> String {
     build_npm_cli_ps1_shim(
         paths,
