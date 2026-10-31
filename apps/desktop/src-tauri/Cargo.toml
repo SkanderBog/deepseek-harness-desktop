@@ -120,6 +120,7 @@ libc = "0.2"
 
 [patch.crates-io]
 tauri-plugin-notifications = { path = "../../../crates/tauri-plugin-notifications" }
+tauri-runtime = { path = "vendor/tauri-runtime" }
 
 [patch."https://github.com/hairyf/electron-rs.git"]
 electron-rs = { path = "../../../crates/electron-rs" }
