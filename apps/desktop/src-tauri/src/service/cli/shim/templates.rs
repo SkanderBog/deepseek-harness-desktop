@@ -1,3 +1,23 @@
+//! shim 共享脚本片段（纯文本常量，作为 format! 的参数嵌入各构建函数）。
+//!
+//! shim 文本必须全英文：cmd/ps1 按系统代码页解析，中文注释会乱码成命令执行。
+//! 变量约定：cmd 用 `%NODE_BIN%` / `%NODE_DIR%` / `%DSH_BIN%` / `%PNPM_BIN%`，
+//! ps1 用 `$nodeBin` / `$nodeDir` / `$gitDir` / `$dshBin` / `$pnpmBin`，sh 用同名
+//! 大写下划线形式。cmd 侧不设 `GIT_DIR`：该变量对 Git 是仓库目录语义，导出会给所有
+//! 子进程注入一个假仓库根；捆绑 Git 目录由构建函数直接内联进 PATH 注入行。路径全部
+//! 由桌面端在生成 shim 时按依赖映射表解析后写死（不再假设
+//! `<AppData>/dependencies/<name>` 布局）；这些常量里的 `{`/`}` 是字面量（由
+//! format! 的参数占位符区分）。
+
+// ---------------------------------------------------------------------------
+// shim 共享片段：node 解析逻辑（dsh / pnpm shim 共用）
+//
+// 规则：优先 `DSH_NODE` 环境变量（桌面端注入其已解析并核验过的 node 路径，
+// 保证 shim 与应用预检一致），其次 PATH 中版本兼容的本地 node（v22.19+ /
+// v24+，与 config::is_supported_node_version 一致），否则回退捆绑
+// 运行时。`DSH_NODE` 只在桌面端自身派生的子进程里存在，终端用户环境不受影响。
+// ---------------------------------------------------------------------------
+
 pub(super) const CMD_NODE_RESOLVE: &str = r#"
 rem Prefer the desktop-resolved node (DSH_NODE, injected by the app into its
 rem own child processes), then a version-compatible local node, then the
@@ -109,6 +129,16 @@ if [ -z "$NODE" ]; then
 fi
 "#;
 
+// ---------------------------------------------------------------------------
+// dsh shim 共享片段：用户已安装的 dsh 优先（避免覆盖/遮蔽用户自己的 dsh 与
+// $DSH_HOME）。与 pnpm shim 的"用户优先"策略一致：先转发 PATH 中（排除本
+// shim 目录）的用户 dsh，转发时不注入本应用的 DSH_HOME，保留用户环境；
+// 仅找不到用户 dsh 时才回退到捆绑 dsh。
+// 变量约定：cmd 用 %SELF_PREFIX%/%USER_DSH%，ps1 用 $selfDir/$userDsh，
+// sh 用 $SELF_DIR。dsh shim 仅 release 构建写入（debug 构建不覆盖共享的
+// dsh shim，见 write_shims），debug 下这些常量/函数未使用，允许 dead_code。
+// ---------------------------------------------------------------------------
+
 #[cfg_attr(debug_assertions, allow(dead_code))]
 pub(super) const CMD_USER_DSH_PRECEDENCE: &str = r#"
 rem Prefer a user-installed dsh on PATH (skip our own shim dir), fall back to bundled.
@@ -173,7 +203,7 @@ unset remaining_path
 #[cfg(all(test, unix))]
 mod tests {
     use super::SH_USER_DSH_PRECEDENCE;
-    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::os::unix::fs::{symlink, PermissionsExt};
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -225,10 +255,7 @@ mod tests {
                 tokio::process::Command::new(&shim)
                     .current_dir(&bin)
                     .env_clear()
-                    .env(
-                        "PATH",
-                        format!("{prefix}:{}", root.join("missing").display()),
-                    )
+                    .env("PATH", format!("{prefix}:{}", root.join("missing").display()))
                     .kill_on_drop(true)
                     .output(),
             )

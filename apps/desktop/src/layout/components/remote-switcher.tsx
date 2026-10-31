@@ -9,6 +9,7 @@ import { dotClassOf, useRemote } from '@/hooks/use-remote'
 import { toast } from '@/utils/toast'
 import { ConnectDialog } from './connect-dialog'
 
+/** 机器行的状态描述：pending 立即「连接中」；重连带倒计时；已知凭据类型缀后。 */
 function stateTextOf(
   machine: { state: string, nextRetryAt?: number, authMethod?: 'agent' | 'key' | 'password' },
   pending: boolean,
@@ -134,6 +135,11 @@ export function RemoteSwitcher({ onChange, visible = true, onManage, onSync }: {
                       <Description className={cn('ml-auto shrink-0', pending && 'text-warning')}>
                         {stateTextOf(machine, pending, t)}
                       </Description>
+                      {/* 行尾双动作：行本体=当前窗口切换；图标=新窗口打开（常驻——
+                        未连接机器开窗后由新窗口内壳层发起连接）。RAC 菜单项的
+                        press 由原生事件冒泡驱动（其 PressEvent 无
+                        stopPropagation），故图标用原生 span + 事件阻断：
+                        点击只发 remote_open_window，本窗口不跟着切换 */}
                       <span
                         role="button"
                         tabIndex={-1}
@@ -154,6 +160,7 @@ export function RemoteSwitcher({ onChange, visible = true, onManage, onSync }: {
               })}
             </Dropdown.Section>
             <Dropdown.Section aria-label={t('remote.section_actions')}>
+              {/* 活动远端连接的一键断开（视图先回本地，再向引擎发断开） */}
               <If cond={activeId !== null}>
                 <Dropdown.Item
                   id="remote-disconnect-active"

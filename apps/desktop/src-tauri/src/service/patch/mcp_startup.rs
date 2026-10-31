@@ -1,8 +1,7 @@
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-use crate::AppHandle;
-use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
+use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
 
 const MCP_INDEX_JS: &str = "node_modules/@deepseek-ai/dsh-mcp-client/lib/index.js";
 const READY_ANCHOR: &str = "\tconst outcome = await connection.ready;";
@@ -112,7 +111,7 @@ pub fn apply_at(core_dir: &Path) -> Result<(), String> {
     patch_core_file(core_dir, MCP_INDEX_JS, patch_source)
 }
 
-pub fn apply(app_handle: &AppHandle) -> Result<(), String> {
+pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
     patch_dsh(app_handle, MCP_INDEX_JS, patch_source)
 }
 
@@ -120,7 +119,7 @@ pub fn apply(app_handle: &AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    const OAUTH_1101: &str = include_str!("../../../../tests/unit/fixtures/mcp-oauth-1101.mjs");
+    const OAUTH_1101: &str = include_str!("../../../../test/fixtures/mcp-oauth-1101.mjs");
 
     fn oauth_prefix(call: &str) -> String {
         r#"import * as desktopMcpSdk from "@modelcontextprotocol/client";

@@ -14,9 +14,6 @@ vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
 vi.mock('@/utils/toast', () => ({ toast }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }))
 
-if (typeof CSS === 'undefined')
-  vi.stubGlobal('CSS', { escape: (value: string) => value })
-
 let client: QueryClient
 let rows: ReturnType<typeof fixtures>
 let failRead: boolean

@@ -12,6 +12,7 @@ import { queryKeys } from '@/config/query-keys'
 import { useDshPluginsManager } from '@/hooks/use-plugins-manager'
 import { toast } from '@/utils/toast'
 
+/** 判定结果 → Chip 颜色与文案 key */
 const VERDICT_CHIPS: Record<MigrationVerdict, { key: string, color: 'default' | 'accent' | 'success' | 'warning' | 'danger' }> = {
   compatible: { key: 'profiles.migrate_verdict_compatible', color: 'default' },
   upgrade: { key: 'profiles.migrate_verdict_upgrade', color: 'success' },
@@ -19,26 +20,33 @@ const VERDICT_CHIPS: Record<MigrationVerdict, { key: string, color: 'default' | 
   unknown: { key: 'profiles.migrate_verdict_unknown', color: 'warning' },
 }
 
+/** 档案级数据类别 → 源档案里的文件名 */
 const DATA_FILES: Record<MigrationDataKind, string> = {
   patch: 'cordis.patch.yml',
   policy: 'pnpm-workspace.yaml',
   credentials: '.credentials.yaml',
 }
 
+/** 数据项的列出顺序：凭据固定最后 */
 const DATA_ORDER: MigrationDataKind[] = ['patch', 'policy', 'credentials']
 
+/** 档案级数据类别 → 说明文案 key */
 const DATA_LABEL_KEYS: Record<MigrationDataKind, string> = {
   patch: 'profiles.migrate_data_patch',
   policy: 'profiles.migrate_data_policy',
   credentials: 'profiles.migrate_data_credentials',
 }
 
+/**
+ * 「迁移档案数据」对话框组件
+ */
 export function ProfileMigrateDialog(props: PropsWithOverlays) {
   const disclosure = useDisclosure({ props })
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const manager = useDshPluginsManager()
 
+  // 1. 数据查询 (Queries)
   const { data: cores } = useQuery({
     queryKey: queryKeys.cores,
     queryFn: () => invoke<HarnessCore[]>('get_cores'),
@@ -48,16 +56,19 @@ export function ProfileMigrateDialog(props: PropsWithOverlays) {
     queryFn: () => invoke<Profile[]>('get_profiles'),
   })
 
+  // 2. 本地用户选择状态
   const [pickedSourceId, setPickedSourceId] = useState('')
   const [pluginOverrides, setPluginOverrides] = useState<Record<string, boolean>>({})
   const [dataOverrides, setDataOverrides] = useState<Record<string, boolean>>({})
 
+  // 3. 档案迁移分析数据 Query
   const { data: analysis, isLoading, isFetching, error } = useQuery({
     queryKey: queryKeys.profileMigration(pickedSourceId),
     queryFn: () => invoke<MigrationAnalysis>('analyze_profile_migration', { sourceId: pickedSourceId }),
     enabled: Boolean(pickedSourceId),
   })
 
+  // 4. 派生数据提取与 Map 索引构造 (常数级别 O(1) 查找)
   const profiles = profileList ?? []
   const target = profiles.find(profile => profile.active)
   const sources = profiles.filter(profile => !profile.active)
@@ -69,9 +80,12 @@ export function ProfileMigrateDialog(props: PropsWithOverlays) {
 
   const installedMap = new Map(manager.installed.map(p => [p.id, p.version]))
   const dataItemMap = new Map(dataItems.map(item => [item.kind, item]))
+  // 已装列表没到位时不能渲染勾选：`installedMap` 为空会让每个插件都像「未装」而默认勾上
   const analyzing = isLoading || manager.loading
+  // 提交还要求分析结果确实到手：后台刷新 / 刷新失败时缓存里的旧选择不能拿来对新来源提交
   const analysisReady = analysis !== undefined && error === null && !isFetching
 
+  /** 有迁移价值：同名插件未装、档案数据未被当前档案完全包含 */
   function pluginMigratable(entry: MigrationEntry): boolean {
     return !installedMap.has(entry.id)
   }
@@ -81,10 +95,12 @@ export function ProfileMigrateDialog(props: PropsWithOverlays) {
     return item !== undefined && !item.covered
   }
 
+  /** 勾选状态：不可迁移的一律不选；用户显式切换过的一律以用户为准 */
   function pluginPicked(entry: MigrationEntry): boolean {
     return pluginMigratable(entry) && (pluginOverrides[entry.id] ?? true)
   }
 
+  /** 凭据可能含敏感信息，默认不勾选 */
   function dataPicked(kind: MigrationDataKind): boolean {
     return dataMigratable(kind) && (dataOverrides[kind] ?? kind !== 'credentials')
   }
@@ -93,11 +109,13 @@ export function ProfileMigrateDialog(props: PropsWithOverlays) {
   const pickedData = DATA_ORDER.filter(dataPicked)
   const hasCandidate = plugins.some(pluginMigratable) || DATA_ORDER.some(dataMigratable)
 
+  // 5. 使用 useMutation 封装迁移提交流程
   const { mutate: handleMigrate, isPending: busy } = useMutation({
     mutationFn: async () => {
       const specs = pickedPlugins.map(entry => entry.spec)
       const kinds = pickedData
 
+      // 阶段 A: 迁移档案数据
       let appliedCount = 0
       let failedKinds: MigrationDataKind[] = []
       if (kinds.length > 0) {
@@ -109,6 +127,7 @@ export function ProfileMigrateDialog(props: PropsWithOverlays) {
         failedKinds = report.failures.map(failure => failure.kind)
       }
 
+      // 阶段 B: 安装插件
       let failed = 0
       if (specs.length > 0) {
         const results = await manager.install(specs)
@@ -129,6 +148,7 @@ export function ProfileMigrateDialog(props: PropsWithOverlays) {
       if (failedCount > 0) {
         toast(t('profiles.migrate_plugin_failed', { count: failedCount }), { variant: 'danger' })
       }
+      // 装了插件的那一半由插件管理器的结果气泡负责提示，这里只在纯数据迁移时补一条
       else if (specCount === 0 && appliedCount > 0) {
         toast(t('profiles.migrate_success', { count: appliedCount }), { variant: 'accent' })
       }
@@ -155,12 +175,15 @@ export function ProfileMigrateDialog(props: PropsWithOverlays) {
             <AlertDialog.Body className="space-y-4">
               <p className="text-xs leading-[1.7] text-muted">{t('profiles.migrate_desc')}</p>
 
+              {/* 源档案与目标档案选择 */}
               <div className="flex justify-between items-center gap-3">
                 <Select
                   variant="secondary"
                   className="flex-1"
                   selectedKey={pickedSourceId}
                   onSelectionChange={(key) => {
+                    // 勾选按插件 id / 数据类目记账，两个来源可以同名：换来源必须清空，
+                    // 否则上一个来源里勾过的凭据会直接套用到新来源。
                     setPickedSourceId(String(key))
                     setPluginOverrides({})
                     setDataOverrides({})
@@ -196,6 +219,7 @@ export function ProfileMigrateDialog(props: PropsWithOverlays) {
                 </div>
               </div>
 
+              {/* 迁移分析结果 */}
               <If
                 cond={pickedSourceId}
                 else={(
@@ -230,6 +254,7 @@ export function ProfileMigrateDialog(props: PropsWithOverlays) {
                       </Tabs.List>
                     </Tabs.ListContainer>
 
+                    {/* 插件列表面板 */}
                     <Tabs.Panel id="plugins">
                       <If
                         cond={plugins.length === 0}
@@ -295,6 +320,7 @@ export function ProfileMigrateDialog(props: PropsWithOverlays) {
                       />
                     </Tabs.Panel>
 
+                    {/* 档案数据面板 */}
                     <Tabs.Panel id="data">
                       {DATA_ORDER.map((kind) => {
                         const item = dataItemMap.get(kind)

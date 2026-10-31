@@ -18,10 +18,19 @@ import { store } from '@/store'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
 
+/**
+ * 目录名白名单：与 Rust 侧 join_leaf 的校验逐字对应。
+ * 拒绝分隔符与绝对路径，否则用户填一个 \\?\D:\x 就能把数据目录建到没选过的地方。
+ */
 const LEAF_PATTERN = /^[\w .-]+$/
 
+/** 进度面板保留的日志行数（Panel.Progress 只展示最后 5 行）。 */
 const LOG_LIMIT = 8
 
+/**
+ * 预检结果的占位值：planKey 为空串，因此永远不满足「与当前输入一致」，
+ * 这样预检卡片可以用 <If cond={planReady}> 渲染，不必在 JSX 里写三元或做非空断言。
+ */
 const EMPTY_PLAN: MigrationPlan = {
   source: '',
   target: '',
@@ -34,6 +43,7 @@ const EMPTY_PLAN: MigrationPlan = {
   remembered: false,
 }
 
+/** 把字节转成人类可读体积（保留 1 位小数）。 */
 function formatBytes(bytes: number): string {
   const kb = 1024
   if (bytes < kb)
@@ -45,11 +55,19 @@ function formatBytes(bytes: number): string {
   return `${(bytes / kb / kb / kb).toFixed(1)} GB`
 }
 
+/** 取路径最后一段（跨盘符时 \\ 与 / 都算分隔符）。 */
 function basenameOf(path: string): string {
   const parts = path.split(/[\\/]/).filter(part => part !== '')
   return parts.length === 0 ? '' : parts[parts.length - 1]
 }
 
+/**
+ * 数据目录面板（issue #871）。
+ *
+ * 数据目录的唯一真相是**用户级 DSH_HOME 环境变量**：这里既不改 app 配置、
+ * 也不做联接/软链，只做「复制到新位置 → 校验 → 旧目录改名保底 → 改写变量」，
+ * 因此面板只负责收集目标与展示预检，真正的搬家在 Rust 侧阻塞线程里跑。
+ */
 export function ConfigDataDir() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -78,12 +96,14 @@ export function ConfigDataDir() {
   const backups = status === null ? [] : status.backups
   const entriesError = entriesQuery.error ? String(entriesQuery.error) : ''
 
+  // 目录名留空时沿用当前目录的最后一段，用户改一次即可；不需要 effect 回填。
   const suggestedLeaf = status === null ? '' : basenameOf(status.dataDir)
   const effectiveLeaf = leaf === '' ? suggestedLeaf : leaf
   const leafHint = LEAF_PATTERN.test(effectiveLeaf.trim()) ? '' : t('data_dir.leaf_invalid')
   const targetKey = `${parent}::${effectiveLeaf}`
   const planReady = planKey !== '' && planKey === targetKey
 
+  /** 把进度载荷翻成一行日志（回滚不发 copy/verify，只有 scan/finalize/done）。 */
   function describeProgress(payload: DataDirProgress): string {
     if (payload.phase === 'scan')
       return t('data_dir.phase_scan')
@@ -105,6 +125,7 @@ export function ConfigDataDir() {
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.dataDir })
     void queryClient.invalidateQueries({ queryKey: queryKeys.dataDirEntries })
+    // 运行信息里也带 data_dir，迁移后要一起刷新
     void queryClient.invalidateQueries({ queryKey: queryKeys.info })
   }
 
@@ -181,6 +202,7 @@ export function ConfigDataDir() {
     setProgress(null)
     setLogs([])
     try {
+      // 后端命令自己会取迁移锁并停掉 Harness，前端不再重复 shutdown
       const outcome = await migrate.mutateAsync({ parent, leaf: effectiveLeaf })
       setPlanKey('')
       invoke('launch_harness').catch((e) => {

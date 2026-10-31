@@ -22,9 +22,6 @@ vi.mock('@/store', () => ({ store: { desktopUpdater } }))
 vi.mock('valtio-define', () => ({ useStore: (value: unknown) => value }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 
-if (typeof CSS === 'undefined')
-  vi.stubGlobal('CSS', { escape: (value: string) => value })
-
 function Launcher() {
   const open = useOverlay(DesktopAboutDialog)
   function handleOpen() {

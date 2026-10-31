@@ -10,11 +10,14 @@ import { store } from '@/store'
 
 export interface DesktopUpdateDialogProps extends PropsWithOverlays {}
 
+/** 「检查更新」对话框：展示新版本信息、下载进度并交给系统安装器。 */
 export function DesktopUpdateDialog(props: DesktopUpdateDialogProps) {
+  // 1. 数据查询 (Queries)
   const disclosure = useDisclosure({ props })
   const { t } = useTranslation()
   const { updateInfo, downloading, downloadProgress } = useStore(store.desktopUpdater)
 
+  // 5. 使用 useMutation 封装安装流程 (Mutations)
   const { mutate: handlePrimary, isPending: openingInstaller } = useMutation({
     mutationFn: () => store.desktopUpdater.downloadAndOpen(),
     onSuccess: (opened) => {

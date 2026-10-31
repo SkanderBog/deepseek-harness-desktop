@@ -1,7 +1,12 @@
+//! 为捆绑的 DSH 补齐缺失的公开 SessionStore 移除原语。
+//!
+//! 上游 store 已持有完整的 detach 生命周期；本补丁只暴露一个窄的、按 id 的
+//! 门面（facade），供桌面端插件安全地执行真正的内存内销毁，而不是让被删会话
+//! 残留在未分组状态。
+
 use std::path::Path;
 
-use crate::AppHandle;
-use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
+use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
 
 const PATCH_MARKER: &str = "dsh-tauri-desktop: SessionStore.remove";
 const ANCHOR: &str =
@@ -15,6 +20,7 @@ const INSERTION: &str = r#"/** Remove one live session by id and run its officia
 	}
 	/** Remove one exact entered session and emit its paired disposal when announced. */"#;
 
+/// 相对活动核心安装目录的 session `lib/index.js` 包内路径。
 const SESSION_INDEX_JS: &str = "node_modules/@deepseek-ai/dsh-session/lib/index.js";
 
 fn patch_source(source: &str) -> PatchOutcome {
@@ -27,10 +33,13 @@ fn patch_source(source: &str) -> PatchOutcome {
     PatchOutcome::Patched(source.replacen(ANCHOR, &format!("{INSERTION} /* {PATCH_MARKER} */"), 1))
 }
 
+/// 对活动核心的 dsh-session `lib/index.js` 应用补丁（幂等）。
+/// 返回 Err 表示读/写失败；文件缺失、已打过、锚点变更均静默跳过（Ok）。
+/// 对显式给定的核心安装目录施加本补丁（E2E 编排复用，无需运行中的桌面端）。
 pub fn apply_at(core_dir: &Path) -> Result<(), String> {
     patch_core_file(core_dir, SESSION_INDEX_JS, patch_source)
 }
-pub fn apply(app_handle: &AppHandle) -> Result<(), String> {
+pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
     patch_dsh(app_handle, SESSION_INDEX_JS, patch_source)
 }
 

@@ -1,3 +1,14 @@
+//! dsh 包文件补丁集。
+//!
+//! 集中存放对活动核心安装目录下 `node_modules/<包>/...` 里的 JS 文件做的一次性
+//! 幂等补丁。每个补丁是一个子模块，只提供「纯函数式补丁判定 + apply 触发」；
+//! 「定位文件 → 读取 → 打补丁 → 写回」与对应日志由 [`crate::utils::patch_dsh`]
+//! 统一处理，避免每个补丁重复这份样板。
+//!
+//! 命名约定：子模块名不带 `_patch` 后缀（`renderer` / `session` / `workspace` /
+//! `workspace_view` 等），挂点统一为 `service::workflow::launch`，均为最佳努力、
+//! 失败仅告警。
+
 pub(crate) mod chat_follow_anchor;
 pub(crate) mod composer;
 pub(crate) mod conversation_draft;
@@ -17,6 +28,14 @@ pub(crate) mod workspace_view;
 
 use std::path::Path;
 
+/// 对显式给定的核心安装目录一次性施加全部补丁。
+///
+/// 与启动路径（`workflow::launch` 里逐个 `apply(&app_handle)`）等价，区别只是核心目录
+/// 由调用方给出。E2E 编排用它把 npm 装来的核心打成与桌面端装配核心同样的形态——
+/// 少了这些补丁，插件在 L2 里的行为与桌面端并不一致。
+///
+/// 单个补丁失败不阻断其余：与启动路径一样是「最佳努力」，但这里把错误汇总返回，
+/// 让编排层能看见哪一条出了问题。
 pub(crate) fn apply_all_at(core_dir: &Path) -> Result<(), String> {
     #[allow(clippy::type_complexity)]
     let patches: [(&str, fn(&Path) -> Result<(), String>); 16] = [

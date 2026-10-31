@@ -1,42 +1,77 @@
+//! 补丁层语法错误的隔离：让安全模式在用户补丁层损坏时仍然可用。
+//!
+//! `$DSH_HOME/cordis.patch.yml`（机器级 home 层）与
+//! `$DSH_HOME/profiles/<id>/cordis.patch.yml`（档案层）都是用户可手写的 YAML
+//! 补丁层。上游 dsh 的契约是「文件存在却不能被应用时必须大声失败，绝不静默跳过」
+//! （`@deepseek-ai/dsh-app-boot` 的 `loadOptionalPatches` 明确写着这一点），桌面端
+//! 的内置插件自愈（[`super::internal::repair_loader_state`]）同样在解析阶段直接失败。
+//! 于是一处手写笔误——典型是 `!!js` 表达式里带 `: `/`?` 却没加引号——会让应用
+//! **永久不可用**：每次启动都停在同一处，而唯一的兜底入口「安全模式」也走同一份
 //! home 层（home 层作用于所有档案，安全档案不例外），连兜底一起失效（issue #525）。
+//!
+//! 因此这里提供「隔离」这一**显式**恢复动作：把解析不了的补丁文件改名为
+//! `<原文件名>.broken-<UTC 时间戳>`（绝不删除，内容原样保留），决定权交回用户
+//! ——修好语法后改回原名即可恢复。只有用户点「安全模式」或错误页的「隔离损坏的
+//! 补丁文件」时才执行，绝不自动发生；普通档案的启动路径仍然按上游契约大声失败，
+//! 由前端给出「哪个文件、哪一行、怎么改」的针对性提示。
 
 use std::path::{Path, PathBuf};
 
+use tauri::AppHandle;
+
 use super::patch_entries::{
-    PATCH_ENTRY_UNRESOLVED, scan_unresolved_entries_in, unresolved_entries_message,
+    scan_unresolved_entries_in, unresolved_entries_message, PATCH_ENTRY_UNRESOLVED,
 };
 use super::profile_dir;
-use crate::AppHandle;
 use crate::config;
 
+/// dsh 的补丁层文件名：档案层与 home 层同名，靠目录区分。
 const PATCH_FILENAME: &str = "cordis.patch.yml";
 
+/// 一个已被隔离（改名保存）的补丁层。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct QuarantinedPatchLayer {
+    /// 原始补丁文件路径。
     pub original: String,
+    /// 备份路径（`<原名>.broken-<UTC 时间戳>`）。
     pub backup: String,
+    /// 解析错误（serde_yaml 文本，含行列号）。
     pub error: String,
 }
 
+/// 一个无法移动的损坏补丁层（隔离失败）：调用方只记录，不阻断。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PatchQuarantineFailure {
+    /// 补丁文件路径。
     pub path: String,
+    /// 改名失败原因。
     pub error: String,
 }
 
+/// 一次隔离动作的结果：成功移走的层 + 未能移走的层。
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct PatchQuarantineReport {
+    /// 已隔离（改名保存）的补丁层，前端据此提示备份路径。
     pub quarantined: Vec<QuarantinedPatchLayer>,
+    /// 隔离失败的补丁层，只进日志与提示，不影响其它层。
     pub failures: Vec<PatchQuarantineFailure>,
 }
 
 impl PatchQuarantineReport {
+    /// 是否有损坏层仍未移走。
+    ///
+    /// 非空时调用方**绝不能**重启或切档案：不可解析的文件还在原地，上游契约要求
     /// 启动再次大声失败，于是又回到同一个失败循环（issue #525 的形态）。此时应把
+    /// 失败原因交给用户，由用户手动改名或修复权限后重试。
     pub fn has_failures(&self) -> bool {
         !self.failures.is_empty()
     }
 }
 
+/// 补丁层路径：档案层在前、home 层在后（与 dsh 的层叠顺序一致）。
+///
+/// 与 [`super::internal::repair_loader_state`] 共用同一份清单，避免两处对
+/// 「哪些补丁层需要自愈」的认知漂移。
 pub(crate) fn patch_layer_paths(profile_dir: &Path, dsh_home: &Path) -> [PathBuf; 2] {
     [
         profile_dir.join(PATCH_FILENAME),
@@ -77,6 +112,10 @@ fn parse_error(path: &Path) -> Option<String> {
         .map(|error| error.to_string())
 }
 
+/// 备份路径 `<原名>.<suffix>-<stamp>`；已存在时追加 `-2`、`-3`…，绝不覆盖已有备份。
+///
+/// `suffix` 由调用方给定：语法错误用 `broken`（隔离，改名保存），悬空条目用
+/// `bak`（清理，改写前留底），两者在同一个档案目录里必须一眼可分。
 pub(super) fn backup_path(path: &Path, suffix: &str, stamp: &str) -> PathBuf {
     let name = path
         .file_name()
@@ -91,6 +130,10 @@ pub(super) fn backup_path(path: &Path, suffix: &str, stamp: &str) -> PathBuf {
     candidate
 }
 
+/// 隔离给定补丁层里所有解析失败的文件。
+///
+/// 每层独立处理：某一层改名失败不阻断其它层（与启动期其它自愈同一策略——清理不
+/// 彻底只是恢复效果打折，把已能恢复的层留在原地则让应用彻底不可用）。
 fn quarantine_layers(paths: &[PathBuf], stamp: &str) -> PatchQuarantineReport {
     let mut report = PatchQuarantineReport::default();
     for path in paths {
@@ -127,6 +170,7 @@ fn quarantine_layers(paths: &[PathBuf], stamp: &str) -> PatchQuarantineReport {
     report
 }
 
+/// 生成 UTC 时间戳（`yyyymmddhhmmss`），与档案备份、插件快照的命名一致。
 pub(super) fn now_stamp() -> String {
     use time::OffsetDateTime;
     let now = OffsetDateTime::now_utc();
@@ -143,6 +187,9 @@ pub(super) fn now_stamp() -> String {
     )
 }
 
+/// 隔离指定档案层与 home 层里解析失败的补丁文件。
+///
+/// 只改名、不删除、不改内容：用户可以修好语法后把备份改回原名。
 pub(crate) fn quarantine_patch_layers_in(
     profile_dir: &Path,
     dsh_home: &Path,
@@ -150,6 +197,9 @@ pub(crate) fn quarantine_patch_layers_in(
     quarantine_layers(&patch_layer_paths(profile_dir, dsh_home), &now_stamp())
 }
 
+/// 隔离「当前档案层 + home 层」里解析失败的补丁文件。
+///
+/// 由错误页的「隔离损坏的补丁文件并重启」入口调用：用户想留在自己的档案里恢复。
 pub(crate) fn quarantine_active_patch_layers(app_handle: &AppHandle) -> PatchQuarantineReport {
     quarantine_patch_layers_in(
         &profile_dir(app_handle),
@@ -157,6 +207,9 @@ pub(crate) fn quarantine_active_patch_layers(app_handle: &AppHandle) -> PatchQua
     )
 }
 
+/// 把隔离失败的层拼成给用户的错误串（含路径与原因）。
+///
+/// 前缀 `PATCH_LAYER_QUARANTINE_FAILED` 与日志一致，便于从日志面板回查。
 pub(crate) fn quarantine_failure_message(report: &PatchQuarantineReport) -> String {
     let detail = report
         .failures
@@ -171,6 +224,7 @@ pub(crate) fn quarantine_failure_message(report: &PatchQuarantineReport) -> Stri
 mod tests {
     use super::*;
 
+    /// 构造独立的临时目录，供补丁层用例使用。
     fn tmp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "dsh-patch-guard-{name}-{}-{}",
@@ -231,11 +285,9 @@ mod tests {
         std::fs::write(&package, "{}\n").unwrap();
         assert_eq!(preflight_at(&profile, &home, Some(&anchor)), Ok(()));
         std::fs::remove_file(package).unwrap();
-        assert!(
-            preflight_at(&profile, &home, Some(&anchor))
-                .unwrap_err()
-                .starts_with("PATCH_LAYER_ENTRY_UNRESOLVED: ")
-        );
+        assert!(preflight_at(&profile, &home, Some(&anchor))
+            .unwrap_err()
+            .starts_with("PATCH_LAYER_ENTRY_UNRESOLVED: "));
     }
 
     #[test]
@@ -244,9 +296,11 @@ mod tests {
         let path = dir.join(PATCH_FILENAME);
         std::fs::write(&path, BROKEN_UNQUOTED_JS).unwrap();
 
+        // 这一形态必须被判为语法错误，否则 #525 的补丁层不会被隔离。
         assert!(parse_error(&path).is_some());
         std::fs::write(&path, VALID_LAYER).unwrap();
         assert!(parse_error(&path).is_none());
+        // 不存在的文件不是语法错误（由上游与可写性预检负责）。
         assert!(parse_error(&dir.join("missing.yml")).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -311,11 +365,13 @@ mod tests {
         assert_eq!(report.quarantined.len(), 1);
         let record = &report.quarantined[0];
         assert_eq!(record.original, home_patch.display().to_string());
+        // 原文件被移走、备份保留原始内容（绝不删除）。
         assert!(!home_patch.exists());
         assert_eq!(
             std::fs::read_to_string(&record.backup).unwrap(),
             BROKEN_UNQUOTED_JS
         );
+        // 合法的档案层原样保留，且不产生备份。
         assert_eq!(
             std::fs::read_to_string(&profile_patch).unwrap(),
             VALID_LAYER
@@ -337,6 +393,7 @@ mod tests {
                 .len(),
             1
         );
+        // 第二次调用：文件已不在，不再产生任何动作（可反复点「安全模式」）。
         let second = quarantine_patch_layers_in(&profile, &home);
         assert!(second.quarantined.is_empty());
         assert!(second.failures.is_empty());
@@ -357,6 +414,7 @@ mod tests {
         assert_eq!(report.quarantined.len(), 1);
         let record = &report.quarantined[0];
         assert!(record.backup.ends_with("-2"), "{}", record.backup);
+        // 既有备份内容不被覆盖。
         assert_eq!(std::fs::read_to_string(&first).unwrap(), "keep me\n");
         assert_eq!(
             std::fs::read_to_string(&record.backup).unwrap(),
@@ -391,6 +449,10 @@ mod tests {
         assert_eq!(paths[1], Path::new("/dsh-home").join(PATCH_FILENAME));
     }
 
+    /// 隔离失败时报告必须标记出来，让调用方拒绝重启/切档案（否则回到同一个失败循环）。
+    ///
+    /// 无法稳定制造改名失败（`backup_path` 会避让已存在的备份，权限/占用又依赖环境），
+    /// 这里直接构造失败报告，锁定「报告 → has_failures / 错误串」的契约本身。
     #[test]
     fn report_flags_failures_and_renders_message() {
         let broken = PathBuf::from("/profiles/safe/cordis.patch.yml");
@@ -412,6 +474,7 @@ mod tests {
         assert!(message.contains("os error 5"), "{message}");
     }
 
+    /// 全部隔离成功时 `has_failures` 必须为假，成功路径才能继续重启。
     #[test]
     fn successful_quarantine_has_no_failures() {
         let profile = tmp_dir("success-profile");

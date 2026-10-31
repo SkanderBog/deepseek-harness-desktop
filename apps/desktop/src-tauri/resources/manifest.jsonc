@@ -4,9 +4,19 @@
       "recommend": "0.2.1-rc.4",
       "minimum": "0.1.7-rc.1"
     },
+    "node": {
+      "version": ">=22.22.0"
+    },
     "pnpm": {
       "version": ">=11.7.0",
       "sha256": "deafa7ec98a1218b6a047289b92fbe2395c1e22d3495bb711653013218ee15ee"
+    },
+    "git": {
+      "version": ">2.53.0.2",
+      "sha256": {
+        "x64": "d4bf83d6a860ccae9af44e508e1e00a39f09db6fa78a9ba5543b94d87ca22a29",
+        "arm64": "842d50edc6bbcf39693e60a8ebb9dabb89b96b932b63aae12d218522b3e497f3"
+      }
     }
   },
   "dependencies": {
@@ -16,6 +26,15 @@
     //   $AppData/...    AppData 数据目录（debug 构建为 <base>/dev 的同级）
     //   $Resources/...  安装包资源目录（`resources/...` 为等价旧写法）
     //   绝对路径         任意位置（如加载本地捆绑版内核）
+    "node": {
+      "engine": ">=22.22.0",
+      "entry": {
+        "windows": "node.exe",
+        "default": "bin/node"
+      },
+      "managedRoot": "$AppData/runtime",
+      "overridable": true
+    },
     "pnpm": {
       "engine": ">=11.7.0",
       "entry": "bin/pnpm.cjs",
@@ -27,8 +46,17 @@
         "recommend": "0.2.1-rc.4",
         "minimum": "0.1.7-rc.1"
       },
-      "entry": "dsh.asar/node_modules/@deepseek-ai/dsh/lib/bin.js",
+      "entry": "node_modules/@deepseek-ai/dsh/lib/bin.js",
       "managedRoot": "$AppData/dependencies/dsh",
+      "overridable": true
+    },
+    "git": {
+      "engine": ">2.53.0.2",
+      "entry": {
+        "windows": "cmd/git.exe",
+        "default": "bin/git"
+      },
+      "managedRoot": "$AppData/dependencies/git",
       "overridable": true
     }
   },

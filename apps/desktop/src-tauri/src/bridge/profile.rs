@@ -1,23 +1,33 @@
+//! 多 Profile 环境隔离。
+//!
+//! 管理 `$DSH_HOME/profiles` 下的档案：列表、创建（web 模板）、切换当前使用中的
+//! 档案，以及删除（默认档案与使用中的档案不可删除）与重置（清空档案数据、
+//! 保留会话）。
+
 use crate::config;
 use crate::service::profile;
 use crate::service::profile::migrate::{MigrateReport, MigrationAnalysis, MigrationDataKind};
-use crate::{AppHandle, WebviewWindow};
+use tauri::AppHandle;
 
+/// 档案列表（$DSH_HOME/profiles 下的目录，含 active/default 标记）
 #[tauri::command]
-pub fn get_profiles(window: WebviewWindow, app_handle: AppHandle) -> Vec<profile::Profile> {
+pub fn get_profiles(window: tauri::WebviewWindow, app_handle: AppHandle) -> Vec<profile::Profile> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::service::workflow::instances::scope_sync(profile, || profile::list(&app_handle))
 }
 
+/// 新建档案（初始化 $DSH_HOME/profiles/<id>，web 模板）
 #[tauri::command]
 pub fn create_profile(app_handle: AppHandle, name: String) -> Result<profile::Profile, String> {
     profile::create(&app_handle, &name)
 }
 
+/// 切换当前窗口的档案。只有主窗口的切换会持久化成下次启动档案；额外窗口的
+/// 切换只在本次会话生效，否则退出前在额外窗口选过的档案会顶替主窗口档案。
 #[tauri::command]
 pub async fn set_active_profile(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: tauri::WebviewWindow,
     id: String,
 ) -> Result<profile::Profile, String> {
     let _transition = crate::service::workflow::acquire_core_transition().await?;
@@ -36,9 +46,10 @@ pub async fn set_active_profile(
     Ok(selected)
 }
 
+/// 删除档案（默认档案与使用中的档案不可删除）
 #[tauri::command]
 pub async fn remove_profile(
-    window: WebviewWindow,
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     id: String,
 ) -> Result<(), String> {
@@ -58,10 +69,11 @@ pub async fn remove_profile(
     crate::service::workflow::instances::scope_sync(current, || profile::remove(&app_handle, &id))
 }
 
+/// 重置档案（清空档案目录并按模板重新初始化；会话数据在档案目录之外，保留）
 #[tauri::command]
 pub async fn reset_profile(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: tauri::WebviewWindow,
     id: String,
 ) -> Result<(), String> {
     crate::service::fs_guard::validate_id(&id)?;
@@ -76,6 +88,11 @@ pub async fn reset_profile(
     .await
 }
 
+/// 克隆档案（全量复制源档案目录，自动递增命名或指定名称）。
+///
+/// 异步命令：把 CPU/IO 密集的目录树复制放到 `spawn_blocking` 线程池，
+/// 避免阻塞 Tauri 异步运行时导致 UI 卡顿。内部 `copy_dir_tree` 已用 rayon
+/// 并行处理同级条目。
 #[tauri::command]
 pub async fn clone_profile(
     app_handle: AppHandle,
@@ -90,9 +107,10 @@ pub async fn clone_profile(
     .map_err(|e| format!("PROFILE_CLONE_TASK: {e}"))?
 }
 
+/// 分析源档案的可迁移插件与档案级数据（只读，判定基准 = 当前核心版本）
 #[tauri::command]
 pub async fn analyze_profile_migration(
-    window: WebviewWindow,
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     source_id: String,
 ) -> Result<MigrationAnalysis, String> {
@@ -103,9 +121,10 @@ pub async fn analyze_profile_migration(
     .await
 }
 
+/// 把源档案选中的数据并入当前档案（逐项独立，结果里逐项报告）
 #[tauri::command]
 pub async fn migrate_profile_data(
-    window: WebviewWindow,
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     source_id: String,
     items: Vec<MigrationDataKind>,

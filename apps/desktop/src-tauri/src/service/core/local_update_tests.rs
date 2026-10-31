@@ -1,6 +1,6 @@
 use super::*;
 use crate::config;
-use crate::service::core::source::{CoreSource, active_source};
+use crate::service::core::source::{active_source, CoreSource};
 use crate::service::workflow;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -117,9 +117,7 @@ fn local_update_isolation_checks_real_state_before_running_the_package_manager()
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );
-        assert!(
-            String::from_utf8_lossy(&output.stdout).contains("LOCAL_UPDATE_ISOLATION_VERIFIED")
-        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("LOCAL_UPDATE_ISOLATION_VERIFIED"));
     }
 }
 
@@ -292,14 +290,12 @@ fn local_update_isolation_child() {
                     .as_deref(),
                 Some("app")
             );
-            assert!(
-                tokio::time::timeout(
-                    Duration::from_millis(40),
-                    workflow::acquire_core_transition()
-                )
-                .await
-                .is_err()
-            );
+            assert!(tokio::time::timeout(
+                Duration::from_millis(40),
+                workflow::acquire_core_transition()
+            )
+            .await
+            .is_err());
             std::fs::write(scratch.join("pm-release"), "release").unwrap();
             assert_eq!(task.await.unwrap().unwrap(), "0.2.1-rc.5");
             let _guard =

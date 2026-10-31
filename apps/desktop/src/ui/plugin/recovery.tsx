@@ -9,6 +9,7 @@ import { useStore } from 'valtio-define'
 import { store } from '@/store'
 import { silence } from '@/utils/silence'
 
+/** 失败原因 → i18n 键映射（title / detail，detail 用 {{detail}} 插值） */
 const REASON_KEYS: Record<string, { title: string, detail: string }> = {
   duplicate_route: { title: 'recovery.reason.duplicate_route.title', detail: 'recovery.reason.duplicate_route.detail' },
   duplicate_loader_entry: { title: 'recovery.reason.duplicate_loader_entry.title', detail: 'recovery.reason.duplicate_loader_entry.detail' },
@@ -20,12 +21,27 @@ const REASON_KEYS: Record<string, { title: string, detail: string }> = {
   unknown: { title: 'recovery.reason.unknown.title', detail: 'recovery.reason.unknown.detail' },
 }
 
+/**
+ * 插件异常修复界面。
+ *
+ * - 启动崩溃（`fullScreen`）：渲染全屏恢复页（替换 Setup 错误内容），
+ *   主按钮「卸除此插件并继续检测」。
+ * - 运行期异常（应用仍在运行）：渲染醒目对话框（不阻断使用），可「暂不处理」。
+ *
+ * 数据全部来自 recovery store 的 `recovery` 状态（`plugin-recovery-required`
+ * 事件 / 启动失败检测触发），不在组件内自行拉取。
+ */
 export function Recovery({ fullScreen = false }: { fullScreen?: boolean }) {
   const { t } = useTranslation()
   const { recovery, exhausted } = useStore(store.recovery)
 
+  // 检测问题插件哪些已有单插件快照：仅对「确实有快照」的插件提供「从快照还原」入口
   // （issue #303）。无快照的插件还原会 SNAPSHOT_NOT_FOUND，故必须按 id 过滤，
+  // 避免多插件场景下整体还原失败。
   const [restorableIds, setRestorableIds] = useState<string[]>([])
+  // 检测并列出「确有快照」的插件 id（挂载与 recovery 变化时各查一次）。
+  // 用 reause `useWatch` 观察恢复态，不再自建 effect + dispose 标志：
+  // 请求完成后的 setState 在已卸载组件上是 no-op，无需手动取消。
   useWatch([recovery.required, recovery.info], () => {
     if (!recovery.required || !recovery.info) {
       return
@@ -74,6 +90,9 @@ export function Recovery({ fullScreen = false }: { fullScreen?: boolean }) {
         : 'fixed inset-0 z-50 flex items-center justify-center bg-backdrop p-4'}
     >
       <div className={`w-full ${fullScreen ? 'max-w-[640px]' : 'max-w-[560px]'}`}>
+        {/* 运行期弹窗必须是**不透明**面板：`bg-panel2/40` 只有 40% 不透明度，页面内容会直接
+            透出来（表现为「弹窗透明、与页面内容重叠」）；全屏恢复页底下是与 navbar 同 alpha
+            的启动底色，半透明面板才是想要的层次感，故只在非 fullScreen 分支换成实心 `bg-panel`。 */}
         <div className={fullScreen
           ? 'rounded-xl border border-line bg-panel2/40 p-6'
           : 'rounded-xl border border-line bg-panel p-6 shadow-lg'}
@@ -109,6 +128,7 @@ export function Recovery({ fullScreen = false }: { fullScreen?: boolean }) {
 
           <p className="m-0 mb-4 text-xs text-load-muted">{t('recovery.safety_note')}</p>
 
+          {/* 错误信息默认展示（含原始错误，便于排查） */}
           <div className="mb-4 max-h-48 overflow-auto rounded-md bg-black/5 p-3">
             <pre className="m-0 whitespace-pre-wrap break-all font-mono text-[11px] text-muted">
               {info.rawError || '—'}
@@ -116,6 +136,8 @@ export function Recovery({ fullScreen = false }: { fullScreen?: boolean }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* 还原快照：优先级高于卸载——有快照的插件优先用快照还原，避免误删插件；
+                仅传「确有快照」的 id，无快照的插件保持不动（还原会 SNAPSHOT_NOT_FOUND） */}
             <If cond={restorableIds.length > 0}>
               <Button
                 variant="primary"

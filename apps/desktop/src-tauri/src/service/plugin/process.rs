@@ -1,3 +1,10 @@
+//! dsh 子进程执行：启动 `dsh plugin` 进程并等待退出，输出逐行转发为事件。
+//!
+//! Windows 打包版是 GUI 进程（无控制台），直接以 CREATE_NO_WINDOW 启动会让
+//! dsh 派生的子进程各建可见控制台窗口（黑窗闪烁），因此复用
+//! `service/workflow/win_spawn` 的隐藏控制台方案并额外跟踪进程句柄以等待退出；
+//! Unix 上直接以管道捕获标准输出/错误。
+
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -6,24 +13,30 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WebviewWindow};
 
 use crate::utils::decode_process_line;
 
-use crate::WebviewWindow;
 #[cfg(windows)]
 use crate::service::workflow;
 #[cfg(not(windows))]
 use std::process::{Command, Stdio};
 
+/// 前端监听的控制台事件名（进程输出行）
 pub(crate) const PREINSTALL_LOG_EVENT: &str = "preinstall-log";
 
+/// 进程输出行事件载荷
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreinstallLogPayload {
     pub line: String,
 }
 
+/// 当前正在运行的 `dsh plugin` 子进程 PID（无进行中安装时为 None）。
+///
+/// `cancel`（跨平台）用它结束安装进程树；安装结束/失败后必须复位，
+/// 防止把「下一个安装」或无关进程误杀。
+///
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ProcessOwner(u64);
 
@@ -81,7 +94,7 @@ pub(crate) fn active_plugin_processes() -> Vec<(ProcessOwner, ActivePluginProces
 pub(crate) fn plugin_process_has_exited(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{
-        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, WaitForSingleObject,
+        OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
     };
     const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
     let handle = unsafe {
@@ -113,10 +126,12 @@ pub(crate) fn plugin_process_has_exited(pid: u32) -> bool {
     result != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
 }
 
+/// dsh 侧 `dsh-atomic-write` 的跨进程写锁路径（`<profile>/package.json.lock`）。
 pub(crate) fn plugin_writer_lock_path(profile_dir: &Path) -> std::path::PathBuf {
     profile_dir.join("package.json.lock")
 }
 
+/// 锁内容（持有者 PID）是否表明持有者已退出：必须是正 PID，且该进程已不在。
 fn orphan_lock_should_clear(recorded: &str, has_exited: impl Fn(u32) -> bool) -> bool {
     recorded
         .trim()
@@ -124,6 +139,13 @@ fn orphan_lock_should_clear(recorded: &str, has_exited: impl Fn(u32) -> bool) ->
         .is_ok_and(|pid| pid != 0 && has_exited(pid))
 }
 
+/// 清掉由已退出进程留下的孤儿写锁，返回是否真的删除。
+///
+/// `dsh` 用 `wx` 独占创建做锁、等待方只轮询从不删除（库文档明确「孤儿恢复属于运维
+/// 动作」）：安装子进程被强杀（取消 / 页面刷新 / 应用退出）后锁会永久留下，之后每次
+/// 安装都要静默等到 deadline 才报 `atomic-write: timed out waiting for the writer
+/// lock`。这里按 PID 存活做等价恢复——**持有者还活着就绝不碰**，所以并发安装不会互相
+/// 踩；锁内容缺失或无法解析时同样不删（无法证明持有者已退出）。
 pub(crate) fn clear_orphan_plugin_writer_lock(profile_dir: &Path) -> bool {
     let path = plugin_writer_lock_path(profile_dir);
     let Ok(recorded) = std::fs::read_to_string(&path) else {
@@ -143,6 +165,8 @@ pub(crate) fn clear_orphan_plugin_writer_lock(profile_dir: &Path) -> bool {
     true
 }
 
+/// 跨进程写锁守卫：按 `dsh-atomic-write` 的 `<profile>/package.json.lock` 协议
+/// 持有写锁，Drop 时释放。
 pub(crate) struct PluginWriterLock {
     path: std::path::PathBuf,
 }
@@ -153,6 +177,10 @@ impl Drop for PluginWriterLock {
     }
 }
 
+/// 获取 profile 清单的跨进程写锁，供桌面壳直接改写 `package.json` 时使用。
+///
+/// 官方插件管理器和 `dsh plugin` 子进程都走 `withFileLock` 的同一把锁；桌面壳
+/// 的读-改-写也必须持锁，否则并发切包时会把官方刚写入的清单覆盖回旧快照。
 pub(crate) fn acquire_plugin_writer_lock(profile_dir: &Path) -> Result<PluginWriterLock, String> {
     let path = plugin_writer_lock_path(profile_dir);
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -189,6 +217,7 @@ pub(crate) fn acquire_plugin_writer_lock(profile_dir: &Path) -> Result<PluginWri
     }
 }
 
+/// 接管已退出进程留下的写锁：认领文件 + 二次核对，避免误删竞争方刚拿到的锁。
 fn take_over_exited_plugin_writer_lock(path: &Path) -> bool {
     let Ok(record) = std::fs::read_to_string(path) else {
         return false;
@@ -206,6 +235,7 @@ fn take_over_exited_plugin_writer_lock(path: &Path) -> bool {
     removed
 }
 
+/// 认领一次接管：认领文件记录持有者 PID，已退出持有者留下的认领可被回收。
 fn claim_takeover(path: &Path, record: &str) -> Option<std::path::PathBuf> {
     use std::io::Write;
 
@@ -257,6 +287,8 @@ pub(crate) fn process_cleanup_failure(owner: ProcessOwner) -> Option<String> {
 
 pub(crate) fn is_process_cleanup_failure(error: &str) -> bool {
     [
+        // 不能整段匹配 `PNPM_PROBE_`：锁被正常安装占住时的 `PNPM_PROBE_LOCK_TIMEOUT`
+        // 只是竞争，不代表上一次清理未确认。
         "PNPM_PROBE_TREE_CLEANUP_FAILED:",
         "PNPM_PROBE_CLEANUP_",
         "PLUGIN_PROCESS_",
@@ -338,26 +370,7 @@ pub(crate) async fn acquire_operation_lock() -> tokio::sync::OwnedMutexGuard<()>
         .await
 }
 
-/// Command for a plugin child process.
-///
-/// The Electron runtime's own binary must run as Node, so it comes from
-/// `client.node()` — the runtime owns both the path and `ELECTRON_RUN_AS_NODE`.
-/// A user-supplied launcher (a real `pnpm`, a standalone `node`) is spawned as
-/// itself and must not receive that switch.
-pub(crate) fn plugin_command(
-    app_handle: &tauri::AppHandle<tauri_runtime_electron::ElectronRuntime>,
-    program: &Path,
-) -> tokio::process::Command {
-    use tauri::Manager;
-    if program == crate::config::get_node_binary_path(app_handle) {
-        return app_handle
-            .state::<tauri_runtime_electron::ElectronClient>()
-            .inner()
-            .node();
-    }
-    tokio::process::Command::new(program)
-}
-
+/// 记录/清除当前安装进程 PID（guard-drop 模式，作用域结束自动复位）。
 pub(crate) struct PidGuard {
     owner: ProcessOwner,
     pid: u32,
@@ -400,12 +413,21 @@ impl Drop for PidGuard {
     }
 }
 
+/// Windows 进程句柄包装：原始句柄是 `*mut c_void`（非 Send），
+/// 但 `WaitForSingleObject`/`GetExitCodeProcess` 均为线程安全的系统调用，
+/// 包一层以安全地移入 `spawn_blocking` 等待进程退出。
 #[cfg(windows)]
 struct WaitableHandle(windows_sys::Win32::Foundation::HANDLE);
 
 #[cfg(windows)]
 unsafe impl Send for WaitableHandle {}
 
+/// 启动 `dsh plugin` 进程并等待结束，返回 `(退出码, 捕获的完整输出)`。
+///
+/// 输出仍然逐行实时转发为 `preinstall-log` 事件（供前端进度反馈），同时把
+/// 全部行追加进共享缓冲区并返回——安装失败时 pnpm 会在错误里印出
+/// `allowBuilds:` 允许键（git depPath / 被忽略的构建包名），调用方需要这段
+/// 文本去解析并重试。
 pub(crate) async fn run_plugin_process(
     node: &Path,
     args: &[OsString],
@@ -418,52 +440,90 @@ pub(crate) async fn run_plugin_process(
     let process_guard = acquire_process_lock().await?;
     let captured = Arc::new(Mutex::new(String::new()));
 
-    let mut child = plugin_command(window.app_handle(), node)
-        .args(args)
-        .current_dir(cwd)
-        .envs(envs)
-        .spawn()
-        .map_err(|e| format!("PREINSTALL_SPAWN: {e}"))?;
-    let pid = child.id().unwrap_or_default();
-    let pid_guard = PidGuard::set(owner, pid);
-    log::info!("dsh plugin install started, pid {pid}");
+    #[cfg(windows)]
+    {
+        let (stdout, stderr, pid, handle) =
+            workflow::win_spawn::spawn_with_hidden_console_owned(node, args, Some(cwd), envs)
+                .map_err(|e| format!("PREINSTALL_SPAWN: {e}"))?;
+        let pid_guard = PidGuard::set(owner, pid);
+        log::info!("dsh plugin install started, pid {pid}");
 
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let emitter_window = window.clone();
-    let emitter_captured = captured.clone();
-    let emit = tokio::spawn(crate::service::workflow::instances::scope(
-        profile,
-        async move {
-            let _process_guard = process_guard;
-            let _pid_guard = pid_guard;
-            let readers: Vec<_> = [
-                stdout.map(|stream| {
-                    spawn_line_emitter(stream, emitter_window.clone(), emitter_captured.clone())
-                }),
-                stderr.map(|stream| spawn_line_emitter(stream, emitter_window, emitter_captured)),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
-            let exit_code = child
-                .wait()
-                .await
-                .map(|status| status.code().unwrap_or(1))
-                .unwrap_or(1);
-            for reader in readers {
-                let _ = reader.await;
-            }
-            exit_code
-        },
-    ))
-    .await
-    .map_err(|e| format!("PREINSTALL_WAIT: {e}"))?;
+        spawn_line_emitter(stdout, window.clone(), captured.clone());
+        spawn_line_emitter(stderr, window.clone(), captured.clone());
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    Ok((emit, drain_captured(captured)))
+        let handle = WaitableHandle(handle);
+        let exit_code = tauri::async_runtime::spawn_blocking(move || {
+            crate::service::workflow::instances::scope_sync(profile, || {
+                let _process_guard = process_guard;
+                let _pid_guard = pid_guard;
+                use windows_sys::Win32::Foundation::CloseHandle;
+                use windows_sys::Win32::System::Threading::{
+                    GetExitCodeProcess, WaitForSingleObject, INFINITE,
+                };
+                let handle = handle;
+                unsafe {
+                    let wait = WaitForSingleObject(handle.0, INFINITE);
+                    let mut code: u32 = 0;
+                    if GetExitCodeProcess(handle.0, &mut code) == 0 {
+                        code = wait;
+                    }
+                    CloseHandle(handle.0);
+                    code as i32
+                }
+            })
+        })
+        .await
+        .map_err(|e| format!("PREINSTALL_WAIT: {e}"))?;
+
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        Ok((exit_code, drain_captured(captured)))
+    }
+
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::process::CommandExt;
+        let mut child = Command::new(node)
+            .args(args)
+            .envs(envs)
+            .current_dir(cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            // 独立进程组：取消时可用 `kill(-pid, ...)` 一次结束整棵安装进程树
+            .process_group(0)
+            .spawn()
+            .map_err(|e| format!("PREINSTALL_SPAWN: {e}"))?;
+
+        let pid = child.id();
+        let pid_guard = PidGuard::set(owner, pid);
+        // 绑定守卫实例：本 cfg 块作用域结束时自动把共享 PID 槽复位为 None，
+        // 避免把「这一次安装」的 PID 泄漏给之后的取消/下一次安装（误杀无关进程）。
+        // 若 spawn_blocking 因错误提前 `?` 返回，守卫同样会 Drop 复位。
+        log::info!("dsh plugin install started, pid {pid}");
+
+        if let Some(stdout) = child.stdout.take() {
+            spawn_line_emitter(stdout, window.clone(), captured.clone());
+        }
+        if let Some(stderr) = child.stderr.take() {
+            spawn_line_emitter(stderr, window.clone(), captured.clone());
+        }
+
+        let exit_code = tauri::async_runtime::spawn_blocking(move || {
+            crate::service::workflow::instances::scope_sync(profile, || {
+                let _process_guard = process_guard;
+                let _pid_guard = pid_guard;
+                child.wait().map(|s| s.code().unwrap_or(1)).unwrap_or(1)
+            })
+        })
+        .await
+        .map_err(|e| format!("PREINSTALL_WAIT: {e}"))?;
+
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        Ok((exit_code, drain_captured(captured)))
+    }
 }
 
+/// 取出（并清空）共享缓冲区中的全部捕获输出。
 pub(super) fn drain_captured(captured: Arc<Mutex<String>>) -> String {
     captured
         .lock()
@@ -471,24 +531,33 @@ pub(super) fn drain_captured(captured: Arc<Mutex<String>>) -> String {
         .unwrap_or_default()
 }
 
-fn spawn_line_emitter(
-    reader: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+/// 在独立线程中逐行读取进程输出：实时通过 `preinstall-log` 事件转发，
+/// 同时追加进共享缓冲区。
+/// 使用静态泛型约束 `R: Read + Send + 'static` 避免动态派发（Box<dyn Read>）堆分配。
+fn spawn_line_emitter<R: Read + Send + 'static>(
+    reader: R,
     window: WebviewWindow,
     captured: Arc<Mutex<String>>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut buf = tokio::io::BufReader::new(reader);
-        let mut line = Vec::new();
+) {
+    std::thread::spawn(move || {
+        let mut buf = BufReader::new(reader);
+        let mut acc_buf = Vec::new();
         loop {
-            line.clear();
-            match tokio::io::AsyncBufReadExt::read_until(&mut buf, b'\n', &mut line).await {
+            acc_buf.clear();
+            match buf.read_until(b'\n', &mut acc_buf) {
                 Ok(0) => break,
                 Ok(_) => {
-                    let decoded = decode_process_line(&line);
-                    let trimmed = decoded
+                    // 非法 UTF-8 不能中断本线程：管道读端一关，子进程写 stderr
+                    // 就收到 EPIPE，安装进程可能因此以非 0 退出码失败而被误判为
+                    // 安装失败。解码先走 ANSI 代码页（`decode_process_line`），
+                    // zh-CN Windows 下 python MCP 插件的 GBK 日志才不会变乱码。
+                    // 行尾剥离与上游 utils.rs 的 #197 修复一致：只剥 \r\n/\n，
+                    // 保留行内尾随空白以对齐 BufRead::lines() 语义。
+                    let line = decode_process_line(&acc_buf);
+                    let trimmed = line
                         .strip_suffix("\r\n")
-                        .or_else(|| decoded.strip_suffix('\n'))
-                        .unwrap_or(&decoded)
+                        .or_else(|| line.strip_suffix('\n'))
+                        .unwrap_or(&line)
                         .to_string();
                     let _ = window.emit(
                         PREINSTALL_LOG_EVENT,
@@ -507,7 +576,7 @@ fn spawn_line_emitter(
                 }
             }
         }
-    })
+    });
 }
 
 #[cfg(test)]
@@ -552,14 +621,12 @@ mod tests {
     fn drain_captured_returns_empty_without_recovering_poisoned_buffer() {
         let captured = Arc::new(Mutex::new("retained output".to_string()));
         let writer = captured.clone();
-        assert!(
-            std::thread::spawn(move || {
-                let _guard = writer.lock().unwrap();
-                panic!("poison isolated capture buffer");
-            })
-            .join()
-            .is_err()
-        );
+        assert!(std::thread::spawn(move || {
+            let _guard = writer.lock().unwrap();
+            panic!("poison isolated capture buffer");
+        })
+        .join()
+        .is_err());
 
         assert_eq!(drain_captured(captured.clone()), "");
         assert!(captured.is_poisoned());

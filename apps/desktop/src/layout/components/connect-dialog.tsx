@@ -11,8 +11,10 @@ export function ConnectDialog({ remote }: { remote: Remote }) {
 
   const targetId = pendingId ?? connectFailed?.id ?? null
   const machine = targetId === null ? undefined : machines.find(item => item.id === targetId)
+  // 进行中手动关过则隐藏到落定；失败定格始终可见
   const isOpen = connectFailed !== null || (pendingId !== null && !connectDismissed)
   const failed = connectFailed !== null
+  // 当前阶段：列表行的 live progress（落定即消失，trail 最后一项兜底）
   const currentPhase = machine?.progress?.phase ?? (failed ? undefined : connectTrail[connectTrail.length - 1])
 
   function handleRetry() {
@@ -40,10 +42,12 @@ export function ConnectDialog({ remote }: { remote: Remote }) {
               </Modal.Heading>
             </Modal.Header>
             <Modal.Body className="space-y-3">
+              {/* 阶段步骤条：仅真实走过的阶段 */}
               <If cond={connectTrail.length > 0 || currentPhase !== undefined}>
                 <div className="flex items-center gap-1.5" data-testid="connect-steps">
                   {(connectTrail.length > 0 ? connectTrail : currentPhase !== undefined ? [currentPhase] : []).map((phase, index, all) => (
                     <span
+                      // 阶段可能重复出现（重试），以序位区分 key
                       // eslint-disable-next-line react/no-array-index-key
                       key={`${phase}-${index}`}
                       className={cn(

@@ -1,3 +1,14 @@
+//! Windows 专用：以隐藏控制台的方式启动子进程。
+//!
+//! 打包版应用是 GUI 进程（没有控制台）。如果直接以 `CREATE_NO_WINDOW` 启动
+//! node.exe，node 自身没有控制台，dsh 在 JS 里通过 `child_process` 派生的
+//! 每个子进程（cmd / node / git 等）都会各自创建一个新的可见控制台窗口，
+//! 表现为使用过程中频繁闪烁黑色 cmd 窗口。
+//!
+//! 这里改用 `CREATE_NEW_CONSOLE` + `STARTF_USESHOWWINDOW`/`SW_HIDE` 给 node
+//! 分配一个隐藏的控制台：node 及其所有后代进程共享这个隐藏控制台，不再弹窗。
+//! 模块声明处已按 `#[cfg(windows)]` 门控，仅在 Windows 构建中编译。
+
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::File;
@@ -11,24 +22,24 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_BROKEN_PIPE, GENERIC_READ, GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT,
-    INVALID_HANDLE_VALUE, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, SetHandleInformation, ERROR_BROKEN_PIPE, GENERIC_READ, GENERIC_WRITE, HANDLE,
+    HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
-    QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+    TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 use windows_sys::Win32::System::Pipes::{CreatePipe, PeekNamedPipe};
 use windows_sys::Win32::System::Threading::{
-    CREATE_NEW_CONSOLE, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
-    GetExitCodeProcess, PROCESS_INFORMATION, ResumeThread, STARTF_USESHOWWINDOW,
-    STARTF_USESTDHANDLES, STARTUPINFOW, TerminateProcess, WaitForSingleObject,
+    CreateProcessW, GetExitCodeProcess, ResumeThread, TerminateProcess, WaitForSingleObject,
+    CREATE_NEW_CONSOLE, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION,
+    STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
@@ -78,6 +89,9 @@ impl ProcessJob {
     }
 }
 
+/// 以隐藏控制台方式启动 `program`，返回其 stdout / stderr 管道读取端。
+///
+/// `envs` 中的键值会覆盖当前进程环境变量后传给子进程。
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn spawn_with_hidden_console(
     program: &Path,
@@ -93,6 +107,10 @@ pub fn spawn_with_hidden_console(
     Ok((stdout, stderr))
 }
 
+/// 启动由桌面端持有的 Harness 进程，同时返回 PID 与进程句柄。
+///
+/// PID 用于只结束本应用创建的进程树；句柄由调用方等待并关闭，避免进程退出后
+/// PID 被系统复用时误伤其他程序。
 pub fn spawn_with_hidden_console_owned(
     program: &Path,
     args: &[OsString],
@@ -266,6 +284,8 @@ fn drain_probe_pipe(pipe: &mut File, output: &mut Vec<u8>) -> io::Result<bool> {
     Ok(count != 0)
 }
 
+/// 同 [`spawn_with_hidden_console`]，但额外返回进程句柄，供调用方等待进程
+/// 结束并读取退出码（预装插件安装等需要判断成败的场景）。
 pub fn spawn_with_hidden_console_tracked(
     program: &Path,
     args: &[OsString],
@@ -433,10 +453,14 @@ fn terminate_and_wait(process: HANDLE) -> io::Result<()> {
     }
 }
 
+/// 构建完整的 Unicode 环境块（每个条目以 `\0` 结尾，整个块以额外 `\0` 结尾）
 fn build_env_block(extra: &HashMap<String, String>, remove: &[&str]) -> Vec<u16> {
     let mut vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     for (key, value) in extra {
         let key_os = OsString::from(key);
+        // Windows 环境变量大小写不敏感：用户/系统环境里的键通常是 `Path` 而非
+        // `PATH`，若按大小写敏感匹配会追加重复键，子进程（CreateProcessW 环境块）
+        // 取到旧值。必须大小写不敏感匹配再替换。
         if let Some(entry) = vars
             .iter_mut()
             .find(|(existing, _)| existing.eq_ignore_ascii_case(&key_os))
@@ -463,6 +487,7 @@ fn build_env_block(extra: &HashMap<String, String>, remove: &[&str]) -> Vec<u16>
     block
 }
 
+/// 构建 CreateProcessW 命令行（遵循 MSVC 的引号转义规则）
 fn build_command_line(program: &Path, args: &[OsString]) -> Vec<u16> {
     let mut command = quote_arg(&program.as_os_str().to_string_lossy());
     for arg in args {
@@ -474,6 +499,7 @@ fn build_command_line(program: &Path, args: &[OsString]) -> Vec<u16> {
     wide
 }
 
+/// 按 MSVC 规则为命令行参数加引号并转义反斜杠/双引号
 fn quote_arg(arg: &str) -> String {
     if !arg.is_empty() && !arg.chars().any(|c| matches!(c, ' ' | '\t' | '"')) {
         return arg.to_string();
@@ -514,6 +540,7 @@ mod tests {
 
     #[test]
     fn env_key_match_is_case_insensitive() {
+        // Windows 用户环境里的键通常是 `Path`：用 `PATH` 覆盖必须替换而不是追加
         let mut vars: Vec<(OsString, OsString)> = vec![
             (OsString::from("Path"), OsString::from("OLD")),
             (OsString::from("DSH_HOME"), OsString::from("x")),
@@ -526,6 +553,7 @@ mod tests {
         if let Some(entry) = found {
             entry.1 = OsString::from("NEW");
         }
+        // 替换后仍是单个 Path 条目且取新值
         let path_entries: Vec<String> = vars
             .iter()
             .filter(|(k, _)| k.to_string_lossy().eq_ignore_ascii_case("path"))
@@ -612,6 +640,8 @@ mod tests {
         )
         .unwrap();
 
+        // node 作为“dsh 代理”：用 child_process 派生一个 powershell 孙进程，
+        // 旧实现（node 无控制台）下孙进程会新建可见控制台窗口。
         let node_js = format!(
             "const{{spawnSync}}=require('child_process');const r=spawnSync('C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',['-NoProfile','-NonInteractive','-File','{}'],{{encoding:'utf8'}});process.stdout.write((r.stdout??'')+(r.stderr??''));",
             ps1.to_string_lossy().replace('\\', "/")
@@ -637,6 +667,9 @@ mod tests {
     }
 
     /// issue #647：内置插件的 `link:` spec 含空格时不再预加引号（0.1.6-alpha.2 起
+    /// dsh CLI 以 argv 数组启动 pnpm），因此这条带空格的参数必须原样往返到 node 的
+    /// argv——命令行构造（[`build_command_line`] / [`quote_arg`]）是「不加引号」方案
+    /// 成立的前提。
     #[test]
     fn spaced_argument_round_trips_to_child_argv() {
         let node = find_node_on_path().expect("node.exe not found for the test");
@@ -672,9 +705,7 @@ mod tests {
         let job = ProcessJob::new().unwrap();
         let args = [
             OsString::from("-e"),
-            OsString::from(
-                "const child=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>process.exit(0),60000)'],{stdio:'ignore',windowsHide:true});child.once('spawn',()=>require('fs').writeFileSync(process.argv[1],String(child.pid)));child.once('error',error=>{throw error});setTimeout(()=>process.exit(0),60000)",
-            ),
+            OsString::from("const child=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>process.exit(0),60000)'],{stdio:'ignore',windowsHide:true});child.once('spawn',()=>require('fs').writeFileSync(process.argv[1],String(child.pid)));child.once('error',error=>{throw error});setTimeout(()=>process.exit(0),60000)"),
             ready.clone().into_os_string(),
         ];
         let (_stdout, _stderr, _, handle) =
@@ -733,7 +764,7 @@ mod tests {
         use std::os::windows::process::CommandExt;
         use windows_sys::Win32::Foundation::{DuplicateHandle, ERROR_ACCESS_DENIED};
         use windows_sys::Win32::System::SystemServices::JOB_OBJECT_QUERY;
-        use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, GetCurrentProcess};
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, CREATE_NO_WINDOW};
 
         let node = find_node_on_path().expect("node.exe required for job tests");
         let root = tempfile::tempdir().unwrap();
@@ -759,9 +790,7 @@ mod tests {
         let restricted = ProcessJob {
             handle: unsafe { OwnedHandle::from_raw_handle(restricted) },
         };
-        let mut command = std::process::Command::new(node);
-        crate::config::apply_node_env(&mut command);
-        let mut child = command
+        let mut child = std::process::Command::new(node)
             .args(["-e", "require('fs').writeFileSync('ran','unexpected');setTimeout(()=>process.exit(0),60000)"])
             .envs(envs)
             .current_dir(root.path())
@@ -818,11 +847,7 @@ mod tests {
                 "Object.assign(process.env,{});const fs=require('fs');const child=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>process.exit(0),60000)'],{{stdio:'inherit',windowsHide:true,env:{{...process.env,NODE_NO_WARNINGS:'1'}}}});child.once('error',error=>{{throw error}});child.once('spawn',()=>{{fs.writeFileSync({},String(child.pid));fs.writeSync(1,Buffer.alloc(131072,111));fs.writeSync(2,Buffer.alloc(131072,101));{}}});",
                 serde_json::to_string(&envs).unwrap(),
                 serde_json::to_string(&ready).unwrap(),
-                if timeout {
-                    "setTimeout(()=>process.exit(0),60000)"
-                } else {
-                    "process.exit(0)"
-                },
+                if timeout { "setTimeout(()=>process.exit(0),60000)" } else { "process.exit(0)" },
             );
             let started = Instant::now();
             let result = probe_in_job(

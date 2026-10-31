@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { Remote } from '@/hooks/use-remote'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ConnectDialog } from './connect-dialog'
 
 vi.mock('react-i18next', () => ({
@@ -29,14 +29,9 @@ function remoteOf(overrides: Partial<Remote> = {}): Remote {
   }
 }
 
-beforeEach(() => {
-  vi.stubGlobal('CSS', { escape: (value: string) => value.replace(/[^\w-]/g, character => `\\${character}`) })
-})
-
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
-  vi.unstubAllGlobals()
 })
 
 describe('connectDialog 连接进度弹窗', () => {

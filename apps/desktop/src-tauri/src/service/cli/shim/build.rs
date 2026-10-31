@@ -1,3 +1,7 @@
+//! shim 脚本内容生成：`dsh` / `pnpm` 的 cmd、ps1、sh 包装脚本构建函数。
+//! 各构建函数是纯函数（便于测试），落盘见 [`super::write`]。
+//! shim 文本必须全英文：cmd/ps1 按系统代码页解析，中文注释会乱码成命令执行。
+
 use std::path::{Path, PathBuf};
 
 use super::escape_path_ps1;
@@ -10,15 +14,23 @@ use super::templates::{
     SH_NODE_RESOLVE,
 };
 
+/// shim 内烘焙的依赖路径：全部来自运行时解析（依赖映射表 + 清单 `entry`），
+/// 因此 shim 不再假设 AppData 下的 `dependencies/<name>` 布局，也不依赖
+/// `APP_DIR` 推导——依赖可以被映射到任意位置（含 `resources/*` 捆绑副本）。
 #[derive(Debug, Clone)]
 pub struct ShimPaths {
+    /// node 可执行文件绝对路径
     pub node_bin: PathBuf,
+    /// dsh `bin.js` 绝对路径
     pub dsh_bin: PathBuf,
+    /// pnpm `pnpm.cjs` 绝对路径
     pub pnpm_bin: PathBuf,
+    /// 捆绑 MinGit 的 `cmd` 目录（系统 Git 缺 HTTPS helper 时注入 PATH）
     pub bundled_git_dir: Option<PathBuf>,
 }
 
 impl ShimPaths {
+    /// node 所在目录（注入 PATH 用）
     fn node_dir(&self) -> PathBuf {
         self.node_bin
             .parent()
@@ -31,11 +43,23 @@ impl ShimPaths {
     }
 }
 
+/// Windows `.cmd` 统一为 CRLF 行尾。
+///
+/// 批处理由 `cmd.exe` 按行解析，本文件被 `.gitattributes` 固定为 LF（`*.rs
+/// text eol=lf`），Rust 多行字符串里的 LF 会原样落盘。LF-only 的 `.cmd` 在部分
+/// Windows 环境下会让批处理 label/括号块的解析错位，命令以退出码 1 结束
 /// （issue #581：`dsh plugin install` 因此全部失败）。所有 `.cmd` 内容在返回前
+/// 转换，落盘即与手写的 Windows 批处理一致。
 fn normalize_cmd_line_endings(content: String) -> String {
     content.replace("\r\n", "\n").replace('\n', "\r\n")
 }
 
+// ---------------------------------------------------------------------------
+// dsh shim
+// ---------------------------------------------------------------------------
+
+/// Windows `dsh.cmd` 内容。`paths` 为解析后的依赖入口路径，`dsh_home` 为官方
+/// `$DSH_HOME`（release 为 `~/.dsh`，生成时写死，与桌面端/官方一致）。
 #[cfg_attr(debug_assertions, allow(dead_code))] // 仅 release 构建写入 dsh shim
 pub fn build_cmd_shim(paths: &ShimPaths, dsh_home: &Path) -> String {
     normalize_cmd_line_endings(format!(
@@ -78,6 +102,7 @@ exit /b 1
     ))
 }
 
+/// Windows `dsh.ps1` 内容
 #[cfg_attr(debug_assertions, allow(dead_code))] // 仅 release 构建写入 dsh shim
 pub fn build_ps1_shim(paths: &ShimPaths, dsh_home: &Path) -> String {
     format!(
@@ -119,6 +144,7 @@ exit $LASTEXITCODE
     )
 }
 
+/// Unix `dsh` shell 脚本内容（POSIX sh）
 #[cfg(not(windows))]
 #[cfg_attr(debug_assertions, allow(dead_code))] // 仅 release 构建写入 dsh shim
 pub fn build_sh_shim(paths: &ShimPaths, dsh_home: &Path) -> String {
@@ -148,6 +174,24 @@ exec "$NODE" "$DSH_BIN" "$@"
     )
 }
 
+// ---------------------------------------------------------------------------
+// pnpm shim（额外带"用户 pnpm 优先"逻辑，见各函数注释）
+//
+// `DSH_PREFER_BUNDLED_PNPM=1`（应用内部插件安装注入，见 service/plugin/install.rs）
+// 时改为捆绑版优先：跳过用户 pnpm 直接运行捆绑 pnpm.cjs，仅当捆绑缺失时回退
+// 用户 pnpm。默认（未设置）行为不变：用户 pnpm 优先。
+// ---------------------------------------------------------------------------
+
+/// Windows `pnpm.cmd` 内容：优先转发用户自己安装的 pnpm（`where pnpm` 遍历、
+/// 跳过本 shim 目录、只收 `.cmd/.exe/.bat`），否则用 node 运行捆绑 pnpm.cjs。
+/// `DSH_PREFER_BUNDLED_PNPM=1` 时捆绑版优先（见模块头注）。
+///
+/// 实现要点：
+/// - 不用 `findstr` 匹配路径（`\` 会被当正则转义导致过滤失效）；
+/// - 块内变量判断用 for 变量（`%%~xp`）而非 `%VAR%`（块解析时机陷阱）；
+/// - 转发用户/选定 pnpm 时直接调用目标、**不得用 `call`**：批处理会把原始 `%*`
+///   再展开一次，`call` 即多出一层解释，把调用方（execa 只按单层批处理转义）
+///   已经转义好的 `^` 翻倍成 `^^`，`pnpm add "x@^0.21.1"` 因此整批失败
 ///   （issue #715）。Unix 侧用 `exec` 转发本就没有多余层，此处与之一致。
 #[cfg_attr(all(not(windows), not(test)), allow(dead_code))] // 仅 Windows 的 shim 落盘与单测使用
 pub fn build_pnpm_cmd_shim(paths: &ShimPaths) -> String {
@@ -267,6 +311,9 @@ exit /b 1
     ))
 }
 
+/// Windows `pnpm.ps1` 内容：优先转发用户 pnpm（`Get-Command pnpm -All`，
+/// 排除本 shim 目录），否则用 node 运行捆绑 pnpm.cjs。
+/// `DSH_PREFER_BUNDLED_PNPM=1` 时捆绑版优先（见模块头注）。
 #[cfg_attr(all(not(windows), not(test)), allow(dead_code))] // 仅 Windows 的 shim 落盘与单测使用
 pub fn build_pnpm_ps1_shim(paths: &ShimPaths) -> String {
     format!(
@@ -361,6 +408,9 @@ exit $LASTEXITCODE
     )
 }
 
+/// Unix `pnpm` shell 脚本内容（POSIX sh）：按 PATH 顺序转发第一个非本目录
+/// 的用户 pnpm，否则用 node 运行捆绑 pnpm.cjs。`DSH_PREFER_BUNDLED_PNPM=1`
+/// 时捆绑版优先（见模块头注）。
 #[cfg_attr(all(windows, not(test)), allow(dead_code))]
 pub fn build_pnpm_sh_shim(paths: &ShimPaths) -> String {
     format!(
@@ -432,6 +482,16 @@ exec "$NODE" "$PNPM_BIN" "$@"
         node_resolve = SH_NODE_RESOLVE,
     )
 }
+
+// ---------------------------------------------------------------------------
+// npx / npm shim（用 node 运行 npm 自带的 cli 入口）
+//
+// 这两个名字在应用自身 bin 目录里必须存在：插件安装器与 MCP 服务端常以
+// `cmd /c npx -y <pkg>` 拉起，而用户 PATH 上的 npx 可能是 npm 官方安装器留
+// 下的相对路径包装（`%~dp0` 自指），一旦 node 不在同一目录就会静默失败或
+// 长时间卡住。cli 入口按「与所选 node 同目录的 npm 安装」→「应用捆绑 node 的
+// 同级 npm」→「PATH 上的用户 npx」顺序解析，全部只依赖已烘焙的绝对路径。
+// ---------------------------------------------------------------------------
 
 fn build_npm_cli_cmd_shim(
     paths: &ShimPaths,
@@ -533,6 +593,7 @@ exit /b 1
     ))
 }
 
+/// Windows `npx.cmd` 内容（见 npx/npm shim 段注释）。
 #[cfg_attr(all(not(windows), not(test)), allow(dead_code))]
 pub fn build_npx_cmd_shim(paths: &ShimPaths) -> String {
     build_npm_cli_cmd_shim(
@@ -548,6 +609,7 @@ pub fn build_npx_cmd_shim(paths: &ShimPaths) -> String {
     )
 }
 
+/// Windows `npm.cmd` 内容（见 npx/npm shim 段注释）。
 #[cfg_attr(all(not(windows), not(test)), allow(dead_code))]
 pub fn build_npm_cmd_shim(paths: &ShimPaths) -> String {
     build_npm_cli_cmd_shim(
@@ -652,6 +714,7 @@ exit $LASTEXITCODE
     )
 }
 
+/// Windows `npx.ps1` 内容（见 npx/npm shim 段注释）。
 #[cfg_attr(all(not(windows), not(test)), allow(dead_code))]
 pub fn build_npx_ps1_shim(paths: &ShimPaths) -> String {
     build_npm_cli_ps1_shim(
@@ -667,6 +730,7 @@ pub fn build_npx_ps1_shim(paths: &ShimPaths) -> String {
     )
 }
 
+/// Windows `npm.ps1` 内容（见 npx/npm shim 段注释）。
 #[cfg_attr(all(not(windows), not(test)), allow(dead_code))]
 pub fn build_npm_ps1_shim(paths: &ShimPaths) -> String {
     build_npm_cli_ps1_shim(
@@ -696,6 +760,7 @@ mod tests {
         let paths = sample_shim_paths();
         let content = build_cmd_shim(&paths, &sample_dsh_home());
         assert!(content.contains(r"C:\Users\test\AppData\Roaming"));
+        // 解析后的依赖入口直接烘焙进 shim（不再有 APP_DIR 相对拼接）
         assert!(content.contains(&paths.dsh_bin.to_string_lossy().to_string()));
         assert!(content.contains(&paths.node_bin.to_string_lossy().to_string()));
         assert!(content.contains(r"C:\Users\test\.dsh"));
@@ -711,6 +776,8 @@ mod tests {
         assert!(!content.contains(r#"set "APP_DIR=C:\Users\100%test""#));
     }
 
+    /// npx/npm shim 的 cli 入口必须按「与所选 node 同目录的 npm」优先解析，
+    /// 且 PATH 上用户的同名命令只作最后兜底（排除本 shim 目录，防自指递归）。
     #[cfg(windows)]
     #[test]
     fn npm_cli_shims_resolve_cli_next_to_node() {
@@ -746,6 +813,7 @@ mod tests {
                 .find(&format!("where {shim_name} 2^>nul"))
                 .expect("user shim scan");
             assert!(same_dir < lib_dir && lib_dir < parent_lib && parent_lib < user_scan);
+            // 捆绑运行时同级始终带 npm 安装，是解析链的固定兜底
             let bundled = sample_shim_paths();
             let bundled_cli = bundled
                 .node_bin
@@ -760,6 +828,8 @@ mod tests {
     }
 
     /// issue #581：Windows `.cmd` 必须全 CRLF。Rust 源码被 `.gitattributes`
+    /// 固定为 LF，多行字符串里的裸 LF 会让部分环境下的 cmd.exe 解析
+    /// label/括号块错位，`dsh plugin install` 因此整体失败。
     #[test]
     fn cmd_shims_use_crlf_line_endings() {
         for (name, content) in [
@@ -816,12 +886,15 @@ mod tests {
         for content in [&dsh_cmd, &pnpm_cmd] {
             assert!(content.contains("git --exec-path 2^>nul"));
             assert!(content.contains("git-remote-https.exe"));
+            // 捆绑 Git 目录直接内联进 PATH 注入行：导出 GIT_DIR 会污染子进程
+            // （Git 把该变量当成仓库目录，`git init`/`git status` 直接失败）
             assert!(!content.contains("set \"GIT_DIR="));
             assert!(!content.contains("%GIT_DIR%"));
             assert!(content.contains(&format!("if exist \"{git_dir_text}\\git.exe\"")));
             assert!(content.contains(&format!("set \"PATH={git_dir_text};%PATH%\"")));
             assert!(content.contains(&git_dir_text));
             let system_probe = content.find("git --exec-path").expect("system Git probe");
+            // 捆绑 Git 只在系统 Git 缺 HTTPS helper 时才注入 PATH：探测必须在前
             let bundled_git = content
                 .find("if not defined SYSTEM_GIT_WORKS")
                 .expect("bundled Git activation");
@@ -835,6 +908,11 @@ mod tests {
         }
     }
 
+    /// 生成的 `dsh.cmd` 必须能真正跑起来，且不给子进程留下 `GIT_DIR`。
+    ///
+    /// 内联捆绑 Git 目录后，批处理里不再有 `set "GIT_DIR=..."`：`setlocal` 对未定义
+    /// 变量不做展开，残留的 `%GIT_DIR%` 会让判断行退化成相对当前盘根的空路径。
+    /// 这里用真实的 `cmd.exe` 跑一遍生成的 shim，由替身 node 回报它看到的变量值。
     #[cfg(windows)]
     #[test]
     fn generated_dsh_cmd_runs_and_leaves_no_git_dir() {
@@ -858,6 +936,9 @@ mod tests {
 
         let mut command = std::process::Command::new("cmd");
         command.args(["/C", shim.to_str().unwrap(), "--print-git-dir"]);
+        // 父进程带哨兵值：shim 若还导出捆绑目录，子进程看到的就不是它。
+        // PATH 只留 System32：本机安装的 dsh shim 会被优先转发（用户优先级），
+        // 那样测的就不是本次生成的脚本了。
         command.env("GIT_DIR", "sentinel-from-parent");
         command.env("DSH_NODE", &node);
         let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
@@ -889,6 +970,7 @@ mod tests {
         assert!(content.contains(r#""%USER_PNPM%" %*"#));
         assert!(content.contains(":use_bundled"));
         assert!(content.contains(&paths.node_bin.to_string_lossy().to_string()));
+        // 应用内部安装可经 DSH_PREFER_BUNDLED_PNPM=1 强制捆绑版（须在用户搜索前生效）
         assert!(content.contains("DSH_PREFER_BUNDLED_PNPM"));
         let env_at = content.find("DSH_PREFER_BUNDLED_PNPM").unwrap();
         let exact_at = content.find("if defined DSH_PNPM (").unwrap();
@@ -897,6 +979,8 @@ mod tests {
         assert_eq!(content.matches("if defined DSH_PNPM (").count(), 1);
     }
 
+    /// 生成的 `npx.cmd` 必须能真正跑起来：所选 node 目录没有 npm 时回落到
+    /// 捆绑运行时的 cli，由替身 node 回报它拿到的 cli 入口与参数。
     #[cfg(windows)]
     #[test]
     fn generated_npx_cmd_runs_with_bundled_cli() {
@@ -926,6 +1010,7 @@ mod tests {
         let mut command = std::process::Command::new("cmd");
         command.args(["/d", "/C", shim.to_str().unwrap(), "--version"]);
         command.env("DSH_NODE", &node);
+        // PATH 只留 System32：本机 .nvmd 的坏 npx 与自建 shim 都不会被选中
         let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
         command.env("PATH", Path::new(&system_root).join("System32"));
         let output = command.output().unwrap();
@@ -1176,6 +1261,7 @@ mod tests {
         }
     }
 
+    /// 真实执行生成的 `npx.ps1`：DSH_NODE 指向的目录没有 npm 时回落到捆绑 cli。
     #[cfg(windows)]
     #[test]
     fn generated_npx_ps1_runs_with_bundled_cli() {
@@ -1230,6 +1316,12 @@ mod tests {
     }
 
     /// issue #130：真实执行生成的 cmd shim，确保用户 pnpm 的失败码不会因 cmd
+    /// 括号块预展开 `%ERRORLEVEL%` 而被吞成 0。
+    ///
+    /// 临时目录必须取规范长路径：CI（windows-latest）的 TEMP 是 8.3 短路径
+    /// （`C:\Users\RUNNER~1\...`），而 `where pnpm` 一律回长路径，shim 的自身
+    /// 排除比对（`%~dp0` 对 `where` 输出）随即失效、把自身当用户 pnpm 转发一次，
+    /// 本用例断言的「直达用户 pnpm」路径就不会被走到。
     #[cfg(windows)]
     #[test]
     fn pnpm_cmd_shim_propagates_user_exit_code_in_real_cmd() {
@@ -1301,6 +1393,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// 回归：脚本内嵌套的 pnpm（`pnpm run` 再调 pnpm）会继承上一跳置位的重入
+    /// 保护变量。捆绑版缺失时保护无法终止转发链，只有回退用户 pnpm 才对——
+    /// 否则 `pnpm dev:desktop` 里的 `pnpm dev:plugins` 直接报 pnpm not found。
     #[cfg(windows)]
     #[test]
     fn pnpm_cmd_shim_keeps_user_fallback_when_guard_set_without_bundle() {
@@ -1339,6 +1434,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// 两个变量同时存在且捆绑文件可用时，显式的捆绑策略必须优先。
     #[cfg(windows)]
     #[test]
     fn pnpm_cmd_shim_prefers_existing_bundle_over_selected_path() {
@@ -1462,6 +1558,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// 回归：ps1 侧同样禁止在捆绑版缺失时按重入保护直落捆绑版。
     #[cfg(windows)]
     #[test]
     fn pnpm_ps1_shim_keeps_user_fallback_when_guard_set_without_bundle() {
@@ -1494,6 +1591,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// 回归：`$env:` 写入是进程级的，转发后必须还原重入保护——否则同一次
+    /// PowerShell 会话里后续每个 pnpm 都直落捆绑版，捆绑缺失时误报未安装。
     #[cfg(windows)]
     #[test]
     fn pnpm_ps1_shim_restores_reentry_guard_after_forwarding() {
@@ -1628,6 +1727,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// 三个平台的 pnpm shim 都必须带重入保护（见各模板注释）。
     #[test]
     fn pnpm_shims_guard_against_reentrant_forwarding() {
         let app_dir = sample_app_dir();
@@ -1641,13 +1741,18 @@ mod tests {
                 "{name}: missing re-entry guard"
             );
         }
+        // cmd 在入口一次判断 + 一次置位。
         let cmd = build_pnpm_cmd_shim(&shim_paths_for(&app_dir));
         assert_eq!(cmd.matches("DSH_PNPM_SHIM_GUARD").count(), 2);
         assert_eq!(cmd.matches("set \"DSH_PNPM_SHIM_GUARD=1\"").count(), 1);
     }
 
     /// 回归 issue #130：用户 pnpm 的退出码必须原样透出，因此 `exit /b %ERRORLEVEL%`
+    /// 必须紧跟转发语句、且不得落进括号块（块解析会提前展开 `%ERRORLEVEL%`，把失败码
+    /// 吞成 0/1）。
+    ///
     /// 同时锁死 issue #715 的修复：转发**不得用 `call`**——批处理会把原始 `%*` 再展开
+    /// 一次，`call` 即多出一层解释，使 execa 已按单层转义好的 `^` 翻倍成 `^^`。
     #[test]
     fn cmd_shim_forwarding_keeps_exit_code_and_never_uses_call() {
         let content = build_pnpm_cmd_shim(&sample_shim_paths());
@@ -1664,6 +1769,8 @@ mod tests {
         }
     }
 
+    /// execa 的 `cmd.exe` 元字符转义：每个元字符前缀一个 `^`。
+    /// 见 execa `lib/arguments/command-file.js` 的 `escapeMetaChars`。
     #[cfg(windows)]
     fn execa_escape_meta_chars(value: &str) -> String {
         const META_CHARS: &str = "()][%!^\"`<>&|;, *?";
@@ -1677,12 +1784,19 @@ mod tests {
         escaped
     }
 
+    /// execa 对单个参数的转义。目标是 `.cmd`/`.bat` 时它会**双重**转义——只为
+    /// 「批处理会用 `%*` 再展开一次参数」这一层做补偿。测试参数不含反斜杠，
+    /// 故略去 execa 的反斜杠加倍步骤。
     #[cfg(windows)]
     fn execa_escape_argument(raw: &str) -> String {
         execa_escape_meta_chars(&execa_escape_meta_chars(&format!("\"{raw}\"")))
     }
 
     /// 回归 issue #715 / #716：`dsh plugin add` 由 `@deepseek-ai/dsh-plugin-manager`
+    /// 经 execa 启动 pnpm，execa 解析到的是本 shim（`.cmd`），因此只按**单层**批处理
+    /// 转义参数。shim 若用 `call` 转发就多出一层 `%*` 再展开，`^` 被翻倍成 `^^`，pnpm
+    /// 报 `ERR_PNPM_SPEC_NOT_SUPPORTED_BY_ANY_RESOLVER`，预设插件整批装不上。
+    /// 这里按 execa 的转义规则构造命令行并真实执行 shim，断言目标收到的参数逐字节不变。
     #[cfg(windows)]
     #[test]
     fn pnpm_cmd_shim_forwards_execa_escaped_caret_spec_unchanged() {
@@ -1703,6 +1817,7 @@ mod tests {
         .unwrap();
 
         let spec = "dsh-better-sidebar@^0.21.1";
+        // execa 的命令行形如 `"<转义后的文件> <转义后的参数...>"`（整体再包一层引号）
         let command_line = format!(
             "\"{}\"",
             [
@@ -1735,6 +1850,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// 回归：`DSH_PNPM` 指向的 shim 若按 PATH 解析回本 shim（mise shims 的真实
+    /// 行为，见 `cli::path::pnpm` 的 mise 目录回退），没有重入保护时两者会互相
+    /// `exec` 形成死循环——安装子进程永不退出，应用表现为永久卡在
+    /// 「Loading internal plugins…」且后端日志一行输出都没有。有保护时必须有界
+    /// 结束并回退捆绑 pnpm。
     #[cfg(unix)]
     #[test]
     fn pnpm_sh_shim_breaks_self_referential_forward_loop() {
@@ -1753,8 +1873,10 @@ mod tests {
 
         let node = dir.join("node");
         std::fs::write(&node, "#!/bin/sh\necho BUNDLED \"$@\"\n").unwrap();
+        // 本 shim 落在 PATH 中，等价于桌面端把自身 shim 目录前置到子进程 PATH。
         let shim = bin_dir.join("pnpm");
         std::fs::write(&shim, build_pnpm_sh_shim(&shim_paths_for(&app_dir))).unwrap();
+        // 模拟 mise shim：自身没有实现，只把调用交回 PATH 上的 pnpm。
         let forwarder = loop_dir.join("pnpm");
         std::fs::write(&forwarder, "#!/bin/sh\nexec pnpm \"$@\"\n").unwrap();
 
@@ -1780,6 +1902,7 @@ mod tests {
             .stderr(std::process::Stdio::null())
             .spawn()
             .unwrap();
+        // exec 保留 pid，因此超时后按 pid 一定杀得中循环中的那个进程。
         let pid = child.id();
 
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -1811,11 +1934,14 @@ mod tests {
     }
 
     /// issue #121：桌面端注入的 DSH_NODE（预检解析出的 node 路径）必须在
+    /// 本地 node / 捆绑运行时解析之前被采用——shim 与应用预检保持一致。
     #[test]
     fn cmd_shim_prefers_dsh_node_before_local_node() {
         let content = build_cmd_shim(&sample_shim_paths(), &sample_dsh_home());
         let dsh_node_at = content.find("DSH_NODE").unwrap();
         let where_node_at = content.find("where node").unwrap();
+        // `:node_dsh` 标签行（独占一行）位于 `:node_ok` 之后、`:use_bundled`
+        // 之前；`goto :node_dsh` 引用出现在 `where node` 之前，不能作为定位点。
         let node_dsh_label_at = content.find("\n:node_dsh").unwrap();
         let node_ok_at = content.find("\n:node_ok").unwrap();
         assert!(
@@ -1827,6 +1953,9 @@ mod tests {
             node_ok_at < node_dsh_label_at,
             "the :node_dsh label must come after :node_ok"
         );
+        // Windows canonical paths may carry a \\?\ verbatim prefix; the shim
+        // must strip it before launching node (issue: pnpm --version fails
+        // with "The system cannot find the path specified.").
         assert!(content.contains("NODE:~0,4%"));
         assert!(content.contains("NODE:~4%"));
     }
@@ -1840,6 +1969,7 @@ mod tests {
             dsh_node_at < local_at,
             "DSH_NODE must be checked before the local node search"
         );
+        // Same verbatim-prefix stripping as the CMD shim.
         assert!(content.contains("StartsWith"));
         assert!(content.contains("Substring(4)"));
     }
@@ -1858,6 +1988,7 @@ mod tests {
         }
     }
 
+    /// 三种 shim 的版本门槛必须与应用预检及当前 DSH engines 保持一致。
     #[test]
     fn generated_shims_match_current_dsh_node_engine() {
         let cmd = build_cmd_shim(&sample_shim_paths(), &sample_dsh_home());
@@ -1874,6 +2005,7 @@ mod tests {
         assert!(!SH_NODE_RESOLVE.contains("$MAJOR\" -eq 23"));
     }
 
+    /// cmd shim 不得把 Node 预发布版本误判为满足稳定版 engines 范围。
     #[cfg(windows)]
     #[test]
     fn cmd_shim_rejects_prerelease_node_and_accepts_stable_boundaries() {
@@ -1934,6 +2066,7 @@ mod tests {
         let dir = PathBuf::from(r"C:\Users\o'brien\AppData\Roaming\dsh-tauri");
         let content = build_ps1_shim(&shim_paths_for(&dir), &sample_dsh_home());
         assert!(content.contains(r"o''brien"));
+        // dsh_home 同样走 ps1 转义
         assert!(content.contains(r"C:\Users\test\.dsh"));
     }
 
@@ -1943,6 +2076,7 @@ mod tests {
         assert!(content.contains("USER_DSH"));
         assert!(content.contains(r#"call "%USER_DSH%" %*"#));
         assert!(content.contains("SELF_PREFIX"));
+        // 用户 dsh 优先转发应出现在捆绑启动之前
         let user_at = content.find("USER_DSH").unwrap();
         let bundled_at = content.find(":use_bundled").unwrap();
         assert!(user_at < bundled_at);
@@ -1954,6 +2088,7 @@ mod tests {
         assert!(content.contains("Get-Command dsh -All"));
         assert!(content.contains("$userDsh.Source"));
         assert!(content.contains("$PSScriptRoot"));
+        // DSH_HOME 绑定只在捆绑启动分支注入（转发用户 dsh 时保留用户环境）
         let user_at = content.find("$userDsh").unwrap();
         let home_at = content.find("$env:DSH_HOME = $dshHome").unwrap();
         assert!(user_at < home_at);
@@ -1966,6 +2101,7 @@ mod tests {
             let content = build_sh_shim(&sample_shim_paths(), &sample_dsh_home());
             assert!(content.contains(r#"exec "$dir/dsh" "$@""#));
             assert!(content.contains(r#"[ "$dir/dsh" -ef "$0" ]"#));
+            // 用户 dsh 优先 > 注入 DSH_HOME
             let user_at = content.find(r#""$dir/dsh""#).unwrap();
             let home_at = content.find("export DSH_HOME").unwrap();
             assert!(user_at < home_at);

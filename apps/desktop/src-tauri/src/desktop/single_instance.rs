@@ -1,28 +1,27 @@
 #![cfg(windows)]
 
-use crate::AppHandle;
 use std::{
     ffi::c_void,
     os::windows::io::{FromRawHandle, OwnedHandle},
     ptr::{null, null_mut},
-    sync::{Arc, Mutex, mpsc},
+    sync::{mpsc, Arc, Mutex},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
-use tauri::Manager;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_deep_link::DeepLink;
 use windows_sys::Win32::{
     Foundation::{
-        ERROR_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, SetLastError, WPARAM,
+        GetLastError, SetLastError, ERROR_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
     },
     System::{LibraryLoader::GetModuleHandleW, Threading::CreateMutexW},
     UI::WindowsAndMessaging::{
-        CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-        FindWindowExW, GCL_CBWNDEXTRA, GWLP_USERDATA, GetClassLongW, GetMessageW,
-        GetWindowLongPtrW, GetWindowLongW, GetWindowThreadProcessId, MSG, PostQuitMessage,
-        SMTO_ABORTIFHUNG, SMTO_BLOCK, SMTO_ERRORONEXIT, SendMessageTimeoutW, SendMessageW,
-        SetWindowLongPtrW, SetWindowLongW, UnregisterClassW, WM_APP, WM_CLOSE, WM_COPYDATA,
-        WM_NCCREATE, WM_NCDESTROY, WNDPROC, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowExW,
+        GetClassLongW, GetMessageW, GetWindowLongPtrW, GetWindowLongW, GetWindowThreadProcessId,
+        PostQuitMessage, SendMessageTimeoutW, SendMessageW, SetWindowLongPtrW, SetWindowLongW,
+        UnregisterClassW, CREATESTRUCTW, GCL_CBWNDEXTRA, GWLP_USERDATA, MSG, SMTO_ABORTIFHUNG,
+        SMTO_BLOCK, SMTO_ERRORONEXIT, WM_APP, WM_CLOSE, WM_COPYDATA, WM_NCCREATE, WM_NCDESTROY,
+        WNDPROC, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
     },
 };
 
@@ -31,6 +30,7 @@ const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 const SEND_TIMEOUT_MS: u32 = 5000;
 const STOP_TARGET: u32 = WM_APP + 1;
 
+// 直依赖未启用 Gdi/DataExchange；这里只声明协议所需的原生 ABI，不扩大 Cargo 特性。
 #[repr(C)]
 struct WindowClass {
     style: u32,
@@ -46,7 +46,7 @@ struct WindowClass {
 }
 
 #[link(name = "user32")]
-unsafe extern "system" {
+extern "system" {
     fn RegisterClassW(class: *const WindowClass) -> u16;
 }
 
@@ -121,9 +121,7 @@ fn dispatch(inbox: &Arc<Mutex<Inbox>>, app: &AppHandle) -> Result<(), String> {
     app.run_on_main_thread(move || {
         let pending = std::mem::take(&mut inbox.lock().unwrap_or_else(|e| e.into_inner()).pending);
         for request in pending {
-            if let Some(deep_link) =
-                handle.try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>()
-            {
+            if let Some(deep_link) = handle.try_state::<DeepLink<tauri::Wry>>() {
                 deep_link.handle_cli_arguments(request.args.iter());
             }
             crate::utils::show_main_window(&handle);
@@ -198,6 +196,7 @@ impl Drop for NativeWindow {
         unsafe {
             if !self.hwnd.is_null() && DestroyWindow(self.hwnd) == 0 {
                 log::error!("{}", win_error("DESTROY_WINDOW"));
+                // 销毁失败时窗口仍可能回调，不能提前释放它的 userdata。
                 if let Some(data) = self.inbox.take() {
                     let _ = Box::into_raw(data);
                 }
@@ -223,6 +222,7 @@ unsafe extern "system" fn window_proc(
             if GetLastError() != 0 {
                 return 0;
             }
+            // 默认处理初始化窗口标题，旧协议依赖它按 class/title 查找。
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_COPYDATA => {
@@ -355,9 +355,7 @@ pub struct SingleInstance {
 impl SingleInstance {
     pub fn attach(&self, app: &AppHandle) -> Result<(), String> {
         if crate::utils::shell_window(app).is_none()
-            || app
-                .try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>()
-                .is_none()
+            || app.try_state::<DeepLink<tauri::Wry>>().is_none()
         {
             return Err("SINGLE_INSTANCE_NOT_READY: attach after the main window and deep-link plugin are ready".into());
         }
@@ -382,8 +380,10 @@ pub fn claim(identifier: &str) -> Result<Option<SingleInstance>, String> {
     if identifier.is_empty() || identifier.contains('\0') {
         return Err("SINGLE_INSTANCE_INVALID_IDENTIFIER".into());
     }
+    // 先发布 target，旧插件在 CreateMutex 之后立即 FindWindow，反序会放过第二个 owner。
     let mut target = Target::start(identifier)?;
     let name = wide(&format!("{identifier}-sim"));
+    // 旧协议只检查命名对象是否已存在，不等待 mutex；无需持有线程所有权。
     let mutex = unsafe { CreateMutexW(null(), 0, name.as_ptr()) };
     let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
     if mutex.is_null() {
@@ -404,9 +404,7 @@ pub fn claim(identifier: &str) -> Result<Option<SingleInstance>, String> {
         }));
     }
     let Some(owner) = wait_owner(identifier, std::process::id(), Duration::from_secs(5))? else {
-        log::warn!(
-            "SINGLE_INSTANCE_TARGET_MISSING: mutex held but no ready target, exiting quietly (issue #1125)"
-        );
+        log::warn!("SINGLE_INSTANCE_TARGET_MISSING: mutex held but no ready target, exiting quietly (issue #1125)");
         return Ok(None);
     };
     target.stop()?;
@@ -480,6 +478,7 @@ fn find_owner(identifier: &str, excluded_pid: u32) -> Result<Option<HWND>, Strin
             if GetLastError() != 0 {
                 return Err(win_error("TARGET_CLASS"));
             }
+            // 新 target 的 slot 0 未置位时仍在选举；不能转给另一个 follower，旧插件没有 extra。
             if extra >= 4 {
                 SetLastError(0);
                 let owner = GetWindowLongW(window, 0);
@@ -574,11 +573,9 @@ mod tests {
             find_owner(&identifier, 0).unwrap(),
             Some(target.hwnd as HWND)
         );
-        assert!(
-            find_owner(&identifier, std::process::id())
-                .unwrap()
-                .is_none()
-        );
+        assert!(find_owner(&identifier, std::process::id())
+            .unwrap()
+            .is_none());
         Request {
             cwd: "C:\\独立测试".into(),
             args: vec!["app.exe".into(), "dsh://open".into()],

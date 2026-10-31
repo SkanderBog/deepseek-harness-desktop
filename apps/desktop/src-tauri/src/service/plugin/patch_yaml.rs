@@ -1,3 +1,7 @@
+//! 补丁层 YAML 的整份读写。serde_yaml 把 `!!js` 解析成 `tag:yaml.org,2002:js`，
+//! 既不当核心类型也不留成 `Value::Tagged`，直接降成普通字符串，回写后 loader 只会
+//! 拿到字面量。解析时把 `!!` 句柄映射到私有前缀，只给 `!!js` 节点保留标签，写回时还原。
+
 use serde_yaml::Value;
 
 const SECONDARY_HANDLE: &str = "%TAG !! !dsh-secondary-\n";
@@ -69,9 +73,7 @@ mod tests {
     #[test]
     fn rewrite_keeps_js_expressions() {
         assert_eq!(
-            rewrite(
-                "- id: x\n  name: !!js \"process.env.X ? 'a' : 'b'\"\n  config:\n    token: !!js process.env.TOKEN\n    port: !!js 0x10\n    dirs:\n      - !!js process.cwd()\n"
-            ),
+            rewrite("- id: x\n  name: !!js \"process.env.X ? 'a' : 'b'\"\n  config:\n    token: !!js process.env.TOKEN\n    port: !!js 0x10\n    dirs:\n      - !!js process.cwd()\n"),
             "- id: x\n  name: !!js 'process.env.X ? ''a'' : ''b'''\n  config:\n    token: !!js process.env.TOKEN\n    port: !!js '0x10'\n    dirs:\n    - !!js process.cwd()\n"
         );
     }

@@ -1,12 +1,20 @@
-use crate::AppHandle;
+//! 资源清单（`resources/manifest.jsonc`）：引擎版本、插件目录、预设宠物与依赖
+//! 映射规范的唯一真值来源。
+//!
+//! 定位顺序按构建区分：debug 优先源码 `resources/`（构建产物中的资源可能过期），
+//! release 优先随安装包分发的资源目录，两者互为兜底。清单缺失/损坏只记日志并回落
+//! 空清单——插件与宠物目录不是启动硬依赖；依赖映射的读写见 [`super::dependencies`]。
+
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
-use tauri::{Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
+/// 资源清单文件名
 pub const MANIFEST_FILE: &str = "manifest.jsonc";
 
+/// 资源清单根结构
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Manifest {
@@ -16,6 +24,7 @@ pub struct Manifest {
     pub dependencies: BTreeMap<String, DependencySpec>,
 }
 
+/// 引擎版本声明（仅消费 `dsh`；node/pnpm/git 为发布侧声明，运行期常量另见 constants）
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Engines {
@@ -25,20 +34,26 @@ pub struct Engines {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct DshEngine {
+    /// 推荐核心版本（更新提示与「高于推荐版本」标记用）
     pub recommend: String,
+    /// 最低支持核心版本（低于它的核心不参与本地优先）
     pub minimum: String,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, Deserialize)]
 #[serde(default)]
 pub struct Plugins {
+    /// 弃用插件 id（清单键为历史拼写 `depercated`）
     #[serde(rename = "depercated")]
     pub deprecated: Vec<String>,
+    /// 随包内置插件
     #[serde(rename = "built-in")]
     pub built_in: Vec<PluginEntry>,
+    /// 社区预设插件
     pub preset: Vec<PluginEntry>,
 }
 
+/// 插件清单条目
 #[derive(Debug, Clone, Default, serde::Serialize, Deserialize)]
 #[serde(default)]
 pub struct PluginEntry {
@@ -46,30 +61,46 @@ pub struct PluginEntry {
     pub spec: String,
     pub name: String,
     pub description: String,
+    /// 仓库地址（历史字段名 `repoUrl`）
     pub repo: String,
+    /// profile `dependencies`/`bundles` 中的实际包名；缺省与 `id` 相同
     pub package: Option<String>,
     pub recommended: bool,
+    /// 「修复」类项（Windows 极简模式），默认勾选
     pub fix: bool,
+    /// 首次引导默认勾选
     pub checked: bool,
+    /// 仅 Windows 列出
     #[serde(rename = "winOnly")]
     pub win_only: bool,
+    /// 版本区间声明：`"latest"` 字符串或（插件版本区间 ↔ 核心版本区间）配对矩阵
     #[serde(default, deserialize_with = "deserialize_version")]
     pub version: Option<PluginVersion>,
 }
 
+/// 插件版本声明
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(untagged)]
 pub enum PluginVersion {
+    /// 无区间语义的字符串声明（如 `"latest"`）
     Declared(String),
+    /// （插件版本区间 ↔ 核心版本区间）配对矩阵
     Matrix(Vec<VersionPair>),
 }
 
+/// 版本配对：`dsh` 核心区间命中时，兼容的插件版本为 `version` 区间
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
 pub struct VersionPair {
     pub version: String,
     pub dsh: String,
 }
 
+/// 区间是否命中给定版本——对齐内核安装校验的 `includePrerelease` 语义。
+///
+/// `semver` crate 对预发布版本另设门槛：必须存在比较符与本版本 major.minor.patch 相同且
+/// 自带 pre。于是 `^0.2.0-rc.1` 漏掉 `0.2.1-rc.1` 这类同代更高补丁号的预发布核心（内核
+/// 侧放行），核心一发 rc 就把插件误标成不兼容。补一个对本版本恒真
+/// 的精确比较符即可绕开门槛，其余比较符的判定不受影响。
 fn matches_including_prerelease(req: &semver::VersionReq, version: &semver::Version) -> bool {
     let matched = req.matches(version);
     if matched || version.pre.is_empty() {
@@ -86,10 +117,16 @@ fn matches_including_prerelease(req: &semver::VersionReq, version: &semver::Vers
     bridged.matches(version)
 }
 
+/// 区间是否命中给定版本（区间无法解析时视为不命中）
 fn req_matches(req: &str, version: &semver::Version) -> bool {
     parse_req(req).is_some_and(|req| matches_including_prerelease(&req, version))
 }
 
+/// 解析区间声明，兼容 npm 风格的空格分隔多比较符。
+///
+/// 清单按 npm 习惯书写（`>=0.1.7-rc.1 <0.1.7-rc.5`），而 `semver` crate 只认逗号
+/// 分隔、且不允许运算符与版本之间有空格：这里把两类写法都归一到 `a,b` 形式，
+/// 无法解析时返回 None（调用方按「不做判定」处理，避免手误把插件误标不兼容）。
 fn parse_req(raw: &str) -> Option<semver::VersionReq> {
     let mut parts: Vec<String> = Vec::new();
     let mut pending: Option<String> = None;
@@ -114,6 +151,11 @@ fn parse_req(raw: &str) -> Option<semver::VersionReq> {
 }
 
 impl PluginVersion {
+    /// 当前核心命中的插件版本区间（没有任何 `dsh` 区间命中时为 None）。
+    ///
+    /// 矩阵按**升序阶梯**声明（越靠后的一代越新）。较旧的区间通常对上界开放
+    /// （如 `^0.1.5-rc.1` 覆盖整个 0.1.x），因此 release 核心可能同时落在多条区间内；
+    /// 此时必须取**最后**一条命中规则，否则会把新插件按旧一代的推荐区间钉版本。
     pub fn plugin_req_for_core(&self, core: Option<&str>) -> Option<&str> {
         let PluginVersion::Matrix(pairs) = self else {
             return None;
@@ -126,6 +168,10 @@ impl PluginVersion {
             .map(|pair| pair.version.as_str())
     }
 
+    /// 核心是否已超出矩阵声明的全部 `dsh` 区间（无矩阵或版本不可解析时为 false）
+    ///
+    /// 全部区间都能解析、且没有一条命中该核心才算「不兼容当前核心」；任一条区间写错
+    /// 时不做判定（宁可显示兼容，也不让手误把插件在界面上误标）。
     pub fn unsupported_on(&self, core: Option<&str>) -> bool {
         let PluginVersion::Matrix(pairs) = self else {
             return false;
@@ -164,6 +210,7 @@ where
     })
 }
 
+/// 预设宠物目录
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Pets {
@@ -171,6 +218,8 @@ pub struct Pets {
     pub built_in: Vec<PresetPetSpec>,
 }
 
+/// 预设宠物条目：字段名与 `dsh-pet-component` 的 props 一一对应，前端拿到后直接
+/// 展开给 `<Pet>`；`deny_unknown_fields` 保证清单写错字段（如 `sizeMB`）立即报错。
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PresetPetSpec {
@@ -190,6 +239,7 @@ pub struct PresetPetSpec {
     pub ext: Option<PresetPetExt>,
 }
 
+/// 素材基地址：`default` 必填，`mac` 覆盖 Apple 平台（WKWebView 不认 VP9-alpha）
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PresetPetUri {
@@ -206,14 +256,19 @@ pub struct PresetPetExt {
     pub mac: Option<String>,
 }
 
+/// 依赖映射规范：入口相对路径与默认托管根
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct DependencySpec {
+    /// 入口相对路径（相对依赖根），按平台覆盖：`default` / `windows` / `macos` / `linux`
     pub entry: EntrySpec,
+    /// AppData 下的默认托管根（相对 AppData 基础目录，或 `resources/...`）
     pub managed_root: Option<String>,
+    /// 是否允许运行期覆盖为任意位置
     pub overridable: bool,
 }
 
+/// 入口路径声明：单一路径字符串或按平台映射
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum EntrySpec {
     Single(String),
@@ -242,6 +297,7 @@ impl<'de> Deserialize<'de> for EntrySpec {
 }
 
 impl EntrySpec {
+    /// 当前平台的入口相对路径
     pub fn resolve(&self) -> Option<&str> {
         match self {
             EntrySpec::Single(value) => (!value.is_empty()).then_some(value.as_str()),
@@ -254,6 +310,19 @@ impl EntrySpec {
     }
 }
 
+/// 安装包资源根：`resources/...` 位置令牌与入口路径的解析基准。
+///
+/// Tauri 2 在 Windows 上 `resource_dir()` 恒等于 exe 所在目录，安装包与开发产物
+/// 都会把资源按 `resources/**` 前缀落盘到 `{resource_dir}/resources/` 子目录，
+/// 因此实际资源根可能是该子目录；两处都探测不到时回落到资源目录本身。
+///
+/// 返回前统一剥离 Windows 扩展长度前缀：`resource_dir()` 取自
+/// `tauri_utils::platform::current_exe()`（内部对 exe 路径做了 canonicalize），
+/// 在 Windows 上带 `\\?\` verbatim 前缀。该前缀会随依赖托管根（`$Resources/dsh`
+/// 等）拼进入口路径，而随包内核的入口要交给 node 当主模块：node 的
+/// `resolveMainPath` 解析 verbatim 路径会直接以
+/// `EISDIR: illegal operation on a directory, lstat 'C:'` 退出（Node 25 实测），
+/// 随包核心因此永远起不来。CLI shim 也会把这个前缀写进 `.cmd`，同样要归一化。
 pub fn resource_root<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     app.path()
         .resource_dir()
@@ -266,6 +335,7 @@ pub(crate) fn resource_root_from(resource_dir: &Path) -> PathBuf {
     dunce::simplified(&root).to_path_buf()
 }
 
+/// 资源根探测顺序：扁平布局（exe 同级）优先，再 `resources/` 子目录布局。
 fn pick_resource_root(dir: &Path) -> Option<PathBuf> {
     if dir.join(MANIFEST_FILE).is_file() {
         return Some(dir.to_path_buf());
@@ -280,6 +350,7 @@ fn source_manifest_path() -> PathBuf {
         .join(MANIFEST_FILE)
 }
 
+/// 定位资源清单：debug 优先当前 checkout，release 优先进安装包资源。
 pub fn manifest_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     manifest_path_from(resource_root(app).as_deref(), cfg!(debug_assertions))
 }
@@ -298,8 +369,14 @@ pub(crate) fn manifest_path_from(
     candidates.into_iter().flatten().find(|path| path.is_file())
 }
 
+/// 解析结果缓存：清单是热路径（核心来源判定、插件清单、宠物列表、依赖映射都要读），
+/// 按「路径 + mtime」命中即复用解析结果；debug 下编辑清单会因 mtime 变化而重载。
 static CACHE: std::sync::Mutex<Option<(PathBuf, u64, Manifest)>> = std::sync::Mutex::new(None);
 
+/// 在缓存命中的清单上取值；缺失/损坏时返回 None。
+///
+/// 缓存锁在闭包执行期间持有，因此闭包内**不得**再次调用本模块的读取接口
+/// （std 互斥锁不可重入）。
 pub fn with_manifest<R: Runtime, T>(
     app: &AppHandle<R>,
     pick: impl FnOnce(&Manifest) -> T,
@@ -307,9 +384,7 @@ pub fn with_manifest<R: Runtime, T>(
     let path = match manifest_path(app) {
         Some(path) => path,
         None => {
-            log::warn!(
-                "RESOURCE_MANIFEST_MISSING: {MANIFEST_FILE} not found in resource dir or source resources dir"
-            );
+            log::warn!("RESOURCE_MANIFEST_MISSING: {MANIFEST_FILE} not found in resource dir or source resources dir");
             return None;
         }
     };
@@ -331,20 +406,24 @@ pub fn with_manifest<R: Runtime, T>(
     guard.as_ref().map(|(_, _, manifest)| pick(manifest))
 }
 
+/// 读取并解析资源清单；缺失/损坏时返回 None（调用方按空清单处理）
 pub fn read<R: Runtime>(app: &AppHandle<R>) -> Option<Manifest> {
     with_manifest(app, Manifest::clone)
 }
 
+/// 读取指定路径的清单（单测与依赖映射共用）
 pub fn read_at(path: &Path) -> Result<Manifest, String> {
     let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
     parse(&raw)
 }
 
+/// 解析 JSONC 文本：容忍 `//`、`/* */` 注释与尾逗号
 pub fn parse(raw: &str) -> Result<Manifest, String> {
     let stripped = strip_jsonc(raw);
     serde_json::from_str(&stripped).map_err(|error| error.to_string())
 }
 
+/// 清单中的推荐 DSH 核心版本
 pub fn recommended_dsh_version<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
     let version = with_manifest(app, |manifest| {
         manifest.engines.dsh.recommend.trim().to_string()
@@ -352,6 +431,7 @@ pub fn recommended_dsh_version<R: Runtime>(app: &AppHandle<R>) -> Option<String>
     (!version.is_empty() && semver::Version::parse(&version).is_ok()).then_some(version)
 }
 
+/// 清单中的最低支持 DSH 核心版本
 pub fn minimum_dsh_version<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
     let version = with_manifest(app, |manifest| {
         manifest.engines.dsh.minimum.trim().to_string()
@@ -359,6 +439,7 @@ pub fn minimum_dsh_version<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
     (!version.is_empty()).then_some(version)
 }
 
+/// 版本是否高于推荐版本；任一版本无法解析时返回 false
 pub fn is_above_recommended<R: Runtime>(app: &AppHandle<R>, version: &str) -> bool {
     let Some(recommended) = recommended_dsh_version(app) else {
         return false;
@@ -372,6 +453,12 @@ pub fn is_above_recommended<R: Runtime>(app: &AppHandle<R>, version: &str) -> bo
     }
 }
 
+/// 位置令牌解析（依赖可位于任意位置：AppData 托管、安装目录捆绑、或用户指定的其它盘符）：
+///
+/// - 绝对路径（`C:/...`、`/opt/...`）原样返回；
+/// - `$AppData/...`（大小写不敏感）= AppData 基础目录，debug 构建即 `<base>/dev` 的同级；
+/// - `$Resources/...` = 安装包资源根（`resources/` 为等价旧写法），探测不到时回落 AppData；
+/// - 其余相对路径 = 相对 AppData 基础目录。
 pub fn resolve_location_from(base: &Path, resource_root: Option<&Path>, raw: &str) -> PathBuf {
     let value = raw.trim();
     if PathBuf::from(value).is_absolute() {
@@ -395,6 +482,7 @@ pub fn resolve_location_from(base: &Path, resource_root: Option<&Path>, raw: &st
     base.join(value)
 }
 
+/// 大小写不敏感前缀剥离：前缀后必须是结束或 `/`（避免 `$resourcesfoo` 被当成令牌）
 fn strip_prefix_ci<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
     let head = value.get(..prefix.len())?;
     if !head.eq_ignore_ascii_case(prefix) {
@@ -407,6 +495,7 @@ fn strip_prefix_ci<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
     rest.strip_prefix('/')
 }
 
+/// 令牌剩余片段拼到根上（空片段取根本身）
 fn join_token(root: &Path, rest: &str) -> PathBuf {
     if rest.is_empty() || rest == "." {
         return root.to_path_buf();
@@ -520,7 +609,7 @@ mod tests {
         assert!(!manifest.plugins.built_in.is_empty());
         assert!(!manifest.plugins.deprecated.is_empty());
         assert!(!manifest.pets.built_in.is_empty());
-        for key in ["pnpm", "dsh"] {
+        for key in ["node", "pnpm", "dsh", "git"] {
             assert!(
                 manifest.dependencies.contains_key(key),
                 "依赖映射规范缺少 {key}"
@@ -531,15 +620,18 @@ mod tests {
     #[test]
     fn dependency_entries_resolve_per_platform() {
         let manifest = shipped_manifest();
+        let node = &manifest.dependencies["node"];
+        assert!(node.managed_root.is_some());
+        assert!(node.overridable);
+        assert!(node.entry.resolve().is_some());
+
         let pnpm = &manifest.dependencies["pnpm"];
-        assert!(pnpm.managed_root.is_some());
-        assert!(pnpm.overridable);
         assert_eq!(pnpm.entry.resolve(), Some("bin/pnpm.cjs"));
 
         let dsh = &manifest.dependencies["dsh"];
         assert_eq!(
             dsh.entry.resolve(),
-            Some("dsh.asar/node_modules/@deepseek-ai/dsh/lib/bin.js")
+            Some("node_modules/@deepseek-ai/dsh/lib/bin.js")
         );
     }
 
@@ -667,6 +759,7 @@ mod tests {
     fn declared_version_string_is_never_unsupported() {
         let declared = PluginVersion::Declared("latest".to_string());
         assert!(!declared.unsupported_on(Some("9.9.9")));
+        // 字符串声明不参与按核心钉版本（`latest` 这类标记不该拼进 spec）
         assert_eq!(declared.plugin_req_for_core(Some("9.9.9")), None);
     }
 
@@ -714,15 +807,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
+        // 两处都没有 → 无资源根
         assert_eq!(pick_resource_root(&dir), None);
         assert_eq!(resource_root_from(&dir), dir);
 
+        // 只有嵌套布局 → 命中 `resources/` 子目录
         let nested = dir.join("resources");
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::write(nested.join(MANIFEST_FILE), "{}").unwrap();
         assert_eq!(pick_resource_root(&dir), Some(nested.clone()));
         assert_eq!(resource_root_from(&dir), nested);
 
+        // 扁平布局存在 → 扁平优先（Tauri 2 的两种落盘形态同时出现时以 exe 同级为准）
         std::fs::write(dir.join(MANIFEST_FILE), "{}").unwrap();
         assert_eq!(pick_resource_root(&dir), Some(dir.clone()));
         assert_eq!(resource_root_from(&dir), dir);
@@ -737,6 +833,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// 随包资源构建（离线包）会把核心托管根指向 `$Resources/dsh`，该路径会作为
+    /// node 的主模块参数。`resource_dir()` 在 Windows 上是 canonicalize 结果（带
+    /// `\\?\`），而 node 的 resolveMainPath 解析 verbatim 路径会直接以
+    /// `EISDIR: ... lstat 'C:'` 退出，因此资源根必须先归一化。
     #[test]
     fn resource_root_simplifies_windows_verbatim_prefix() {
         let verbatim = PathBuf::from(r"\\?\C:\app\resources\dsh");
@@ -745,6 +845,7 @@ mod tests {
             assert_eq!(simplified, PathBuf::from(r"C:\app\resources\dsh"));
             assert!(!simplified.to_string_lossy().starts_with(r"\\?\"));
         } else {
+            // 非 Windows 上 dunce::simplified 是 no-op，路径原样保留
             assert_eq!(simplified, PathBuf::from(r"\\?\C:\app\resources\dsh"));
         }
     }
@@ -808,10 +909,12 @@ mod tests {
             );
         }
 
+        // 资源根探测不到时回落 AppData，而不是相对当前工作目录
         assert_eq!(
             resolve_location_from(&base, None, "$Resources/dsh"),
             base.join("dsh")
         );
+        // 前缀不完整（不是令牌）时按普通相对路径处理
         assert_eq!(
             resolve_location_from(&base, Some(&resources), "$resourcesfoo/dsh"),
             base.join("$resourcesfoo/dsh")

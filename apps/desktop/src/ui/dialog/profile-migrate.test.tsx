@@ -171,6 +171,7 @@ describe('profileMigrateDialog', () => {
 
     await submit()
 
+    // 换源后凭据必须为新来源重新显式勾选，不能被上一个来源的选择带过去
     expect(calls.migrate).toEqual([{ sourceId: 'core-020', items: ['patch', 'policy'] }])
   })
 

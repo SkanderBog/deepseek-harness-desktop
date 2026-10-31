@@ -1,3 +1,25 @@
+//! 插件更新可用性检测（参考 dsh-market 的 `updates.ts`，但去掉「桌面端」耦合）。
+//!
+//! 每个已安装插件按其在 profile `package.json` 中的依赖 spec 判断：
+//! - `catalog:` / `catalog:<name>` → 先换成 `pnpm-workspace.yaml` 里 catalog 条目的
+//!   真实 spec 再判定（见 [`effective_spec`]）：catalog 依赖在档案里一律写成
+//!   `catalog:`，不换就会被当成 registry 依赖——条目指向 git 提交的插件会去和 npm
+//!   的 latest 比较，lock 里的提交也失去归属依据；
+//! - `link:` / `file:` 本地依赖 → 永不视为有更新；
+//! - git 类型（`github:` / `git+https://github.com/…` / `https://codeload.github.com/…`）
+//!   → 用 pnpm-lock.yaml 里记录的 codeload 提交 SHA 对比 GitHub 跟踪目标：
+//!   git spec 显式声明 `#ref` 时跟踪该 tag / branch / SHA，未声明时跟踪 HEAD；
+//!   镜像安装写入的 codeload archive URL 记录的是当前安装提交，更新源仍是 HEAD；
+//! - 其余（registry）→ 用 npm registry 的 `latest` dist-tag 与已装版本做语义化比较，
+//!   `latest > installed` 才视为有更新（避免把 `latest` 指向更旧版本误判为可升级）。
+//!
+//! 与 market 相同的兜底：任何一次判定失败都报告「无更新」，绝不因一次网络抖动或
+//! 404 让整个插件管理器不可用；结果按 (id, 代理, spec, 版本, Git 锁定提交) 缓存 30 分钟
+//! （TTL），期间
+//! 重复调用直接命中缓存、不重复打网络。缓存缺失/未判定时 `update_available=false`，
+//! 前端由 `refresh_plugin_updates` 在挂载后补齐，因此首次展示短暂无按钮、随后自动
+//! 出现——这正好保证「不是常驻按钮」，只有确有更新（或异常修复）时才展示升级入口。
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -6,16 +28,20 @@ use std::time::{Duration, Instant};
 use semver::Version as Semver;
 use serde::Deserialize;
 use serde_json::Value;
+use tauri::AppHandle;
 
 use super::installed::profile_dir;
 use super::watch::DshPlugin;
-use crate::AppHandle;
 
+/// 更新判定结果的缓存 TTL（与 dsh-market 一致：30 分钟）
 const UPDATES_TTL: Duration = Duration::from_secs(30 * 60);
 
+/// 单条更新判定结果
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {
+    /// 是否确有更新（`true` = 有可升级的新版本/新提交）
     pub update_available: bool,
+    /// 语义化判定得到的「最新版本」（npm 分支为 registry latest，git 分支为跟踪目标 SHA）
     pub latest: Option<String>,
 }
 
@@ -30,6 +56,7 @@ fn cache() -> &'static Mutex<HashMap<String, CacheEntry>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// 缓存键包含请求使用的代理，防止切换代理后复用旧失败或被旧请求回填覆盖。
 fn cache_key(
     id: &str,
     spec: &str,
@@ -44,6 +71,11 @@ fn cache_key(
     format!("{id}\u{0}{proxy_url}\u{0}{spec}\u{0}{version}\u{0}{locked_commit}")
 }
 
+/// 探测缓存里该插件的「最新版本」；没探测过或缓存里没有它时返回 `None`。
+///
+/// 升级「以 0 退出但版本没动」时需要知道本该装到哪个版本：发布时长豁免是按精确
+/// `包名@版本` 写的，没有目标版本就给不出可授权的条目。这里只读缓存、不新发请求
+/// （探测由 [`refresh`] 统一负责），仅采信当前代理下的结果。
 pub(crate) fn known_latest(app_handle: &AppHandle, id: &str) -> Option<String> {
     let proxy_url = crate::config::get_store_dat_setting(app_handle).proxy_url;
     cached_latest(&cache().lock().unwrap(), id, &proxy_url)
@@ -58,10 +90,27 @@ fn cached_latest(cache: &HashMap<String, CacheEntry>, id: &str, proxy_url: &str)
         .and_then(|(_, entry)| entry.info.latest.clone())
 }
 
+// ---------------------------------------------------------------------------
+// 读取安装态（spec / 版本 / 锁定提交）
+// ---------------------------------------------------------------------------
+
+/// 依赖的「生效 spec」：`catalog:` / `catalog:<name>` 换成 `pnpm-workspace.yaml` 里
+/// catalog 条目的真实 spec，其余原样返回。
+///
+/// 必须换：档案里的 catalog 依赖一律写成 `catalog:`，不换就会被当成 registry 依赖
+/// ——条目指向 git 提交的插件（如 `github:owner/repo#<sha>`）会被拿去和 npm 的
+/// latest 版本比较（既可能误报有更新，也可能漏报 git 新提交），并且
+/// [`read_locked_commits`] 认不出仓库、拿不到该依赖的锁定提交，缓存键也随之失真。
+/// 条目缺失或文件不可读/损坏时返回原 spec：宁可保持现状也不猜。
 fn effective_spec(profile: &Path, id: &str, spec: &str) -> String {
     catalog_spec(profile, id, spec).unwrap_or_else(|| spec.to_string())
 }
 
+/// 取 `pnpm-workspace.yaml` 中 catalog 条目的 spec。
+///
+/// `spec` 形如 `catalog:`（默认 catalog，对应文件里的 `catalog` 表）或
+/// `catalog:<name>`（命名 catalog，对应 `catalogs.<name>`）。非 catalog spec、
+/// 条目缺失、文件不可读或结构不符时返回 `None`。
 fn catalog_spec(profile: &Path, id: &str, spec: &str) -> Option<String> {
     let name = spec.strip_prefix("catalog:")?;
     let text = std::fs::read_to_string(profile.join("pnpm-workspace.yaml")).ok()?;
@@ -74,6 +123,7 @@ fn catalog_spec(profile: &Path, id: &str, spec: &str) -> Option<String> {
     entries.get(id)?.as_str().map(String::from)
 }
 
+/// 当前档案的直接依赖（id → 生效 spec）。读取失败返回空表（不阻断整体判定）。
 fn read_specs(app_handle: &AppHandle) -> HashMap<String, String> {
     let dir = profile_dir(app_handle);
     let Ok(content) = std::fs::read_to_string(dir.join("package.json")) else {
@@ -93,6 +143,10 @@ fn read_specs(app_handle: &AppHandle) -> HashMap<String, String> {
     out
 }
 
+/// 从 pnpm-lock.yaml 的当前 importer 中提取「直接依赖 id → 提交 SHA」映射。
+///
+/// 必须经 importer 归属，不能全局扫描 codeload URL：同一 GitHub 仓库可被
+/// 多个直接/传递依赖锁到不同提交，全局「后写覆盖」会把缓存绑到错误提交。
 fn read_locked_commits(profile: &Path, specs: &HashMap<String, String>) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let Ok(text) = std::fs::read_to_string(profile.join("pnpm-lock.yaml")) else {
@@ -146,10 +200,15 @@ fn read_locked_commits(profile: &Path, specs: &HashMap<String, String>) -> HashM
     out
 }
 
+// ---------------------------------------------------------------------------
+// spec 解析
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum GitReference {
     Head,
     Named(String),
+    /// pnpm `semver:` 范围必须枚举 tag 才能解析；无法可靠解析时禁止猜测 HEAD。
     Unsupported,
 }
 
@@ -159,6 +218,12 @@ struct GitHubTarget {
     reference: GitReference,
 }
 
+/// 从依赖 spec 中提取 GitHub 仓库与显式跟踪目标。
+///
+/// `#ref` 保留 tag、带斜杠的 branch 或 SHA；pnpm 的 `path:` 子目录选择器
+/// 不是 Git ref，单独出现时仍跟踪 HEAD，与真实 ref 组合时只保留真实 ref。
+/// codeload archive URL 中的 SHA 表示当前已安装提交，而不是未来更新目标；这类
+/// spec 仍跟踪仓库 HEAD。非 GitHub git 形态返回 None。
 fn extract_github_target(spec: &str) -> Option<GitHubTarget> {
     if let Some(rest) = spec.strip_prefix("github:") {
         let (path, reference) = split_reference(rest);
@@ -173,6 +238,8 @@ fn extract_github_target(spec: &str) -> Option<GitHubTarget> {
         });
     }
 
+    // 标准 URL 由 URL parser 校验 host，避免把 notgithub.com 或 path 中出现的
+    // github.com 误当成可信 GitHub 源；同时正确处理 SSH 端口与 host 大小写。
     if let Ok(url) = reqwest::Url::parse(spec) {
         match url.host_str() {
             Some(host)
@@ -195,6 +262,9 @@ fn extract_github_target(spec: &str) -> Option<GitHubTarget> {
         }
     }
 
+    // pnpm 还接受 URL parser 无法表示的 colon/scp 形态：
+    // `git+ssh://git@github.com:owner/repo.git`、`:22:owner/repo.git` 与
+    // `git@github.com:owner/repo.git`。只允许锚定前缀，不做任意子串匹配。
     let after = strip_prefix_ascii_case(spec, "git+ssh://git@github.com:")
         .or_else(|| strip_prefix_ascii_case(spec, "git@github.com:"))?;
     let after = strip_optional_ssh_port(after);
@@ -202,6 +272,8 @@ fn extract_github_target(spec: &str) -> Option<GitHubTarget> {
     github_target_from_path(path, reference)
 }
 
+/// 仅接受当前更新探测明确支持的 Git transport；host 已单独精确校验，
+/// 未知 scheme 无法进入可信 GitHub 更新源路径。
 fn is_supported_git_scheme(scheme: &str) -> bool {
     matches!(
         scheme.to_ascii_lowercase().as_str(),
@@ -209,6 +281,8 @@ fn is_supported_git_scheme(scheme: &str) -> bool {
     )
 }
 
+/// codeload spec 是镜像写入的已安装快照，但更新目标仍应跟踪仓库 HEAD；同时
+/// 要求完整的 `owner/repo/tar.gz/<target>` 形态，避免畸形路径进入更新探测。
 fn codeload_target_from_path(path: &str) -> Option<GitHubTarget> {
     let mut parts = path.trim_matches('/').split('/');
     let owner = parts.next()?;
@@ -224,6 +298,8 @@ fn codeload_target_from_path(path: &str) -> Option<GitHubTarget> {
     })
 }
 
+/// 只接受精确的 `owner/repo`（可带 `.git`）路径；拒绝 GitHub 网页子路径，
+/// 防止把 `/tree/...`、`/commit/...` 等页面误解释为仓库标识。
 fn github_target_from_path(path: &str, reference: GitReference) -> Option<GitHubTarget> {
     let path = path.split('?').next().unwrap_or(path).trim_matches('/');
     let path = path
@@ -240,6 +316,8 @@ fn github_target_from_path(path: &str, reference: GitReference) -> Option<GitHub
     is_owner_repo(&repo).then_some(GitHubTarget { repo, reference })
 }
 
+/// SCP 风格 Git 前缀大小写不敏感，但剩余 selector 必须保持原字节；因此只比较
+/// ASCII 前缀而不规范化或重新分配整个 spec。
 fn strip_prefix_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
     let candidate = value.get(..prefix.len())?;
     candidate
@@ -247,6 +325,8 @@ fn strip_prefix_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'a str> 
         .then(|| &value[prefix.len()..])
 }
 
+/// `git@github.com:22:owner/repo` 中只有纯数字首段才是端口；保守判断可避免
+/// 将 owner、路径或带冒号的 selector 误删。
 fn strip_optional_ssh_port(value: &str) -> &str {
     let Some((candidate, rest)) = value.split_once(':') else {
         return value;
@@ -258,6 +338,11 @@ fn strip_optional_ssh_port(value: &str) -> &str {
     }
 }
 
+/// 分离 spec fragment，并过滤 pnpm 非 ref 选择器。
+///
+/// pnpm 允许 `#beta&path:/packages/x` 组合分支与子目录，并按 URI 规则对 fragment
+/// 做一次 percent decode。`path:` 不能发给 GitHub commit API；`semver:` 需要枚举
+/// tag 才能正确解析，当前选择无法判定而不是误报 HEAD 更新。
 fn split_reference(value: &str) -> (&str, GitReference) {
     match value.split_once('#') {
         Some((path, selectors)) => (path, parse_reference(selectors)),
@@ -265,6 +350,8 @@ fn split_reference(value: &str) -> (&str, GitReference) {
     }
 }
 
+/// 解析 pnpm Git fragment。普通 ref 多次出现时与 pnpm 一样取最后一个；任何
+/// `semver:` 组合均保持 Unsupported，避免把范围错误映射到普通 ref 或 HEAD。
 fn parse_reference(selectors: &str) -> GitReference {
     let Some(decoded) = percent_decode_once(selectors) else {
         return GitReference::Unsupported;
@@ -294,6 +381,8 @@ fn parse_reference(selectors: &str) -> GitReference {
     }
 }
 
+/// 与 `decodeURIComponent` 一致地只解码一次 fragment；畸形转义或非法 UTF-8
+/// 直接返回 None，让更新判定 fail closed。
 fn percent_decode_once(value: &str) -> Option<String> {
     let bytes = value.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -316,6 +405,7 @@ fn hex_value(value: u8) -> Option<u8> {
     char::from(value).to_digit(16).map(|digit| digit as u8)
 }
 
+/// `owner/repo` 形态校验（owner/repo 各仅允许字母数字 `._-`，避免误吞 URL 首位）。
 fn is_owner_repo(value: &str) -> bool {
     let Some((owner, repo)) = value.split_once('/') else {
         return false;
@@ -331,6 +421,7 @@ fn is_owner_repo(value: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
+/// 语义化「latest 确实高于 installed」才判定为升级（避免把 dist-tag 指向旧版误判）。
 fn is_upgrade(installed: &str, latest: &str) -> bool {
     match (Semver::parse(installed), Semver::parse(latest)) {
         (Ok(i), Ok(l)) => l > i,
@@ -338,10 +429,19 @@ fn is_upgrade(installed: &str, latest: &str) -> bool {
     }
 }
 
+/// 把 npm 包名编码为 registry 路径（`@scope/name` → `@scope%2Fname`）。
+///
+/// `pub(crate)`：插件 spec 兼容性检查（`install::inspect`）需要读同一个 registry，
+/// 复用这里的编码与请求形状，避免两处 URL 拼装漂移。
 pub(crate) fn encode_registry_name(name: &str) -> String {
     name.replace('@', "%40").replace('/', "%2F")
 }
 
+// ---------------------------------------------------------------------------
+// 网络判定
+// ---------------------------------------------------------------------------
+
+/// registry/API 的 JSON GET（非 2xx 与网络错误统一返回 `None`）。
 pub(crate) async fn fetch_json(client: &reqwest::Client, url: &str) -> Option<Value> {
     let res = client
         .get(url)
@@ -356,6 +456,7 @@ pub(crate) async fn fetch_json(client: &reqwest::Client, url: &str) -> Option<Va
     res.json::<Value>().await.ok()
 }
 
+/// 构造 GitHub commit API URL；ref 作为单个 path segment 编码，保留带斜杠分支名语义。
 fn github_commit_url(target: &GitHubTarget) -> Option<reqwest::Url> {
     let (owner, repo) = target.repo.split_once('/')?;
     let reference = match &target.reference {
@@ -372,11 +473,13 @@ fn github_commit_url(target: &GitHubTarget) -> Option<reqwest::Url> {
     Some(url)
 }
 
+/// 完整 40 位 commit SHA 是不变目标，无需网络解析。
 fn immutable_commit(reference: &str) -> Option<String> {
     (reference.len() == 40 && reference.chars().all(|c| c.is_ascii_hexdigit()))
         .then(|| reference.to_ascii_lowercase())
 }
 
+/// GitHub 跟踪目标的提交 SHA（API 限流/429/网络错误均返回 None）。
 async fn fetch_target_sha(client: &reqwest::Client, target: &GitHubTarget) -> Option<String> {
     if let GitReference::Named(reference) = &target.reference {
         if let Some(commit) = immutable_commit(reference) {
@@ -388,6 +491,7 @@ async fn fetch_target_sha(client: &reqwest::Client, target: &GitHubTarget) -> Op
     v.get("sha")?.as_str().map(String::from)
 }
 
+/// npm registry `latest` dist-tag 版本（404/网络错误返回 None）。
 async fn fetch_npm_latest(client: &reqwest::Client, name: &str) -> Option<String> {
     let url = format!(
         "https://registry.npmjs.org/{}/latest",
@@ -397,6 +501,7 @@ async fn fetch_npm_latest(client: &reqwest::Client, name: &str) -> Option<String
     v.get("version")?.as_str().map(String::from)
 }
 
+/// 计算单个插件的更新判定。任何不确定性都返回「无更新」，绝不因失败报升级。
 async fn compute_update(
     client: &reqwest::Client,
     id: &str,
@@ -431,6 +536,12 @@ async fn compute_update(
     }
 }
 
+// ---------------------------------------------------------------------------
+// 对外接口
+// ---------------------------------------------------------------------------
+
+/// 把缓存里的已知判定合并进插件列表（`get_dsh_plugins` 用）。缓存缺失时保持
+/// `update_available=false`（未判定，由前端随后 `refresh_plugin_updates` 补齐）。
 pub fn apply_cache(app_handle: &AppHandle, plugins: &mut [DshPlugin]) {
     let specs = read_specs(app_handle);
     let locked = read_locked_commits(&profile_dir(app_handle), &specs);
@@ -449,6 +560,10 @@ pub fn apply_cache(app_handle: &AppHandle, plugins: &mut [DshPlugin]) {
     }
 }
 
+/// 重新探测所有已安装插件的更新可用性（网络 + 缓存），返回带最新判定结果的完整列表。
+///
+/// 对已缓存且未过期的条目复用缓存；其余条目并行发请求；判定失败统一按「无更新」
+/// 处理，因此即使 registry/GitHub 不可达，插件管理流程也照常可用。
 pub async fn refresh(app_handle: &AppHandle) -> Result<Vec<DshPlugin>, String> {
     let mut plugins = super::watch::list(app_handle);
     let specs = read_specs(app_handle);
@@ -492,6 +607,9 @@ pub async fn refresh(app_handle: &AppHandle) -> Result<Vec<DshPlugin>, String> {
         }
     }
 
+    // 并行发起更新判定。`client`/`locked` 只在 `join_all` 期间存活，用引用而非 move
+    // 捕获（否则 FnMut 的 map 无法多次消费非 Copy 的它们）；`t` 是闭包参数、按 move
+    // 进每个异步块（每个任务独立持有自己的键/下标）。
     let results = futures_util::future::join_all(tasks.into_iter().map(|t| {
         let c = &client;
         let lock = &locked;
@@ -519,6 +637,10 @@ pub async fn refresh(app_handle: &AppHandle) -> Result<Vec<DshPlugin>, String> {
 
     Ok(plugins)
 }
+
+// ---------------------------------------------------------------------------
+// 单元测试
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -683,6 +805,9 @@ mod tests {
         })
     }
 
+    // ---- catalog spec 解析（`catalog:` 依赖必须先换出生效 spec）----
+
+    /// 造一个只含 `pnpm-workspace.yaml` 的档案目录。
     fn workspace_probe(label: &str, yaml: &str) -> std::path::PathBuf {
         let dir =
             std::env::temp_dir().join(format!("dsh-update-cat-{}-{label}", std::process::id()));
@@ -698,10 +823,12 @@ mod tests {
             "resolve",
             "packages:\n  - .\ncatalog:\n  dsh-better-sidebar: ^0.18.1\ncatalogs:\n  next:\n    dsh-better-sidebar: ^0.19.0\n",
         );
+        // `catalog:` → 文件里的 `catalog` 表（默认 catalog）
         assert_eq!(
             effective_spec(&dir, "dsh-better-sidebar", "catalog:"),
             "^0.18.1"
         );
+        // `catalog:<name>` → `catalogs.<name>`
         assert_eq!(
             effective_spec(&dir, "dsh-better-sidebar", "catalog:next"),
             "^0.19.0"
@@ -711,6 +838,7 @@ mod tests {
 
     #[test]
     fn effective_spec_passes_through_when_it_cannot_resolve() {
+        // 非 catalog spec、条目缺失、文件缺失/损坏 → 一律原样返回，绝不猜测
         let dir = workspace_probe(
             "passthrough",
             "packages:\n  - .\ncatalog:\n  other: ^1.0.0\n",
@@ -739,6 +867,9 @@ mod tests {
 
     #[test]
     fn effective_spec_exposes_the_git_target_of_a_catalog_entry() {
+        // 回归锚点：catalog 指向 git 提交的插件（真实档案里的 billion-context-dsh）。
+        // 不换出生效 spec 时 `extract_github_target("catalog:")` 是 None，判定会错误地
+        // 落到 npm registry 分支、且拿不到 lock 里的锁定提交；换出后必须认出仓库与目标。
         let sha = "b3a69187e1bac1bf6162e3d37d005e58bc2ee74e";
         let dir = workspace_probe(
             "git",
@@ -759,8 +890,10 @@ mod tests {
     fn upgrade_requires_strictly_newer() {
         assert!(is_upgrade("1.0.0", "1.0.1"));
         assert!(is_upgrade("1.0.0", "2.0.0"));
+        // latest 不是更高（回退/降级/相同）→ 不算升级
         assert!(!is_upgrade("1.0.1", "1.0.0"));
         assert!(!is_upgrade("1.0.0", "1.0.0"));
+        // 非语义化版本不可判 → 不算升级
         assert!(!is_upgrade("1.0.0", "canary"));
         assert!(!is_upgrade("0.0.0", "0.0.0"));
     }
@@ -768,6 +901,7 @@ mod tests {
     #[test]
     fn upgrade_handles_prerelease() {
         assert!(is_upgrade("1.0.0", "1.0.1-rc.1"));
+        // 同 base，release 高于 prerelease
         assert!(is_upgrade("1.0.0-rc.1", "1.0.0"));
         assert!(!is_upgrade("1.0.0", "1.0.0-rc.1"));
     }
@@ -836,9 +970,7 @@ mod tests {
             target("Owner/Repo", Some("next"))
         );
         assert_eq!(
-            extract_github_target(
-                "https://codeload.github.com/omdsh-dev/DSH-better-sidebar/tar.gz/7dbd9b75e2fd65758d4e55f750319399b91255a2"
-            ),
+            extract_github_target("https://codeload.github.com/omdsh-dev/DSH-better-sidebar/tar.gz/7dbd9b75e2fd65758d4e55f750319399b91255a2"),
             target("omdsh-dev/DSH-better-sidebar", None)
         );
     }
@@ -898,9 +1030,7 @@ mod tests {
     #[test]
     fn codeload_archive_commit_is_current_state_not_update_target() {
         assert_eq!(
-            extract_github_target(
-                "https://codeload.github.com/owner/repo/tar.gz/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            ),
+            extract_github_target("https://codeload.github.com/owner/repo/tar.gz/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             target("owner/repo", None)
         );
         assert_eq!(

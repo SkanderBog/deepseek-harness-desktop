@@ -2,10 +2,12 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 
+/// 原子替换 patch 层：拒绝覆盖符号链接（patch 会被用户手写，链接等于绕过范围校验）。
 pub(super) fn write_patch_layer_atomically(path: &Path, rendered: &str) -> io::Result<()> {
     write_file_atomically(path, rendered)
 }
 
+/// 经同目录临时文件原子替换 UTF-8 文件；失败时保留原文件。
 pub(super) fn write_file_atomically(path: &Path, rendered: &str) -> io::Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -82,10 +84,10 @@ fn create_temp(parent: &Path, original: Option<&Path>) -> io::Result<tempfile::N
         use std::os::windows::io::FromRawHandle;
         use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
         use windows_sys::Win32::Security::{
-            SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SetSecurityDescriptorControl,
+            SetSecurityDescriptorControl, SECURITY_ATTRIBUTES, SE_DACL_PROTECTED,
         };
         use windows_sys::Win32::Storage::FileSystem::{
-            CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+            CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
             FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
         };
 
@@ -200,7 +202,7 @@ fn reject_inheritable_parent_acl(parent: &Path) -> io::Result<()> {
 fn security_descriptor(path: &Path) -> io::Result<Vec<u32>> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Security::{
-        DACL_SECURITY_INFORMATION, GetFileSecurityW, OWNER_SECURITY_INFORMATION,
+        GetFileSecurityW, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
     };
 
     let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -385,8 +387,8 @@ mod tests {
             ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
         };
         use windows_sys::Win32::Security::{
-            DACL_SECURITY_INFORMATION, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
-            PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, SetFileSecurityW,
+            GetSecurityDescriptorControl, GetSecurityDescriptorDacl, SetFileSecurityW,
+            DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
         };
 
         fn dacl(path: &Path) -> Vec<u8> {
@@ -492,7 +494,7 @@ mod tests {
             ) -> libc::c_int;
             fn acl_add_perm(permset: *mut libc::c_void, perm: libc::c_int) -> libc::c_int;
             fn acl_set_permset(entry: *mut libc::c_void, permset: *mut libc::c_void)
-            -> libc::c_int;
+                -> libc::c_int;
             fn acl_get_flagset_np(
                 entry: *mut libc::c_void,
                 flagset: *mut *mut libc::c_void,

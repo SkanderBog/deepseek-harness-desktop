@@ -1,7 +1,6 @@
 use std::path::Path;
 
-use crate::AppHandle;
-use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
+use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
 
 const CONVERSATION_CLIENT_JS: &str =
     "node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js";
@@ -41,7 +40,7 @@ pub fn apply_at(core_dir: &Path) -> Result<(), String> {
     patch_core_file(core_dir, CONVERSATION_CLIENT_JS, patch_source)
 }
 
-pub fn apply(app_handle: &AppHandle) -> Result<(), String> {
+pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
     patch_dsh(app_handle, CONVERSATION_CLIENT_JS, patch_source)
 }
 

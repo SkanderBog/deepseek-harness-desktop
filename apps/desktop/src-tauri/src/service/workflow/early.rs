@@ -1,4 +1,3 @@
-use crate::AppHandle;
 use std::sync::{Arc, OnceLock};
 
 struct Preparation {
@@ -106,7 +105,11 @@ fn prepare_in_job(
         }))
     }));
     let plan = super::early_plan::prepare(app_data, resources);
-    if !probes_ready()? { Ok(None) } else { plan }
+    if !probes_ready()? {
+        Ok(None)
+    } else {
+        plan
+    }
 }
 
 #[cfg(windows)]
@@ -180,7 +183,7 @@ struct Cleanup {
 }
 
 pub(crate) struct Startup {
-    notifications: Arc<OnceLock<AppHandle>>,
+    notifications: Arc<OnceLock<tauri::AppHandle>>,
     #[cfg(windows)]
     job: Option<Arc<super::win_spawn::ProcessJob>>,
     #[cfg(windows)]
@@ -189,7 +192,7 @@ pub(crate) struct Startup {
 
 impl Startup {
     pub(crate) fn begin(
-        context: &tauri::Context<tauri_runtime_electron::ElectronRuntime>,
+        context: &tauri::Context<tauri::Wry>,
         #[cfg(all(windows, not(debug_assertions)))] single_instance: Arc<
             crate::desktop::single_instance::SingleInstance,
         >,
@@ -214,7 +217,7 @@ impl Startup {
         }
     }
 
-    pub(crate) fn attach(&self, app: &AppHandle) {
+    pub(crate) fn attach(&self, app: &tauri::AppHandle) {
         let _ = self.notifications.set(app.clone());
     }
 
@@ -248,7 +251,7 @@ impl Startup {
     #[cfg(windows)]
     fn start(
         mut self,
-        context: &tauri::Context<tauri_runtime_electron::ElectronRuntime>,
+        context: &tauri::Context<tauri::Wry>,
         #[cfg(not(debug_assertions))] single_instance: Arc<
             crate::desktop::single_instance::SingleInstance,
         >,
@@ -456,8 +459,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn absolute_app_data_overrides_match_tauri() {
-        use tauri::Manager;
         use tauri::utils::config::{AppDirectoriesOverride, AppDirectoryOverrides};
+        use tauri::Manager;
 
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(".").join("data").join("..").join("store");

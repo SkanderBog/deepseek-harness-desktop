@@ -272,6 +272,10 @@ export const plugins = defineStore({
     },
 
     precheck(process: PluginProcess): PluginProcessReason | null {
+      // 升级永不预跳过：面板既然画出了升级入口，就说明它有版本或异常信息要处理，而本地快照
+      // （`installedSource`）可能刚被安装/刷新改过。按快照判「没有更新」会把用户的点击悄悄丢掉——
+      // 用户点过的插件必须交给宿主，宿主按面板给的目标版本显式安装，装不上就报真实错误
+      // （见 `update_dsh_plugins` → `install_targets`）。
       if (process.type === 'install' || process.type === 'upgrade' || !this.installedLoaded)
         return null
       const installed = this.installedSource.find(item => item.id === process.name || item.name === process.name)
@@ -311,6 +315,8 @@ export const plugins = defineStore({
         return blocked
       }
       try {
+        // 升级的载荷项是 `id@版本`（面板显示着目标版本，带上它核验与显式安装兜底才有据
+        // 可依，见 `update_dsh_plugins`）；宿主的参数名仍叫 `ids`。
         await invoke<void>(COMMANDS[group.type], {
           ...(group.type === 'install'
             ? { specs: targets.map(process => process.spec) }
@@ -322,9 +328,15 @@ export const plugins = defineStore({
         return []
       }
       catch (error) {
+        // 宿主调用返回时这一组可能已经被 cancel() 结算（取消不等在途调用结束）：此时
+        // group.pending 已空。若照旧按拒绝归结，就会给已经按「已取消」结算的进程重新挂上授权
+        // 等待，而 cancel 早已返回、再没人唤醒 resume，整条队列连同后续组会永久卡死。finish 用
+        // 同一判据做幂等，这里也让归因只看仍留在组里的进程。
         const message = errorMessage(error)
         const refusal = parseBlockedRefusal(message)
-
+        // 升级的结算里，宿主把「哪个目标真的没装上、原因是什么」逐条带出来（见
+        // `PLUGIN_UPDATE_FAILED`）。没有这份逐项证据时只能按整组错误归结，于是一批里已经被
+        // 宿主核验装上的目标也会跟着报失败，汇总里连重启入口都不出现（见 #914）。
         const failures = new Map(parseUpdateFailures(message).map(entry => [entry.name, entry.message]))
         const settleFailure = (process: PluginProcess): boolean => {
           const detail = failures.get(process.name)
@@ -333,7 +345,15 @@ export const plugins = defineStore({
           this.finish(group.id, process, { process, ok: false, error: detail, code: errorCode(detail) })
           return true
         }
-
+        // 升级：宿主对整批逐项核验过指纹，只有被点名的才没生效。
+        // - 没被点名的说明确实装上了，报成功即可，重提一次反而会把它们重新判成「没有变化」；
+        // - 还能授权（新版本只是太新，写进档案豁免清单就能过闸）→ 进授权流程，常驻提示带按钮；
+        // - 点名的版本已经授权过（写在豁免清单里）却还是没有变化：这是**失败**，不是
+        //   「可跳过」。用户点升级就是要装上那个版本，静默跳过会让他以为已经更新（见
+        //   `plugins.hold_pinned_desc` 的原因说明）；
+        // - 载荷连目标版本都没有（探测缓存没命中、面板当时也没有版本可带）时无从安装：这同样是
+        //   失败，只是原因不同（没有可安装的目标版本）。任何「什么都没发生」的路径都必须留下
+        //   一条可见的结果，否则汇总里会出现用户看不见的空桶（「1 个成功」而其它插件下落不明）。
         if (refusal?.kind === 'update-hold') {
           const names = refusalNames(refusal)
           const known = new Set(refusal.versions.map(item => item.name))
@@ -377,11 +397,13 @@ export const plugins = defineStore({
               return
             process.status = 'pending'
           })
-
+          // 只有当被点名的包确实在本次提交里时才进入授权等待。refusal 常点名传递依赖
+          // 等外部包，此时 blocked 为空；若照样返回，runGroup 会因无人调用 resume 永久挂起。
           if (blocked.length > 0)
             return blocked
         }
-
+        // 有逐项证据时按目标归因：点名的报它自己的错，没点名的就是宿主已核验装上的目标，
+        // 报成功——它们让「1 个成功 · 1 个失败」的汇总和重启入口都留下来。
         if (failures.size > 0) {
           targets.forEach((process) => {
             if (!group.pending.includes(process.id))
@@ -414,7 +436,7 @@ export const plugins = defineStore({
       process.approvalKey = toast(i18next.t(BLOCK_TITLE[refusal.kind], { name: process.name }), {
         variant: refusal.kind === 'incompatible' ? 'danger' : 'warning',
         timeout: 0,
-
+        // 授权气泡必须一直可点：被新气泡挤掉后没人能再授权它，队列会永远停在等待授权上
         sticky: true,
         description: i18next.t(BLOCK_DESC[refusal.kind], { blocked: versions }),
         actionProps: {
@@ -433,7 +455,8 @@ export const plugins = defineStore({
 
     finish(groupId: string, process: PluginProcess, result: PluginProcessResult): void {
       const group = this.groups.find(item => item.id === groupId)
-
+      // 幂等：cancel 会先给仍在运行的进程结算 'cancelled'，被中断的宿主调用随后 reject
+      // 回来时不能再次记账，否则结果、提示与事件都会重复。
       if (group === undefined || !group.pending.includes(process.id)) {
         this.detach(process.id)
         return
@@ -466,6 +489,7 @@ export const plugins = defineStore({
         triggerPluginsManagerEvent('allcompleted', results)
     },
 
+    /** 全队列共享的加载气泡：标题按待处理进程总数聚合，因此后入队的组会立刻改变计数 */
     progressTargets(): PluginProcess[] {
       return this.processes.filter(process => process.status !== 'unauthorized')
     },
@@ -483,7 +507,8 @@ export const plugins = defineStore({
 
     syncProgress(): void {
       const processes = this.progressTargets()
-
+      // 提示权只由入队时的 toast 选项决定：面板关闭（presenter 卸载）不该让仍在跑的队列
+      // 失去进度气泡与授权入口。
       const wanted = processes.length > 0
         && this.groups.some(group => group.options.toast)
       if (!wanted) {
@@ -492,7 +517,8 @@ export const plugins = defineStore({
       }
       const title = this.progressTitle(processes)
       const description = this.progressDetail === '' ? undefined : this.progressDetail
-
+      // 结果 Toast 会把共享气泡挤出可见限额（见 MAX_VISIBLE_TOASTS）：被淘汰的 key 其
+      // update 静默失效，若继续沿用，后续组就完全没有进度提示，故按「已死」重建。
       const current = this.progressKey
       if (current === null || !toast.isActive(current))
         this.progressKey = toast(title, { timeout: 0, isLoading: true, description })
@@ -515,6 +541,7 @@ export const plugins = defineStore({
       })
     },
 
+    /** 安装日志的末行即加载气泡的副标题（HeroUI 默认气泡的 description 直接读条目 content） */
     setProgressDetail(line: string): void {
       const current = this.progressKey
       if (current === null || !toast.isActive(current))
@@ -523,6 +550,12 @@ export const plugins = defineStore({
       toast.update(current, { description: line })
     },
 
+    /**
+     * 结果提示：整条队列（一次入队的多个组）跑完才汇报一次。
+     *
+     * 每个组各自弹结果会互相盖住——用户只看到最后一条，前面失败的原因全被顶掉。因此把结果
+     * 攒到队列排空再统一汇报（见 [`presentQueueResults`](self)）。
+     */
     presentResults(group: PluginGroup, results: PluginProcessResult[]): void {
       if (!group.options.toast)
         return
@@ -538,7 +571,9 @@ export const plugins = defineStore({
       if (results.length === 0)
         return
       const succeeded = results.filter(result => result.ok).length
-
+      // 汇总不允许有看不见的桶：升级点名的目标版本没装上必定带 `error`，会落进 `failed`；
+      // 只有卸载/禁用本来无事可做（already-absent）才算「无需变更」。用户自己取消或拒绝授权
+      // 的项（cancelled / rejected）既不算成功也不算失败，也不再追着提示（见 m07292/m07436）。
       const noop = results.filter(result => result.reason === 'already-absent').length
       const failed = results.filter(
         result => !result.ok
@@ -548,7 +583,8 @@ export const plugins = defineStore({
       ).length
       if (results.length === 1) {
         const [result] = results
-
+        // 用户自己的选择（取消 / 拒绝授权）不再补一条错误提示追问他；其余结果无论成败都要
+        // 说出来（失败带 `description: result.error`），否则用户会以为操作没发生。
         if (result.reason === 'cancelled' || result.reason === 'rejected')
           return
         const title = i18next.t(
@@ -566,7 +602,7 @@ export const plugins = defineStore({
         failed > 0 ? i18next.t('plugins.queue_summary_failed', { count: failed }) : '',
         noop > 0 ? i18next.t('plugins.queue_summary_skipped', { count: noop }) : '',
       ].filter(part => part !== '')
-
+      // 每一项都是用户自己的选择时没有任何收支可报，别弹一条空汇总气泡追问他。
       if (parts.length === 0)
         return
       toast(i18next.t('plugins.queue_summary'), {

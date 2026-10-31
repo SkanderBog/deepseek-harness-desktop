@@ -1,4 +1,14 @@
+//! 活动预打包核心的运行时自愈：补齐插件入口并检查原生依赖（含 ABI 兼容性）。
+//!
+//! 用户插件由各自 profile 解析；共享核心只链接安装包内置插件，避免跨档案覆盖入口。
+//! 用户自行安装的 local 核心不归桌面端管理，明确跳过本模块。
+//!
+//! 除了入口链接，启动前还要确认核心的原生模块能真正被当前 Node 运行时加载：
+//! 预打包核心的原生模块（`fs-ext` 这类 node-gyp 包）在 pkg 构建期编译，ABI 只与
+//! 构建期 Node 大版本一致；而本地 Node 只按 semver 挑选（`is_supported_node_version`），
+//! 因此 Node 25（ABI 141）会加载 ABI 137 的 `fs_ext.node` 失败，dsh 在插件树加载
 //! 阶段退出、前端只看到 `HARNESS_NOT_OWNED`（issue #441）。这里在 spawn 之前探测，
+//! 先尝试与核心对齐的捆绑运行时，再尝试重建，最后给出可读的 ABI 诊断。
 
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -11,20 +21,52 @@ use std::time::{Duration, Instant};
 #[cfg(windows)]
 use std::os::windows::fs::FileTypeExt;
 
-use super::source::CoreSource;
-use crate::AppHandle;
+use tauri::AppHandle;
 
+use super::source::CoreSource;
+
+/// 核心自有包所在的 scope。
 const CORE_PACKAGE_SCOPE: &str = "@deepseek-ai";
+/// 核心家族自身的包名前缀：`dsh` 与 `dsh-*`。
+///
+/// 同 scope 下的 cordis、cosmokit、schemastery 等共享框架库是插件可以合法依赖并
+/// 锁定版本的对象（如 billion-context 锁 schemastery 3.18.4），不能按整个 scope 删除。
 const CORE_PACKAGE_PREFIX: &str = "dsh";
 const NATIVE_REPAIR_TIMEOUT: Duration = Duration::from_secs(120);
+/// 原生模块重建（node-gyp 编译）可能远超安装耗时，单独放宽上限
 const NATIVE_REBUILD_TIMEOUT: Duration = Duration::from_secs(300);
+/// 探测脚本的挂起保护：脚本本身只做 require 与目录扫描
 const NATIVE_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 const NODE_PROBE_SCRIPT: &str = "process.stdout.write(process.platform + ':' + process.arch)";
+/// 旧版平台依赖探测：探测脚本结论不可信时的回退检查（sharp/koffi 均为 NAPI 包）
 const NATIVE_IMPORT_SCRIPT: &str = "await import('sharp'); await import('koffi')";
+/// 探测脚本的结果标记行前缀（脚本 stdout 里可能混有原生模块自身的输出）
 const NATIVE_PROBE_MARKER: &str = "__DSH_NATIVE_PROBE__";
 /// 已核验通过的原生依赖结论戳（issue #766）。
+///
+/// 探测要启动 node 子进程、把核心 `node_modules` 下每个原生包 require 一遍，前面还要
+/// 再起一个子进程探测平台/架构，健康机器上这两步是纯开销。而结论在「同一个 node
+/// 运行时 + 同一份核心 `node_modules`」下是稳定的，把结论连同输入指纹落到基础目录，
+/// 命中即直接放行。
+///
+/// 只写 Ready：失败/未知一律不落盘，绝不把一次性修复结果固化成「以后都不用查」。
+/// 指纹覆盖所有会造成结论变化的现实可变项——node 可执行文件身份（路径 + 大小 +
+/// 修改时间）、核心目录与核心版本、`node_modules` 前两层的条目（名字 + 修改时间）：
+/// 核心更新、node 升级/替换、平台包增删、`node_modules` 被重建都会失配，从而必然
+/// 重新探测。清空依赖目录或删掉这个文件即可强制回到「每次探测」。
+///
+/// 指纹全部条目参与计算后压成 SHA-256 摘要再落盘：真实安装（pnpm 虚拟 store）
+/// 的条目数已远超早先的固定上限，而摘要与条目数无关，比对精度不受规模影响。
 const NATIVE_PROBE_STAMP_FILE: &str = "core-native-probe.stamp.json";
+/// 指纹采集的条目上限：只在 `node_modules` 异常膨胀时兜底，正常安装远低于它
 const NATIVE_PROBE_STAMP_MAX_ENTRIES: usize = 8192;
+/// 原生模块探测脚本：列出无法被当前运行时加载的原生模块。
+///
+/// 1. `sharp` / `koffi`：NAPI 可选依赖，缺目标平台包时动态 import 失败（原有修复路径）；
+/// 2. 原生包：带 `binding.gyp` 或自带原生产物目录（`build/Release`、`build/Debug`、
+///    `prebuilds`、`prebuilt`）的包，逐个 require —— 与 dsh 自身的加载方式一致，
+///    加载失败即为 dsh 启动时同样的失败（fs-ext 这类 node-gyp 包落在 build/Release）。
+///    崩溃/异常退出时不会有标记行，Rust 侧按"结论未知"处理，不阻断启动。
 const NATIVE_PROBE_SCRIPT: &str = r#"
 const { createRequire } = await import('node:module');
 const { existsSync, readdirSync } = await import('node:fs');
@@ -99,14 +141,18 @@ struct NodeTarget {
     arch: String,
 }
 
+/// 单个原生模块的加载失败记录（由探测脚本以 JSON 输出）
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 struct NativeProbeFailure {
+    /// `import`：sharp/koffi 可选依赖；`addon`：带 binding.gyp 的原生包
     #[serde(default)]
     kind: String,
+    /// 包名（作用域包为 `@scope/name`）
     #[serde(default)]
     name: String,
     #[serde(default)]
     message: String,
+    /// 是否为 Node ABI 不匹配（错误文本含 NODE_MODULE_VERSION）
     #[serde(default)]
     abi: bool,
 }
@@ -117,10 +163,14 @@ impl NativeProbeFailure {
     }
 }
 
+/// 原生模块探测结果
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NativeProbe {
+    /// 全部原生模块均可被当前运行时加载
     Ready,
+    /// 探测完成，存在加载失败的模块
     Failed(Vec<NativeProbeFailure>),
+    /// 探测无法得出结论（脚本崩溃/超时/输出不可解析）：不阻断启动，交由服务日志兜底
     Unknown(String),
 }
 
@@ -146,6 +196,7 @@ impl NativeProbe {
             .any(NativeProbeFailure::is_platform_import)
     }
 
+    /// ABI 不匹配的包名（去重，保持探测顺序）
     fn abi_packages(&self) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
         for failure in self.failures().iter().filter(|failure| failure.abi) {
@@ -224,6 +275,12 @@ pub(crate) fn prepare_active_runtime_at(
     Ok(RuntimePreparation::Defer)
 }
 
+/// 在启动预打包核心前修复其插件入口并验证原生依赖（含 Node ABI 兼容性）。
+///
+/// 该函数是幂等的：已有正确链接和可加载的原生模块不会触发写入或联网。原生包
+/// 缺失时只按核心清单中的 optionalDependencies 动态构造安装参数，避免把某一台
+/// 机器的版本、平台或架构写死在桌面端。失败返回诊断错误，调用方不应继续启动
+/// 一个已知无法加载的 dsh 进程。
 pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(), String> {
     if crate::service::core::active_source(app_handle) != CoreSource::App {
         log::debug!("Skipping core runtime repair for user-owned local core");
@@ -278,6 +335,8 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
         return Ok(());
     }
     if let NativeProbe::Unknown(reason) = probe.clone() {
+        // 探测脚本自身不可信（崩溃/超时/输出不可解析）时不能直接放行：先退回原有的
+        // sharp/koffi 探测，仍失败则按平台包缺失处理，避免漏掉平台包修复。
         log::warn!("CORE_NATIVE_PROBE_UNKNOWN: {reason}");
         if native_imports_ready(&node, &core_root).await {
             return Ok(());
@@ -290,6 +349,8 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
         }]);
     }
 
+    // 1) 平台可选依赖（sharp/koffi）缺失：沿用按核心清单安装目标平台包的修复路径。
+    //    先做这一步：它只补平台/架构包、与运行时无关，补齐后再判断 ABI 才有意义。
     if probe.has_platform_import_failure() {
         let packages = native_package_plan(&core_root, &target);
         if packages.is_empty() {
@@ -314,6 +375,25 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
     }
 
     // 2) ABI 不匹配（issue #441）：本地 node 与核心原生模块的构建 ABI 不同。核心由
+    //    pkg 在固定 Node 大版本下构建，捆绑运行时与之对齐，因此先验证捆绑运行时；
+    //    探测通过则本进程内固定使用它（config::set_prefer_bundled_node_runtime）。
+    if probe.has_abi_mismatch() && !is_bundled_runtime_node(&node, app_handle) {
+        if let Some(bundled) = crate::config::bundled_node_binary(app_handle) {
+            if probe_native_modules(&bundled, &core_root).await.is_ready() {
+                log::warn!(
+                    "CORE_NATIVE_ABI_MISMATCH: {:?} cannot load under {}; switching to the bundled Node.js runtime {}",
+                    probe.abi_packages(),
+                    node.display(),
+                    bundled.display()
+                );
+                crate::config::set_prefer_bundled_node_runtime(true);
+                return Ok(());
+            }
+        }
+    }
+
+    // 3) ABI 不匹配且捆绑运行时也救不了（核心由更高 ABI 的 Node 构建）：用所选运行时
+    //    自带的 npm 重建这些包，装了 C++ 工具链的环境可以自愈。
     let abi_packages = probe.abi_packages();
     if !abi_packages.is_empty() {
         log::warn!(
@@ -338,6 +418,8 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
         }
     }
 
+    // 4) 仍然无法加载：给出精确诊断（模块名 + ABI 差异），而不是让 dsh 在插件树加载
+    //    阶段崩溃、前端只显示 HARNESS_NOT_OWNED。
     Err(native_failure_diagnostic(
         probe.failures(),
         &node,
@@ -345,6 +427,11 @@ pub(crate) async fn prepare_active_runtime(app_handle: &AppHandle) -> Result<(),
     ))
 }
 
+/// 清除档案里被旧版 dsh 投影进来、版本又与当前核心不一致的核心包。
+///
+/// 既有清理（上游 `removeLinkProjections` 与桌面端 `remove_legacy_profile_module_fallback`）
+/// 都只认符号链接、且要求 `.dsh-module-fallback` 源目录仍然存在；用户「无视风险切换」
+/// 升级核心时档案不重建，残留因此在 Node 的逐级查找里长期抢先命中，症状与病因脱钩。
 fn prune_stale_core_packages_at(profile: &Path, core_root: &Path) -> Result<bool, String> {
     let declared = std::fs::read_to_string(profile.join("package.json"))
         .ok()
@@ -365,6 +452,7 @@ fn prune_stale_core_packages_at(profile: &Path, core_root: &Path) -> Result<bool
     prune_stale_core_entries(profile, &core_root.join("node_modules"), &declared)
 }
 
+/// 逐个比对档案与锚点的同名核心包版本，清除版本错配且档案未声明的条目。
 fn prune_stale_core_entries(
     profile_root: &Path,
     anchor_node_modules: &Path,
@@ -388,7 +476,7 @@ fn prune_stale_core_entries(
             return Err(format!(
                 "CORE_PLUGIN_STALE_CORE_SCAN_FAILED: {}: {e}",
                 scope.display()
-            ));
+            ))
         }
     };
 
@@ -444,6 +532,12 @@ fn prune_stale_core_entries(
     Ok(ready)
 }
 
+/// 解析 scope 的真实位置，并确认它既不是重定向入口、也仍留在档案目录内。
+///
+/// 包含关系以**档案目录**（而非 `node_modules`）为锚点：`node_modules` 自身若被
+/// 重定向成一个外部目录，以它为根就等于把「档案之外」当成了内部。返回 `None` 时
+/// 整轮跳过扫描——顺着重定向递归删除会把删除目标落到档案之外，这比「这一轮没
+/// 清干净」严重得多。
 fn containment_root(scope: &Path, profile_root: &Path) -> Option<PathBuf> {
     let metadata = std::fs::symlink_metadata(scope).ok()?;
     let file_type = metadata.file_type();
@@ -472,6 +566,7 @@ fn containment_root(scope: &Path, profile_root: &Path) -> Option<PathBuf> {
     Some(real)
 }
 
+/// 符号链接/junction 条目只需删除入口本身，不会触及目标；真实目录必须解析后仍在 scope 内。
 fn entry_is_contained(path: &Path, scope_root: &Path) -> bool {
     let Ok(metadata) = std::fs::symlink_metadata(path) else {
         return false;
@@ -644,6 +739,7 @@ fn remove_profile_plugin_links(
     Ok(ready)
 }
 
+/// 为 npm 包名建立目录链接；真实目录/文件从不覆盖，避免误删核心自有依赖。
 fn ensure_package_link(name: &str, source: &Path, node_modules: &Path) -> Result<bool, String> {
     if !is_safe_package_name(name) {
         return Err(format!("CORE_PLUGIN_NAME_INVALID: {name}"));
@@ -680,7 +776,7 @@ fn ensure_package_link(name: &str, source: &Path, node_modules: &Path) -> Result
         Err(e) => {
             return Err(format!(
                 "CORE_PLUGIN_DESTINATION_STAT_FAILED: {destination:?}: {e}"
-            ));
+            ))
         }
     };
     if let Some(metadata) = existing {
@@ -730,6 +826,7 @@ fn ensure_package_link(name: &str, source: &Path, node_modules: &Path) -> Result
     Ok(destination.canonicalize().ok().as_deref() == Some(source.as_path()))
 }
 
+/// 校验并创建 scope 目录；目录本身不能是链接，防止目的地逃逸核心根。
 fn ensure_non_link_directory(path: &Path, root: &Path) -> Result<(), String> {
     if !path.starts_with(root) {
         return Err(format!(
@@ -762,7 +859,7 @@ fn ensure_non_link_directory(path: &Path, root: &Path) -> Result<(), String> {
                 return Err(format!(
                     "CORE_PLUGIN_DESTINATION_PARENT_INVALID: {}",
                     current.display()
-                ));
+                ))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 std::fs::create_dir(&current).map_err(|e| {
@@ -776,7 +873,7 @@ fn ensure_non_link_directory(path: &Path, root: &Path) -> Result<(), String> {
                 return Err(format!(
                     "CORE_PLUGIN_DESTINATION_PARENT_STAT_FAILED: {}: {e}",
                     current.display()
-                ));
+                ))
             }
         }
     }
@@ -798,6 +895,11 @@ pub(crate) fn create_directory_link(source: &Path, destination: &Path) -> std::i
 
 #[cfg(windows)]
 pub(crate) fn create_directory_link(source: &Path, destination: &Path) -> std::io::Result<()> {
+    // 优先创建真正的符号链接：仅在启用 Developer Mode 或具备
+    // SeCreateSymbolicLinkPrivilege（管理员）时才可用；普通用户（release 版
+    // 默认非管理员启动）会得到 ERROR_PRIVILEGE_NOT_HELD（os error 1314），
+    // 此时回退为目录联接（junction）。junction 是重解析点，创建不要求任何
+    // 特权，与 pnpm `link:` 依赖在 Windows 上的实现一致。
     match std::os::windows::fs::symlink_dir(source, destination) {
         Ok(()) => Ok(()),
         Err(e) if is_privilege_error(&e) => {
@@ -807,15 +909,24 @@ pub(crate) fn create_directory_link(source: &Path, destination: &Path) -> std::i
             );
             create_directory_junction(source, destination)
         }
+        // 非权限类失败（如路径无效、文件系统不支持符号链接）保留原始诊断，
+        // 不把错误替换成 junction 的二次失败。
         Err(e) => Err(e),
     }
 }
 
+/// 判断符号链接创建失败是否源于权限不足：`ERROR_PRIVILEGE_NOT_HELD`（1314）
+/// 与 `ERROR_ACCESS_DENIED`（5）。只有这类错误才值得回退 junction——其他失败
+/// （路径无效、卷不支持重解析点等）回退同样会失败，且会掩盖原始原因。
 #[cfg(windows)]
 fn is_privilege_error(e: &std::io::Error) -> bool {
     matches!(e.raw_os_error(), Some(1314 | 5))
 }
 
+/// 用 `FSCTL_SET_REPARSE_POINT` 构造目录联接（junction），布局与 `mklink /J`
+/// 完全一致：substitute name 使用 NT 命名空间绝对路径（`\??\` 前缀），print
+/// name 为同一路径的 Win32 形式；两个名字的 `\0` 终止符通过名字之间的 gap
+/// 与数据区末尾的 trailing 补零提供（length 字段本身不含 `\0`）。
 #[cfg(windows)]
 fn create_directory_junction(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
@@ -824,10 +935,14 @@ fn create_directory_junction(source: &Path, destination: &Path) -> std::io::Resu
         CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
         FILE_SHARE_WRITE, OPEN_EXISTING,
     };
-    use windows_sys::Win32::System::IO::DeviceIoControl;
     use windows_sys::Win32::System::Ioctl::FSCTL_SET_REPARSE_POINT;
     use windows_sys::Win32::System::SystemServices::IO_REPARSE_TAG_MOUNT_POINT;
+    use windows_sys::Win32::System::IO::DeviceIoControl;
 
+    // junction 目标必须是 NT 命名空间内的绝对路径：盘符路径映射为
+    // `\??\G:\...`，UNC 路径映射为 `\??\UNC\server\share\...`。
+    // dunce::simplified 去掉 canonicalize 产生的 verbatim（`\\?\`）前缀，
+    // 避免双重前缀导致内核解析失败。
     let source = source.canonicalize()?;
     let simplified = dunce::simplified(&source);
     let print_name = simplified.to_string_lossy().replace('/', "\\");
@@ -837,6 +952,14 @@ fn create_directory_junction(source: &Path, destination: &Path) -> std::io::Resu
         format!(r"\??\{}", print_name)
     };
 
+    // 与 `mklink /J` 生成的挂载点完全一致的布局（实测比对 mklink 原始字节）：
+    //   SubstituteNameLength / PrintNameLength 均不含结尾 `\0`；
+    //   substitute 与 print 之间空出 2 字节作为 substitute 的 `\0` 终止符，
+    //   数据区末尾再补 2 字节作为 print 的 `\0` 终止符；
+    //   ReparseDataLength = 8（四个 u16 字段）+ 上述数据总长，传入
+    //   DeviceIoControl 的缓冲区长度 = 16 + 数据总长。若 length 误含 `\0`，
+    //   内核虽然接受（如 4392 之外的成功），但 `read_link` 会返回带 `\0` 的
+    //   verbatim 路径，导致后续 canonicalize 报 InvalidFilename (123)。
     let substitute_wide: Vec<u16> = substitute_name.encode_utf16().collect();
     let print_wide: Vec<u16> = print_name.encode_utf16().collect();
     let substitute_bytes = substitute_wide.len() * 2;
@@ -846,6 +969,15 @@ fn create_directory_junction(source: &Path, destination: &Path) -> std::io::Resu
     let data_length = 8 + substitute_bytes + REPARSE_GAP + print_bytes + REPARSE_TRAILING;
     let total = 16 + substitute_bytes + REPARSE_GAP + print_bytes + REPARSE_TRAILING;
 
+    // REPARSE_DATA_BUFFER（MountPoint 变体）内存布局：
+    //   0:  ReparseTag（u32）
+    //   4:  ReparseDataLength（u16）
+    //   6:  Reserved（u16）
+    //   8:  SubstituteNameOffset（u16，相对 PathBuffer）
+    //   10: SubstituteNameLength（u16，不含 \0）
+    //   12: PrintNameOffset（u16，相对 PathBuffer）
+    //   14: PrintNameLength（u16，不含 \0）
+    //   16: PathBuffer[..]
     let mut buffer = vec![0u8; total];
     buffer[0..4].copy_from_slice(&IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes());
     buffer[4..6].copy_from_slice(&(data_length as u16).to_le_bytes());
@@ -853,6 +985,8 @@ fn create_directory_junction(source: &Path, destination: &Path) -> std::io::Resu
     buffer[10..12].copy_from_slice(&(substitute_bytes as u16).to_le_bytes());
     buffer[12..14].copy_from_slice(&((substitute_bytes + REPARSE_GAP) as u16).to_le_bytes());
     buffer[14..16].copy_from_slice(&(print_bytes as u16).to_le_bytes());
+    // PathBuffer 依次写入 substitute、gap（substitute 的 `\0` 终止符）、
+    // print；trailing 保持全零（print 的 `\0` 终止符）。
     let mut cursor = 16usize;
     for unit in substitute_wide.iter().copied() {
         buffer[cursor..cursor + 2].copy_from_slice(&unit.to_le_bytes());
@@ -864,6 +998,9 @@ fn create_directory_junction(source: &Path, destination: &Path) -> std::io::Resu
         cursor += 2;
     }
 
+    // junction 的目标入口必须先存在：链接被移除后 destination 通常已不存在，
+    // 这里按空目录创建，之后挂载重解析点。记录是否为本次创建，失败时只清理
+    // 自己创建的目录，绝不删除已存在的真实目录。
     let created_dir = if !destination.is_dir() {
         std::fs::create_dir_all(destination)?;
         true
@@ -887,6 +1024,8 @@ fn create_directory_junction(source: &Path, destination: &Path) -> std::io::Resu
         )
     };
     if handle == INVALID_HANDLE_VALUE {
+        // 打开失败同样要清掉刚创建的空目录（否则残留普通目录会被
+        // ensure_package_link 误判为 core 自有条目而永久跳过链接）。
         if created_dir {
             let _ = std::fs::remove_dir(destination);
         }
@@ -909,6 +1048,8 @@ fn create_directory_junction(source: &Path, destination: &Path) -> std::io::Resu
         CloseHandle(handle);
     }
     if ok == 0 {
+        // 挂载失败时清掉刚创建的空目录，避免留下会被误认为 core 自有条目的
+        // 普通目录；目录原本就存在（未由本函数创建）时不做清理。
         if created_dir {
             let _ = std::fs::remove_dir(destination);
         }
@@ -928,6 +1069,10 @@ fn is_safe_package_name(name: &str) -> bool {
         && valid_package_component(parts[1])
 }
 
+/// 是否属于核心家族（`@deepseek-ai/dsh` 或 `@deepseek-ai/dsh-*`）。
+///
+/// `dshmarket` 这类第三方插件虽在同一 scope 下，但既不是核心自带包也不是要清理的
+/// 残留，必须排除；共享框架库（cordis、cosmokit、schemastery 等）同理由前缀天然排除。
 fn is_core_family_package(name: &str) -> bool {
     let Some(package) = name
         .strip_prefix(CORE_PACKAGE_SCOPE)
@@ -945,10 +1090,9 @@ fn valid_package_component(value: &str) -> bool {
     !value.is_empty()
         && value != "."
         && value != ".."
+        // 单独的 `@` 不是合法 scope（`@scope` 中 scope 必须非空）。
         && value != "@"
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._-@".contains(&byte))
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"._-@".contains(&byte))
 }
 
 fn read_package_name(path: &Path) -> Result<Option<String>, String> {
@@ -979,10 +1123,20 @@ fn read_package_version(path: &Path) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// 结论戳文件路径：放在依赖根下。清空依赖目录（等价于重新装配）会一并清掉它。
 fn native_probe_stamp_path_at(base: &Path) -> PathBuf {
     base.join(NATIVE_PROBE_STAMP_FILE)
 }
 
+/// 原生依赖探测的输入指纹：node 身份 + 核心目录与版本 + `node_modules` 前两层条目
+/// （含原生包自带的产物目录）。
+///
+/// 全部是廉价的元数据读取（不启动子进程、不递归进包内部）。取「前两层」而不是只取
+/// 顶层，是为了让 scope 包（`@scope/name`）的增删也能被感知；额外记录产物目录**与其
+/// 内部文件**，是因为原地重写 `.node` 既不改包目录、也不改产物目录本身的时间。
+///
+/// 任何让指纹**不完整**的情况（目录读不到、条目数超过兜底上限）都返回 `None`：
+/// 不完整的指纹可能刚好和上次的完整指纹撞上，反而跳过一次本该做的探测。宁可不缓存。
 fn native_probe_stamp_key_at(
     node: &Path,
     core_root: &Path,
@@ -1008,6 +1162,11 @@ fn native_probe_stamp_key_at(
     Some(probe_stamp_digest(&key))
 }
 
+/// `node_modules` 指纹摘要：条目只受兜底上限约束（真实安装的规模远小于它），
+/// 摘要长度与条目数无关，因此既不截断、也不因规模放弃缓存。
+///
+/// 上限在采集途中即时判定：越过上限的指纹注定作废，继续把整棵树读完只是白等 ——
+/// 能触发这个上限的树动辄几十万条，而这段耗时正好压在启动关键路径上。
 fn probe_stamp_modules_digest(modules: &Path) -> Option<String> {
     let mut entries: Vec<String> = Vec::new();
     collect_probe_stamp_entries(modules, &mut entries, NATIVE_PROBE_STAMP_MAX_ENTRIES)?;
@@ -1015,12 +1174,20 @@ fn probe_stamp_modules_digest(modules: &Path) -> Option<String> {
     Some(probe_stamp_digest(&entries.join("\n")))
 }
 
+/// 指纹摘要：长度固定，与参与计算的条目数无关
 fn probe_stamp_digest(key: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(key.as_bytes()))
 }
 
+/// 原生包自带的产物目录，与 `NATIVE_PROBE_SCRIPT` 的候选判定同源
 const NATIVE_ARTIFACT_DIRS: [&str; 4] = ["build/Release", "build/Debug", "prebuilds", "prebuilt"];
 
+/// 采集指纹条目：`node_modules` 顶层（`.bin` 跳过，`.pnpm` 只记自身）与 scope 目录的
+/// 下一层，每项再带上其原生包产物目录。任一目录读不到即返回 `None` —— 不完整的指纹
+/// 不能用来断言「和上次一样」，少记一项就可能漏掉一次真实变化。
+///
+/// 条目数一旦越过 `cap` 立刻返回 `None`，不再继续遍历：这份指纹无论如何都会作废，
+/// 把剩下几十万条读完只是把启动关键路径拉长。
 fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>, cap: usize) -> Option<()> {
     let reader = std::fs::read_dir(dir).ok()?;
     for entry in reader {
@@ -1049,6 +1216,8 @@ fn collect_probe_stamp_entries(dir: &Path, out: &mut Vec<String>, cap: usize) ->
     Some(())
 }
 
+/// 记录一个包的目录时间与其产物目录、目录内文件的时间。产物目录不存在时只留包目录
+/// 一项，避免为绝大多数非原生包平白拉长指纹。
 fn push_probe_stamp_entry(
     dir: &Path,
     label: &str,
@@ -1071,6 +1240,9 @@ fn push_probe_stamp_entry(
     Some(())
 }
 
+/// 记入一项指纹条目；越过 `cap` 即放弃整份指纹。
+///
+/// 只有第一处越界会写日志（调用链随即逐层返回 `None`），因此一次采集最多一条。
 fn push_probe_stamp_item(out: &mut Vec<String>, item: String, cap: usize) -> Option<()> {
     out.push(item);
     if out.len() > cap {
@@ -1080,6 +1252,13 @@ fn push_probe_stamp_item(out: &mut Vec<String>, item: String, cap: usize) -> Opt
     Some(())
 }
 
+/// 记录产物目录内每一项的名字、大小与修改时间，并递归下钻嵌套产物目录：原地覆盖一个
+/// 已存在的 `.node` 只改文件自身的时间，目录的修改时间不变，只记目录就会漏掉这次替换，
+/// 进而跳过一次本该做的探测；`prebuilds/<platform>/addon.node` 这类文件连第一层都不在，
+/// 只记一层同样会漏。元数据读不到即返回 `None`：读不到就不能断言「和上次一样」，宁可
+/// 重跑探测。指向目录的链接同样返回 `None`：`artifact_stamp` 跟随链接、只记下目标的目录
+/// 元数据，而链接本身不被下钻（防成环），目标里的 `.node` 被等长原地覆盖时目录元数据
+/// 可以不变，这份指纹就不再完整。
 fn push_probe_stamp_artifacts(
     dir: &Path,
     label: &str,
@@ -1094,6 +1273,9 @@ fn push_probe_stamp_artifacts(
         };
         let path = entry.path();
         let label = format!("{label}/{name}");
+        // 链接判定必须和本文件其余四处一致：Windows 上 junction 是 mount point 重解析点，
+        // 标准库的 `is_symlink()` 对它返回 false（实测本机 junction 会被当成普通目录），
+        // 只有 `is_symlink_dir()` 认得。用 `DirEntry::file_type()` 同样漏 junction。
         let file_type = std::fs::symlink_metadata(&path).ok()?.file_type();
         #[cfg(windows)]
         let is_link = file_type.is_symlink() || file_type.is_symlink_dir();
@@ -1103,6 +1285,8 @@ fn push_probe_stamp_artifacts(
             return None;
         }
         push_probe_stamp_item(out, format!("{label}={}", artifact_stamp(&path)?), cap)?;
+        // 链接（pnpm 的包目录、junction）不下钻：跟随链接会把同一份内容记两次，
+        // 自指的链接还会绕成死循环。链接自身的目标大小与时间已经记在上面一项里。
         if !is_link && file_type.is_dir() {
             push_probe_stamp_artifacts(&path, &label, out, cap)?;
         }
@@ -1110,6 +1294,7 @@ fn push_probe_stamp_artifacts(
     Some(())
 }
 
+/// 单个产物文件的指纹项：大小与修改时间缺一不可，读不到就没有可比的指纹。
 fn artifact_stamp(path: &Path) -> Option<String> {
     let meta = std::fs::metadata(path).ok()?;
     Some(format!("{}:{}", meta.len(), file_modified_nanos(&meta)))
@@ -1130,6 +1315,7 @@ fn file_modified_nanos(meta: &std::fs::Metadata) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
+/// 读取结论戳；文件缺失、不可解析或字段不全时返回 None（视为无戳）
 fn read_native_probe_stamp_at(base: &Path) -> Option<(String, String, String)> {
     let raw = std::fs::read_to_string(native_probe_stamp_path_at(base)).ok()?;
     let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
@@ -1140,6 +1326,7 @@ fn read_native_probe_stamp_at(base: &Path) -> Option<(String, String, String)> {
     ))
 }
 
+/// 写结论戳：只在探测确认 Ready 后调用。写失败不影响启动，只降级为「下次仍探测」。
 fn write_native_probe_stamp_at(base: &Path, key: &str, target: &NodeTarget) {
     let path = native_probe_stamp_path_at(base);
     if let Some(parent) = path.parent() {
@@ -1204,6 +1391,12 @@ async fn detect_node_target(node: &Path, core_root: &Path) -> Result<NodeTarget,
     })
 }
 
+/// 用指定运行时执行原生模块探测脚本：脚本先落盘成临时 `.mjs` 再以文件路径交给 node。
+///
+/// 不能走 `node -e`：`-e` 只取脚本的第一行（本脚本以换行开头，载荷会退化成空串，
+/// 于是永远没有标记行、探测结论永远是"未知"），而 `--input-type=module` 与脚本
+/// 文件路径不能同时给出（ERR_INPUT_TYPE_NOT_ALLOWED）。脚本本身不读 argv，改用文件
+/// 路径不损失任何信息：解析根仍由 `cwd` 提供，require 根仍是核心根。
 fn run_native_probe(node: &Path, core_root: &Path) -> Result<std::process::Output, String> {
     let script = std::env::temp_dir().join(format!("dsh-native-probe-{}.mjs", std::process::id()));
     std::fs::write(&script, NATIVE_PROBE_SCRIPT).map_err(|error| {
@@ -1225,6 +1418,7 @@ fn run_native_probe(node: &Path, core_root: &Path) -> Result<std::process::Outpu
     output
 }
 
+/// 用指定运行时执行原生模块探测脚本，返回结构化结论。
 async fn probe_native_modules(node: &Path, core_root: &Path) -> NativeProbe {
     let node = node.to_path_buf();
     let core_root = core_root.to_path_buf();
@@ -1252,6 +1446,8 @@ async fn probe_native_modules(node: &Path, core_root: &Path) -> NativeProbe {
     }
 }
 
+/// 修复后的重新探测：Ready 或结论未知都放行（未知只告警，不因探测自身的问题阻断
+/// 启动）。返回 Some 表示仍有明确的加载失败，需要继续处理。
 async fn reprobe_after_repair(node: &Path, core_root: &Path) -> Option<NativeProbe> {
     match probe_native_modules(node, core_root).await {
         NativeProbe::Ready => None,
@@ -1263,6 +1459,7 @@ async fn reprobe_after_repair(node: &Path, core_root: &Path) -> Option<NativePro
     }
 }
 
+/// 旧版平台依赖探测（sharp/koffi 动态 import）：仅用于探测脚本结论不可信时兜底
 async fn native_imports_ready(node: &Path, core_root: &Path) -> bool {
     let node = node.to_path_buf();
     let core_root = core_root.to_path_buf();
@@ -1282,6 +1479,7 @@ async fn native_imports_ready(node: &Path, core_root: &Path) -> bool {
     .unwrap_or(false)
 }
 
+/// 解析探测脚本的标记行；缺失或不可解析时返回 None（视为结论未知）
 fn parse_native_probe_failures(stdout: &str) -> Option<Vec<NativeProbeFailure>> {
     let line = stdout
         .lines()
@@ -1291,6 +1489,17 @@ fn parse_native_probe_failures(stdout: &str) -> Option<Vec<NativeProbeFailure>> 
     serde_json::from_str::<Vec<NativeProbeFailure>>(json).ok()
 }
 
+/// 当前 node 是否就是捆绑运行时（用于避免重复尝试同一个运行时）
+fn is_bundled_runtime_node(node: &Path, app_handle: &AppHandle) -> bool {
+    crate::config::bundled_node_binary(app_handle).is_some_and(|bundled| {
+        bundled == node
+            || bundled
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&node.to_string_lossy())
+    })
+}
+
+/// 生成原生模块加载失败的诊断信息：ABI 不匹配单独给出可读结论，其余按原样列出。
 fn native_failure_diagnostic(
     failures: &[NativeProbeFailure],
     node: &Path,
@@ -1335,10 +1544,16 @@ fn native_failure_diagnostic(
     )
 }
 
+/// 折叠多行错误文本为单行，便于在界面提示里展示（Node 的 ABI 报错是跨行的）
 fn collapse_whitespace(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// 用所选运行时自带的 npm 重建 ABI 不匹配的原生包。
+///
+/// 必须用与运行时配套的 npm：PATH 里的 npm 可能属于另一个 Node 大版本，用它编译
+/// 只会得到另一个不匹配的 ABI。捆绑运行时目录自带 npm-cli.js，优先直接以该 node
+/// 运行；找不到时退回 PATH 中的 npm（本地 node 安装通常自带）。
 async fn rebuild_native_packages(
     core_root: &Path,
     node: &Path,
@@ -1371,6 +1586,8 @@ async fn rebuild_native_packages(
     Ok(())
 }
 
+/// 定位与给定 node 配套的 npm 命令：优先 `<node 目录>/node_modules/npm/bin/npm-cli.js`
+/// （捆绑运行时与官方发行版都在 node 目录下自带 npm），否则退回 PATH 中的 npm。
 fn npm_command(node: &Path) -> (OsString, Vec<OsString>) {
     if let Some(cli) = npm_cli_path_for(node) {
         return (node.as_os_str().to_os_string(), vec![cli.into_os_string()]);
@@ -1385,6 +1602,9 @@ fn npm_command(node: &Path) -> (OsString, Vec<OsString>) {
 
 fn npm_cli_path_for(node: &Path) -> Option<PathBuf> {
     let dir = node.parent()?;
+    // Windows 捆绑运行时：<runtime>/node.exe + <runtime>/node_modules/npm/bin/npm-cli.js
+    // 官方发行版：<node>/bin/node + <node>/lib/node_modules/npm/bin/npm-cli.js
+    // 少数布局把 lib 放在 node 目录之外，再补一个上级 lib 候选。
     let candidates = [
         dir.join("node_modules")
             .join("npm")
@@ -1405,6 +1625,12 @@ fn npm_cli_path_for(node: &Path) -> Option<PathBuf> {
     candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
+/// 决定需要补齐的原生依赖安装参数。
+///
+/// 优先从已安装的根包 `sharp`/`koffi` 的 `optionalDependencies` 取目标平台包的
+/// 精确版本并显式安装（轻量、不改核心依赖声明）。任一根包缺失时退化为安装根包
+/// 名（不带版本），由 npm 以核心 `package.json` + lockfile 解析正确版本 —— 这样
+/// 即使整个核心闭包被删也能恢复，且不硬编码版本号。
 fn native_package_plan(core_root: &Path, target: &NodeTarget) -> Vec<String> {
     let node_modules = core_root.join("node_modules");
     let sharp = node_modules.join("sharp");
@@ -1426,6 +1652,8 @@ fn native_package_plan(core_root: &Path, target: &NodeTarget) -> Vec<String> {
             packages.push(format!("{name}@{version}"));
         }
     }
+    // 根包本身缺失（核心闭包被删/损坏）时无法从清单取版本，退化为安装根包名，
+    // 由 npm 以核心 package.json + lockfile 解析正确版本（不硬编码版本号）。
     if !sharp.is_dir() && !packages.iter().any(|p| p == "sharp") {
         packages.push("sharp".to_string());
     }
@@ -1435,6 +1663,7 @@ fn native_package_plan(core_root: &Path, target: &NodeTarget) -> Vec<String> {
     packages
 }
 
+/// 读取 optionalDependencies；清单缺失/损坏时返回空（由调用方决定回退策略）。
 fn read_optional_dependencies(path: &Path) -> HashMap<String, String> {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return HashMap::new();
@@ -1506,7 +1735,6 @@ fn run_command(
     cwd: &Path,
 ) -> Result<std::process::Output, String> {
     let mut command = Command::new(program);
-    crate::config::apply_node_env(&mut command);
     command
         .args(args)
         .current_dir(cwd)
@@ -1530,7 +1758,6 @@ fn run_process_with_timeout(
     label: &str,
 ) -> Result<std::process::Output, String> {
     let mut command = Command::new(program);
-    crate::config::apply_node_env(&mut command);
     command
         .args(args)
         .current_dir(cwd)
@@ -1575,6 +1802,7 @@ fn run_process_with_timeout(
             let status = child
                 .wait()
                 .map_err(|e| format!("CORE_NATIVE_DEPENDENCY_REPAIR_KILL_FAILED: {e}"))?;
+            // 排空管道，避免子进程因写满缓冲而挂起；输出在超时路径不作分析。
             let _ = stdout_thread.join().unwrap_or_default();
             let _ = stderr_thread.join().unwrap_or_default();
             return Err(format!(
@@ -1714,11 +1942,9 @@ mod tests {
             version: None,
         }];
         paths.required_plugins = Some(&invalid);
-        assert!(
-            prepare_active_runtime_at(&paths)
-                .unwrap_err()
-                .starts_with("CORE_PLUGIN_NAME_INVALID:")
-        );
+        assert!(prepare_active_runtime_at(&paths)
+            .unwrap_err()
+            .starts_with("CORE_PLUGIN_NAME_INVALID:"));
         remove_link_only(&destination).unwrap();
         assert!(source.is_dir());
 
@@ -1775,6 +2001,8 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep");
     }
 
+    /// 以生产同款方式执行探测脚本（落盘成 `.mjs` 再交给 node），保证测试覆盖的
+    /// 正是运行时那条路径——`node -e` 会截断多行脚本，测出来的是假绿。
     fn run_probe_script(node: &std::path::Path, cwd: &std::path::Path) -> std::process::Output {
         let script = cwd.join("dsh-native-probe-test.mjs");
         std::fs::write(&script, NATIVE_PROBE_SCRIPT).unwrap();
@@ -1792,6 +2020,8 @@ mod tests {
         command.output().expect("node must be runnable")
     }
 
+    /// 指纹摘要必须与条目规模无关：真实安装的条目数已超过早先的固定上限，
+    /// 若还按条目数放弃缓存，结论戳永远写不下来（每次启动都重跑两个 node 子进程）。
     #[test]
     fn probe_stamp_digest_is_stable_and_size_independent() {
         let modules = std::env::temp_dir().join(format!("dsh-probe-stamp-{}", std::process::id()));
@@ -1803,16 +2033,12 @@ mod tests {
 
         let entries = probe_stamp_entries(&modules);
         assert!(entries.iter().any(|entry| entry.starts_with("sharp=")));
-        assert!(
-            entries
-                .iter()
-                .any(|entry| entry.starts_with("sharp/build/Release="))
-        );
-        assert!(
-            entries
-                .iter()
-                .any(|entry| entry.starts_with("@deepseek-ai/dsh-plugin="))
-        );
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/build/Release=")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("@deepseek-ai/dsh-plugin=")));
         assert!(!entries.iter().any(|entry| entry.starts_with(".bin")));
 
         let digest = probe_stamp_modules_digest(&modules).expect("complete fingerprint");
@@ -1834,6 +2060,9 @@ mod tests {
         assert!(probe_stamp_modules_digest(&modules).is_none());
     }
 
+    /// 原地覆盖产物目录里已存在的 `.node` 必须改变指纹：目录的修改时间不变，只有文件
+    /// 自身的时间会变（fixture 用等长的两份内容，只有时间戳能让摘要不同）。条目数超过
+    /// 早先的 512 上限时同样如此 —— 那段规模正是这次改动才开始能缓存的。
     #[test]
     fn probe_stamp_detects_in_place_addon_overwrite_beyond_legacy_cap() {
         let modules =
@@ -1852,11 +2081,9 @@ mod tests {
             entries.len() > 512,
             "fixture must exceed the legacy entry cap"
         );
-        assert!(
-            entries
-                .iter()
-                .any(|entry| entry.starts_with("sharp/build/Release/sharp.node=8:"))
-        );
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/build/Release/sharp.node=8:")));
 
         let digest = probe_stamp_modules_digest(&modules).expect("complete fingerprint");
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -1866,6 +2093,8 @@ mod tests {
         std::fs::remove_dir_all(&modules).unwrap();
     }
 
+    /// 产物文件元数据读不到时必须让整份指纹作废（返回 `None`）：写占位符会让「这次
+    /// 读不到」与「上次也没读到」得到同一个摘要，从而跳过一次本该做的探测。
     #[test]
     fn probe_stamp_requires_readable_artifact_metadata() {
         let dir =
@@ -1877,29 +2106,28 @@ mod tests {
         assert!(artifact_stamp(&addon).is_none());
         std::fs::write(&addon, "native").unwrap();
         assert!(artifact_stamp(&addon).is_some());
-        assert!(
-            push_probe_stamp_artifacts(
-                &dir,
-                "sharp/build/Release",
-                &mut Vec::new(),
-                NATIVE_PROBE_STAMP_MAX_ENTRIES
-            )
-            .is_some()
-        );
+        assert!(push_probe_stamp_artifacts(
+            &dir,
+            "sharp/build/Release",
+            &mut Vec::new(),
+            NATIVE_PROBE_STAMP_MAX_ENTRIES
+        )
+        .is_some());
 
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(artifact_stamp(&addon).is_none());
-        assert!(
-            push_probe_stamp_artifacts(
-                &dir,
-                "sharp/build/Release",
-                &mut Vec::new(),
-                NATIVE_PROBE_STAMP_MAX_ENTRIES
-            )
-            .is_none()
-        );
+        assert!(push_probe_stamp_artifacts(
+            &dir,
+            "sharp/build/Release",
+            &mut Vec::new(),
+            NATIVE_PROBE_STAMP_MAX_ENTRIES
+        )
+        .is_none());
     }
 
+    /// 嵌套产物目录（`prebuilds/<platform>/addon.node`）里的原地覆盖同样必须改变指纹：
+    /// 这个文件既不在产物目录的第一层、也不会改到任何已记录目录的时间，只记一层的实现
+    /// 会漏掉它并跳过探测。
     #[test]
     fn probe_stamp_detects_in_place_overwrite_below_nested_artifact_directory() {
         let modules =
@@ -1911,21 +2139,15 @@ mod tests {
         std::fs::write(&addon, "native-a").unwrap();
 
         let entries = probe_stamp_entries(&modules);
-        assert!(
-            entries
-                .iter()
-                .any(|entry| entry.starts_with("sharp/prebuilds="))
-        );
-        assert!(
-            entries
-                .iter()
-                .any(|entry| entry.starts_with("sharp/prebuilds/win32-x64="))
-        );
-        assert!(
-            entries
-                .iter()
-                .any(|entry| entry.starts_with("sharp/prebuilds/win32-x64/addon.node=8:"))
-        );
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/prebuilds=")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/prebuilds/win32-x64=")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with("sharp/prebuilds/win32-x64/addon.node=8:")));
 
         let digest = probe_stamp_modules_digest(&modules).expect("complete fingerprint");
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -1935,6 +2157,8 @@ mod tests {
         std::fs::remove_dir_all(&modules).unwrap();
     }
 
+    /// 越过条目上限时必须就地放弃，而不是把整棵树读完再作废：能触发上限的树动辄几十万
+    /// 条，读完这一段只是白等（这份指纹注定作废）。断言采集恰好在越界处停手。
     #[test]
     fn probe_stamp_cap_aborts_traversal_immediately() {
         let dir = std::env::temp_dir().join(format!("dsh-probe-stamp-cap-{}", std::process::id()));
@@ -1961,6 +2185,12 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// 指向目录的链接必须让整份指纹作废：链接不被下钻（防成环），而 `artifact_stamp`
+    /// 跟随链接只记目标目录元数据，目标里的 `.node` 被等长原地覆盖时这份指纹会漏掉变化。
+    ///
+    /// 用仓库自带的 junction 构造器建链接：Windows 上 `symlink_dir` 需要开发者模式
+    /// （实测本机被拒），junction 不需要特权，且同样以 reparse point 形态出现
+    /// （`FileType::is_symlink()` 为真），正是这里要覆盖的形态。
     #[test]
     fn probe_stamp_rejects_a_directory_symlink_it_cannot_descend() {
         let root =
@@ -1988,6 +2218,8 @@ mod tests {
             NATIVE_PROBE_STAMP_MAX_ENTRIES,
         )
         .is_none();
+        // 先断开链接再删树：`remove_dir_all` 会跟随 junction 去删目标（这里恰好是同一棵树，
+        // 于是删除中途树已被抽空而报错，并把 junction 留在原地污染下一次运行）。
         let _ = std::fs::remove_dir(&linked);
         let _ = std::fs::remove_dir_all(&root);
         assert!(rejected);
@@ -2000,6 +2232,7 @@ mod tests {
         out
     }
 
+    /// 指纹长度不随条目数增长：条目多寡只影响摘要输入，不影响落盘体积。
     #[test]
     fn probe_stamp_digest_length_does_not_grow_with_entries() {
         let wide = (0..4000)
@@ -2121,6 +2354,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// 普通用户（无管理员/开发者模式）下 `symlink_dir` 会以 os error 1314 失败，
+    /// 必须回退为 junction 且仍可被 `read_link` 解析、被 `remove_dir` 只删入口。
     #[cfg(windows)]
     #[test]
     fn create_directory_link_falls_back_to_junction_without_privileges() {
@@ -2144,6 +2379,7 @@ mod tests {
         let resolved = std::fs::read_link(&destination).unwrap();
         assert_eq!(resolved.canonicalize().unwrap(), canonical_source);
 
+        // 幂等：指向同一目标的链接应被 matches 逻辑识别，不重建（无错误即满足）。
         let matches = std::fs::read_link(&destination)
             .map(|target| {
                 let resolved = if target.is_absolute() {
@@ -2156,6 +2392,7 @@ mod tests {
             .unwrap_or(false);
         assert!(matches, "existing junction must match its source");
 
+        // 删除只移除入口本身，绝不触碰源目录。
         remove_link_only(&destination).unwrap();
         assert!(!destination.exists());
         assert!(canonical_source.is_dir());
@@ -2163,6 +2400,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 确定性覆盖 junction 回退路径：无论本机是否启用开发者模式/管理员权限，
+    /// 直接构造 junction 并断言其可解析、可删除，且与 ensure_package_link 的
+    /// matches 幂等检查兼容。包路径带 scoped 包名的正斜杠（真实安装形态）：
+    /// `\\??\\` 替换名不经过 Win32 分隔符归一化，混用分隔符必须仍可建链。
     #[cfg(windows)]
     #[test]
     fn create_directory_junction_accepts_mixed_separators_and_is_idempotent() {
@@ -2194,6 +2435,8 @@ mod tests {
             "junction must resolve to the source directory"
         );
 
+        // 幂等：重复调用同一目标时 ensure_package_link 的 matches 应命中，
+        // 先删旧入口再重建不会因 canonicalize 差异而失败。
         remove_link_only(&destination).unwrap();
         create_directory_junction(&canonical_source, &destination)
             .unwrap_or_else(|e| panic!("junction recreation must succeed: {e}"));
@@ -2210,6 +2453,7 @@ mod tests {
             .unwrap_or(false);
         assert!(matches, "existing junction must match its source");
 
+        // 删除只移除入口本身，绝不触碰源目录。
         remove_link_only(&destination).unwrap();
         assert!(!destination.exists());
         assert!(canonical_source.is_dir());
@@ -2217,6 +2461,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 探测脚本必须写出 Rust 侧约定的标记行，并覆盖 ABI 敏感包与 sharp/koffi 两条路径。
     #[test]
     fn native_probe_script_matches_marker_and_checks_abi() {
         assert!(NATIVE_PROBE_SCRIPT.contains(NATIVE_PROBE_MARKER));
@@ -2321,6 +2566,7 @@ mod tests {
         assert_eq!(collapse_whitespace("a\n  b\t c"), "a b c");
     }
 
+    /// 重建必须使用与所选运行时配套的 npm：捆绑运行时目录自带 npm-cli.js。
     #[test]
     fn npm_command_prefers_node_local_npm_cli() {
         let root = std::env::temp_dir().join(format!("dsh-npm-cli-{}", std::process::id()));
@@ -2340,6 +2586,7 @@ mod tests {
         assert_eq!(args, vec![npm_cli.clone().into_os_string()]);
         assert_eq!(npm_cli_path_for(&node), Some(npm_cli));
 
+        // 找不到配套 npm 时退回 PATH 中的 npm（不硬编码路径）
         let bare = root.join("bare").join("node.exe");
         std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
         let (program, args) = npm_command(&bare);
@@ -2349,6 +2596,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 用真实 Node 跑一遍探测脚本：脚本语法/标记约定出错时这里会失败。
+    /// 本机没有兼容 node 时跳过（受限环境）。
     #[test]
     fn native_probe_script_runs_on_real_node() {
         let Some(node) = crate::config::get_local_node_path() else {
@@ -2365,6 +2614,7 @@ mod tests {
             "probe script must exit 0: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        // 空核心目录：sharp/koffi 解析失败但属于非 ABI 失败，必须能结构化解析。
         let failures =
             parse_native_probe_failures(&stdout).expect("probe must emit the marker line");
         assert!(failures.iter().all(|failure| !failure.abi));
@@ -2372,6 +2622,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 端到端契约测试：探测脚本 + Rust 解析必须能把"ABI 不匹配的原生包"识别出来
     /// （issue #441 的 fs-ext 形态：binding.gyp + build/Release/*.node，包入口抛 ABI 错误）。
     #[test]
     fn native_probe_detects_abi_mismatch_package() {
@@ -2408,6 +2659,7 @@ mod tests {
             "fs-ext must be reported as an ABI mismatch"
         );
         assert_eq!(probe.abi_packages(), vec!["fs-ext".to_string()]);
+        // 诊断必须点名模块，供前端直接展示（而不是让用户只看到 HARNESS_NOT_OWNED）
         let diagnostic = native_failure_diagnostic(probe.failures(), &node, &root);
         assert!(diagnostic.starts_with("CORE_NATIVE_ABI_MISMATCH:"));
         assert!(diagnostic.contains("fs-ext"));
@@ -2415,6 +2667,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 档案里未被声明、且版本与安装锚点不一致的核心包必须被清掉——这正是
+    /// 「未能保存设置，请重试。」的成因（旧世代 dsh-settings 抢在核心之前被解析）。
     #[test]
     fn stale_undeclared_core_package_is_pruned() {
         let root = std::env::temp_dir().join(format!("dsh-stale-core-{}", std::process::id()));
@@ -2448,6 +2702,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 版本与锚点一致的核心包是 pnpm hoisted 平铺的合法传递依赖，必须原样保留；
+    /// 档案自己声明过的核心包同样不能动（哪怕是版本不一致）。
     #[test]
     fn matching_or_declared_core_packages_are_kept() {
         let root = std::env::temp_dir().join(format!("dsh-stale-core-keep-{}", std::process::id()));
@@ -2459,6 +2715,7 @@ mod tests {
         write_package_version(&anchor_modules, "dsh-settings", "0.1.7-rc.2");
         write_package_version(&profile_modules, "dsh-tools", "0.1.5-rc.2");
         write_package_version(&anchor_modules, "dsh-tools", "0.1.7-rc.2");
+        // 非核心 scope 与无 package.json 的条目都不在判定范围内。
         write_package_version(&root.join("other"), "dsh-settings", "0.1.5-rc.2");
         std::fs::create_dir_all(profile_modules.join("@deepseek-ai/dsh-orphan")).unwrap();
 
@@ -2490,6 +2747,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 同 scope 下的共享框架库（插件可合法锁版本）与第三方插件 `dshmarket` 都不能
+    /// 按「版本错配」误删，否则会直接弄坏插件。
     #[test]
     fn shared_framework_libraries_and_third_party_plugins_are_kept() {
         let root =
@@ -2522,6 +2781,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 符号链接形态（残留在 `.dsh-module-fallback` 已消失时正是这种）也必须能删掉，
+    /// 且只删入口、不动源目录。
     #[cfg(unix)]
     #[test]
     fn stale_core_package_symlink_is_removed_without_touching_source() {
@@ -2556,6 +2817,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// scope 目录本身被重定向时，宁可整轮不清，也不能顺着链接删到档案之外。
     #[cfg(unix)]
     #[test]
     fn redirected_scope_is_skipped_entirely() {
@@ -2585,6 +2847,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// `node_modules` 自身被重定向成一个外部目录时，包含锚点必须是档案目录，
+    /// 否则外部目录会被当成「档案内部」而遭删除。
     #[cfg(unix)]
     #[test]
     fn redirected_node_modules_is_skipped_entirely() {

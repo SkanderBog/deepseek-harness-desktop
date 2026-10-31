@@ -9,9 +9,24 @@ import { If } from 'react-if-lite'
 import { Panel } from '@/components/panel'
 import { useListen } from '@/hooks/use-listen'
 
+/**
+ * 核心版本下载对话框：复用首次安装（setup）的 `install-progress` 事件流，
+ * 以进度条 + 日志面板展示下载/解压过程；成功自动关闭，失败展示错误与日志。
+ *
+ * 用法（overlastic holder）：
+ * ```tsx
+ * const [dialog, openDownload] = useOverlay(DownloadCoreDialog, { type: 'holder' })
+ * await openDownload({ tag, version, runDownload: (tag) => download.mutateAsync(tag) })
+ * ```
+ * `runDownload` 由调用方注入（「核心」面板的 download mutation），对话框负责
+ * 监听进度事件并在结束后 resolve/reject。
+ */
 export interface DownloadCoreDialogProps extends PropsWithOverlays {
+  /** 要下载的 release tag（如 `dsh-0.1.0-rc.8-32331963388`） */
   tag: string
+  /** 展示用版本号 */
   version: string
+  /** 实际下载动作（返回下载后的核心行；成功与否决定对话框如何关闭） */
   runDownload: (tag: string) => Promise<HarnessCore>
 }
 
@@ -24,14 +39,19 @@ export function DownloadCoreDialog(props: DownloadCoreDialogProps) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const error = errorMsg != null
 
+  // 进度事件：下载/解压阶段由后端 `install-progress` 推送；对话框随 holder 挂载，
+  // 仅在打开期存在，因此按组件生命周期订阅即可（卸载自动注销）。
   useListen<InstallProgress>('install-progress', (event) => {
     const payload = event.payload
+    // 只前进不后退（下载阶段 0-50，解压阶段 50-100，事件可能乱序到达）
     setPercentage(prev => Math.max(prev, payload.percentage))
     if (payload.log) {
       setLogs(prev => [...prev, payload.log].slice(-5))
     }
   })
 
+  // 打开后执行下载，成功 → confirm() 关闭并 resolve，失败 → 展示错误 + 关闭按钮。
+  // 需要在下一次打开/卸载时取消回调，因此保留带清理的 effect。
   useEffect(() => {
     if (!disclosure.visible) {
       return

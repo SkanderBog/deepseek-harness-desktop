@@ -21,6 +21,7 @@ const { manager, openDialog, mocks, hmrStatus } = vi.hoisted(() => ({
 vi.mock('@/hooks/use-plugins-manager', () => ({ useDshPluginsManager: () => manager }))
 vi.mock('@overlastic/react', () => ({ useOverlay: () => [null, openDialog] }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+// useMutation 桩会真正执行传入的 mutationFn：命令名与参数由用例断言，而不是断言「调用了 mutate」。
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mocks.invalidate, setQueryData: mocks.setQueryData }),
   useQuery: () => hmrStatus,
@@ -60,6 +61,7 @@ vi.mock('@heroui/react', () => ({
   ),
   Label: ({ children }: { children: ReactNode }) => <span>{children}</span>,
   Spinner: () => null,
+  // Switch 的复合结构在桩里展开成原生 switch，好让用例断言选中态与回调值。
   Switch: Object.assign(
     ({ children, isSelected, isDisabled, onChange, 'aria-label': ariaLabel }: { 'children'?: ReactNode, 'isSelected'?: boolean, 'isDisabled'?: boolean, 'onChange'?: (selected: boolean) => void, 'aria-label'?: string }) => (
       <button type="button" role="switch" aria-label={ariaLabel} aria-checked={isSelected} disabled={isDisabled} onClick={() => onChange?.(!isSelected)}>{children}</button>
@@ -273,6 +275,7 @@ describe('one-click plugin upgrade', () => {
 })
 
 describe('local plugin folder picking', () => {
+  /** 目录选择器由宿主在三平台各用原生实现，这里让 get_local_plugin_hmr 与 pick 各自返回固定值。 */
   function mockLocalCommands(picked: string | null) {
     mocks.invoke.mockImplementation(async (command: string) => {
       if (command === 'get_local_plugin_hmr')
@@ -345,6 +348,7 @@ describe('local plugin folder picking', () => {
 })
 
 describe('incompatible plugin install', () => {
+  /** 不兼容的 spec 必须照样入队：授权气泡由管理器弹，面板不能提前拦截成一条错误提示。 */
   it('still hands an incompatible spec to the manager instead of failing it at the panel', async () => {
     manager.search.mockResolvedValue([
       { spec: 'dsh-a', name: 'dsh-a', version: '1.0.0', compatible: false },
@@ -355,6 +359,7 @@ describe('incompatible plugin install', () => {
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'plugins.install' })))
 
     await waitFor(() => expect(manager.install).toHaveBeenCalledExactlyOnceWith(['dsh-a']))
+    // 面板既不拦也不报错：授权与否留给管理器那条气泡。
     expect(mocks.toast).not.toHaveBeenCalled()
   })
 
@@ -373,6 +378,7 @@ describe('incompatible plugin install', () => {
 })
 
 describe('non-registry spec search results', () => {
+  /** 宿主对 `github:` 简写与 git URL 不做 registry 解析，面板只转述它给出的结论，不得自己判定 spec 非法。 */
   it('renders a github spec without a problem label and still installs it', async () => {
     manager.search.mockResolvedValue([
       { spec: 'github:MengYuil/dsh-ponytail', compatible: null },

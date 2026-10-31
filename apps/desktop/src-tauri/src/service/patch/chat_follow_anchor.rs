@@ -1,9 +1,16 @@
 //! 会话滚动跟随的 `overflow-anchor` 补丁（issue #1187）。
+//!
+//! WKWebView 里只要锚定规则带 `:has()`，滚动跟随期间每次节点移除都要对整棵会话子树
+//! 重做选择器匹配（采样中占比近四成，表现为滚动和指针移动都慢半拍）。跟随意图本来
+//! 就由 JS 持有，这里把它镜像到外层滚动容器，让 CSS 改用普通属性选择器；Chrome 不受
+//! 影响是因为 Blink 的 `:has()` 失效范围更窄。
+//!
+//! 镜像值要按滚动容器聚合，而 `owners` 是 WeakMap 不可遍历，故另用 `followers` 记录
+//! 每个滚动容器上的跟随者集合；已发布的旧版补丁直接遍历 WeakMap，必须被就地修复。
 
 use std::path::Path;
 
-use crate::AppHandle;
-use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
+use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
 
 const CLIENT: &str = "node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js";
 
@@ -137,13 +144,17 @@ pub fn apply_at(core_dir: &Path) -> Result<(), String> {
     patch_core_file(core_dir, CLIENT, patch_source)
 }
 
-pub fn apply(app_handle: &AppHandle) -> Result<(), String> {
+pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
     patch_dsh(app_handle, CLIENT, patch_source)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    const FIXTURE: &str = include_str!("../../../../test/fixtures/chat-follow-anchor.txt");
 
     fn released() -> String {
         format!(
@@ -216,5 +227,54 @@ mod tests {
     fn mixed_original_and_shipped_states_are_skipped() {
         let source = format!("{}{}", released(), shipped());
         assert!(matches!(patch_source(&source), PatchOutcome::AnchorMissing));
+    }
+
+    #[test]
+    fn repaired_core_passes_the_javascript_contract() {
+        let core = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let target = core.path().join(CLIENT);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        let shipped = format!(
+            "const css = \"{}\";{}",
+            PATCHED_CSS,
+            FIXTURE.replacen(ORIGINAL_BIND, LEGACY_BIND, 1).replacen(
+                ORIGINAL_FOLLOW,
+                LEGACY_FOLLOW,
+                1
+            )
+        );
+        let PatchOutcome::Patched(repaired) = patch_source(&shipped) else {
+            panic!("shipped fixture should be repaired");
+        };
+        assert!(matches!(
+            patch_source(&repaired),
+            PatchOutcome::AlreadyPatched
+        ));
+        std::fs::write(&target, &repaired).unwrap();
+
+        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../test/fixtures/chat-follow-anchor-contract.mjs");
+        let mut child = Command::new("node")
+            .arg(script)
+            .arg(&target)
+            .stdin(Stdio::null())
+            .spawn()
+            .expect("node is required for the repaired JavaScript contract");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(
+                    status.success(),
+                    "repaired JavaScript contract failed: {status}"
+                );
+                break;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("repaired JavaScript contract timed out");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }

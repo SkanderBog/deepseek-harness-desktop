@@ -12,11 +12,18 @@ import { silence } from '@/utils/silence'
 
 export interface DesktopAboutDialogProps extends PropsWithOverlays {}
 
+/**
+ * 「关于 Desktop」对话框：展示 Powered by、版本号、发布时间与版权信息。
+ *
+ * 使用 overlastic 命令式打开（`useOverlay(DesktopAboutDialog)`），
+ * 打开时通过 store 的 `loadAbout` 拉取信息，关闭由 `disclosure.cancel` 完成。
+ */
 export function DesktopAboutDialog(props: DesktopAboutDialogProps) {
   const disclosure = useDisclosure({ props })
   const { t } = useTranslation()
   const { about } = useStore(store.desktopUpdater)
 
+  // 对话框可见即拉取「关于」信息（overlastic 命令式打开 → visible 由 false 翻 true）
   useWhenever(disclosure.visible, () => {
     void store.desktopUpdater.loadAbout()
   })

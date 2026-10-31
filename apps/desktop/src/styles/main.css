@@ -14,6 +14,8 @@
 }
 
 
+/* WebView2 123+ 的原生拖拽区域支持触摸屏；Windows runtime 110+ 通过
+   msWebView2EnableDraggableRegions 参数启用。按钮不在该区域内，故无需 no-drag。 */
 [data-tauri-drag-region] {
   app-region: drag;
   -webkit-app-region: drag;
@@ -149,6 +151,10 @@ html[data-theme="light"] {
   --accent-foreground: #ffffff;        /* label-primary-foreground (bluish-00) */
 }
 
+/* spinner 动画：与官方 web shell boot 页（AppRoot.module.css）逐字一致。
+   刻意不用 Tailwind 的 animate-spin（其 animation 简写走 var(--animate-spin)
+   间接层，WebView2 下 var() 出现在 animation 简写里可能整条失效导致不转），
+   直接写 animation + @keyframes，确保必定旋转。 */
 @keyframes load-spin {
   to { transform: rotate(360deg); }
 }
@@ -160,7 +166,8 @@ html[data-theme="light"] {
 /* 加载态气泡（HeroUI 默认气泡里带 Spinner 的那种）由 Store 持有整个生命周期，
    用户关闭只会让共享进度气泡消失、随后又被重建，故不提供关闭入口。HeroUI 的默认
    children 无条件渲染 ToastCloseButton 且 Toast.Provider 不可注入 slots，只能按库
-   自己的 data-slot 标记隐藏。 */
+   自己的 data-slot 标记隐藏。:has() 需 WebView2 105+ / WKWebView 15.4+，旧引擎下
+   选择器失效、按钮照常显示，仅退化不影响功能。 */
 [data-slot="toast"]:has([data-slot="spinner"]) [data-slot="toast-close"] {
   display: none;
 }

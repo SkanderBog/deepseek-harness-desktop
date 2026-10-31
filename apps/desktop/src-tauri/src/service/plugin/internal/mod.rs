@@ -1,15 +1,32 @@
+//! 内置插件启动自愈：随安装包分发的内置插件（条目位于
+//! `plugins.built-in`，产物目录 `resources/node_modules/<name>` 由构建期
+//! `scripts/build-plugins.ts` 的 `pnpm deploy` 打包）在服务启动前核对
+//! 「是否已安装 + 安装路径是否仍指向当前捆绑目录」：未安装 / 路径不正确 / 用户
+//! 卸载后残留缺失 → 一律走常规安装流程强制重装，保证桌面外壳依赖的桥接层
+//! （如 dsh-tauri）随包可用。
+//!
+//! debug 构建会自动发现仓库根 `packages/*` 中非私有且含 `dsh` 对象的包，把安装
+//! 目标指到本地插件源码（热更新迭代，见 [`super::preset::bundled_plugin_dir`]）。
+//!
+//! 为什么放在启动而非安装流程：安装是用户主动行为，内置插件是应用自身的完整性
+//! 要求——用户怎么卸载、何时卸载都不影响下次启动自动恢复，无需任何用户操作。
+//!
+//! 模块划分：协调/飞行（本文件）、profile 清单/入口文件操作（[`manifest`]）与
+//! pnpm 失败后的离线自建链接兜底（[`materialize`]）。
+
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use tauri::AppHandle;
 
 use super::cancel::terminate_owned_install;
 use super::install::install_internal;
-use super::installed::{ProfilePackageJson, installed_name, profile_dir};
+use super::installed::{installed_name, profile_dir, ProfilePackageJson};
 use super::preset::{
-    PreinstallPluginInfo, bundled_dep_spec, bundled_plugin_dir, bundled_plugin_dir_from,
-    load_presets, presets_from_manifest,
+    bundled_dep_spec, bundled_plugin_dir, bundled_plugin_dir_from, load_presets,
+    presets_from_manifest, PreinstallPluginInfo,
 };
-use super::process::{PREINSTALL_LOG_EVENT, PreinstallLogPayload, ProcessOwner, new_process_owner};
+use super::process::{new_process_owner, PreinstallLogPayload, ProcessOwner, PREINSTALL_LOG_EVENT};
 use crate::config;
 
 use manifest::{
@@ -17,12 +34,17 @@ use manifest::{
     internal_plugin_entry_is_ready, is_local_link_dep, remove_duplicate_bundle_entries_from_patch,
     remove_internal_plugins_from_manifest, remove_stale_plugin_entry, write_profile_manifest,
 };
-use materialize::{OfflineLink, materialize_links};
+use materialize::{materialize_links, OfflineLink};
 
 mod manifest;
 mod materialize;
-use crate::AppHandle;
 
+/// 核对并强制安装缺失/路径不正确/被卸载的内置插件，在服务进程启动前调用。
+///
+/// 最佳努力：任何失败只记告警（调用方不阻断启动）；捆绑目录缺失（开发环境未跑
+/// build:plugins）时跳过，交由常规引导流程处理；批量待装列表为空则不触发任何安装。
+/// 内置插件阶段事件载荷：除开始/结束外定期发送 heartbeat，令前端只在安装确实
+/// 无进展时触发 inactivity deadline，同时仍受绝对上限约束。
 #[derive(serde::Serialize, Clone)]
 struct InternalPluginsPhase {
     phase: &'static str,
@@ -43,14 +65,30 @@ enum InternalPluginPhaseDetail {
     Cancelled,
 }
 
+/// 串行化内置插件核对/安装：auto_start（Rust 侧 start→launch）与前端 boot 流程
+/// （新增的 boot 期 ensure 命令）可能并发触发，而安装会启动 `dsh plugin add`
+/// 子进程——两个 pnpm 抢同一档案目录会互相打断。若另一路正在执行，这里等它
+/// 完成后再核对（幂等：上次已装好则本轮全部 no-op）。
 const ENSURE_ABSOLUTE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 const ENSURE_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const ENSURE_OWNER_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const ENSURE_OWNER_DRAIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 /// 复用「刚刚成功过」的核对结论的时间窗（issue #766）。
+///
+/// 一次启动里两路调用的间隔是秒级，30s 足够覆盖；超过窗口一律重新核对，避免长
+/// 时间缓存掩盖窗口外的磁盘变化（例如手工删掉某个内置插件的 node_modules）。
 const ENSURE_REUSE_WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// 最近一次成功核对的输入指纹与完成时刻（issue #766）。
+///
+/// 一次启动里 `ensure` 会被调用两次：Rust 侧 auto_start（`workflow::start` →
+/// `launch`）与前端 boot 的 `ensure_internal_plugins` 命令，两者间隔只有几百
+/// 毫秒～几秒，输入（档案清单 + 核心版本 + 内置插件集合）完全一致，第二路必然
+/// 整轮 no-op，却仍要重跑清单解析、失效链接清理、可写性预检与 loader 状态修复。
+/// 记下成功结论后，第二路直接复用。
+///
+/// 只记成功：失败/取消绝不入缓存——两路中任何一路失败，另一路仍会完整重跑并把
+/// 真实错误暴露给前端。指纹含档案清单内容，安装/卸载/去重都会让它自然失效。
 #[derive(Clone)]
 struct EnsureReceipt {
     fingerprint: u64,
@@ -87,6 +125,7 @@ struct EnsureCoordinator {
 }
 
 impl EnsureCoordinator {
+    /// 输入未变、且上次成功核对仍在窗口内：本次调用无需再做任何事。
     fn reuse(&self, fingerprint: u64) -> bool {
         self.receipt.as_ref().is_some_and(|receipt| {
             receipt.fingerprint == fingerprint
@@ -172,6 +211,12 @@ fn ensure_lock(profile: &str) -> std::sync::Arc<tokio::sync::Mutex<EnsureCoordin
         .clone()
 }
 
+/// 在启动 Harness 前修复旧桌面目录遗留的 profile loader 状态。
+///
+/// 这一步必须发生在启动 dsh 子进程之前：dsh 会同时合并 bundle patch、profile
+/// patch、home patch；如果旧 checkout 曾把内置插件 patch 写入其中，单纯重装
+/// `node_modules` 无法消除重复 loader entry。只清理桌面端明确拥有的内置 id，
+/// 绝不触碰用户插件。
 fn repair_loader_state(
     profile: &Path,
     dsh_home: &Path,
@@ -236,6 +281,8 @@ fn repair_loader_state(
         return Ok(pending);
     }
 
+    // dsh 会把运行时组合结果写回 cordis.yml；旧版本留下的组合结果会在下一次
+    // 启动时与新 patch 再合并，必须恢复官方约定的空根配置。
     let root = profile.join("cordis.yml");
     const EMPTY_ROOT: &str = "# dsh profile root — an empty entry list. The tree is composed as patches:\n# each bundle in package.json's dsh.profile.bundles, then cordis.patch.yml, then any\n# --patch overlays. Edit cordis.patch.yml, not this file.\n[]\n";
     let existing = match std::fs::read_to_string(&root) {
@@ -245,7 +292,7 @@ fn repair_loader_state(
             return Err(format!(
                 "INTERNAL_PLUGIN_ROOT_READ_FAILED: {}: {error}",
                 root.display()
-            ));
+            ))
         }
     };
     if existing.as_deref() != Some(EMPTY_ROOT) && profile.is_dir() {
@@ -259,6 +306,13 @@ fn repair_loader_state(
     Ok(false)
 }
 
+/// 核对输入指纹：档案路径 + loader 状态修复的全部输入 + 核心版本 + 内置插件的安装规格。
+///
+/// 只用于判断「这次调用与上次成功的那次是不是同一份输入」，因此取的都是廉价且必然
+/// 随状态变化而变化的量。除了档案清单，还必须带上 `repair_loader_state` 会读写的另三个
+/// 文件（档案根 `cordis.yml` 与两层 patch 层）：只盯 `package.json` 的话，patch 被改或
+/// 根被写脏时指纹不变，复用就会连修复一起跳过，把脏状态留在档案里。内置插件按元组排序
+/// 后整体喂入，避免清单条目顺序抖动造成假失效。
 fn ensure_fingerprint(app_handle: &AppHandle, internal: &[PreinstallPluginInfo]) -> u64 {
     use std::hash::{Hash, Hasher};
 
@@ -322,6 +376,7 @@ async fn ensure_scoped(app_handle: &AppHandle) -> Result<(), String> {
         )?;
         return require_running_plugins_ready(&profile, &check);
     }
+    // 同一次启动的两路调用：后到的一路输入未变、且前一路刚成功，直接复用结论，
     // 连下面的失效链接清理、可写性预检与 loader 状态修复一起跳过（issue #766）。
     let fingerprint = ensure_fingerprint(app_handle, &internal);
     let reused = if internal.is_empty() {
@@ -338,6 +393,8 @@ async fn ensure_scoped(app_handle: &AppHandle) -> Result<(), String> {
     let outcome =
         receive_current_or_next_flight(|| subscribe_or_start(app_handle, &internal)).await;
     if outcome.is_ok() {
+        // 记「完成后的」指纹：本轮自己写回的状态（去重/修复/安装）就是已被核对过的
+        // 状态，后到的那一路按同一状态算指纹即可命中，不会白跑第二轮。
         lock.lock()
             .await
             .record(ensure_fingerprint(app_handle, &internal));
@@ -365,16 +422,20 @@ async fn subscribe_or_start(
                     let mut outcome =
                         run_ensure_operation(&app_handle, &internal, owner, cancel_tx, cancel_rx)
                             .await;
+                    // 强杀返回不等于持有句柄的 wait 已完成；必须等精确 owner 的 PID
+                    // 守卫随 wait 退出，才能发布结果并允许 Retry 创建下一次 flight。
 
                     if !wait_for_owner_release(owner, ENSURE_OWNER_DRAIN_TIMEOUT).await {
                         let reason = format!(
-                            "INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT: plugin process owner {owner:?} remained active for {} seconds",
-                            ENSURE_OWNER_DRAIN_TIMEOUT.as_secs()
-                        );
+                        "INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT: plugin process owner {owner:?} remained active for {} seconds",
+                        ENSURE_OWNER_DRAIN_TIMEOUT.as_secs()
+                    );
                         log::error!("{reason}");
                         outcome = Err(reason.clone());
                         let _ = result_tx.send(Some(outcome));
                         lock.lock().await.mark_cleanup_failed(id, reason);
+                        // 保留 cleanup-failed flight 与唯一 owner；进程锁仍由 wait 线程持有。
+                        // 若系统最终完成 reap，再释放 flight 允许后续 Retry。
                         while super::process::active_plugin_pid(owner).is_some() {
                             tokio::time::sleep(ENSURE_OWNER_DRAIN_INTERVAL).await;
                         }
@@ -402,6 +463,8 @@ where
                 return receive_flight_result(&mut result).await?;
             }
             EnsureSubscription::Cancelling(mut result) => {
+                // Retry 不继承已取消 flight 的结果；等它完成清理并从 coordinator
+                // 移除后回到循环，创建且只创建一个全新的 flight。
                 let _ = receive_flight_result(&mut result).await?;
             }
             EnsureSubscription::CleanupFailed(reason) => return Err(reason),
@@ -455,6 +518,7 @@ async fn receive_flight_result(
     }
 }
 
+/// 取消共享的内置插件安装并等待拥有者完成清理，确保 Retry 不会叠加新进程。
 pub(crate) async fn cancel() -> Result<(), String> {
     let mut result = {
         let profile =
@@ -622,6 +686,16 @@ fn prepare_internal_plugins(
         }
         let Some(bundled) = resolve_bundle(&preset.id) else {
             sources_ready = false;
+            // 未找到内置插件目录：release 说明构建期 build:plugins 未打包（发布
+            // 缺陷，由 build:plugins 响亮失败）；debug 自动发现 packages/* 中非私有
+            // 且含 dsh 对象的包，未命中时跳过（「找不到则不装」）。
+            //
+            // debug 下这是「切换 git 分支导致某内置插件源码消失」的典型场景：上一
+            // 分支把它以 `link:<packages/<id>>` 装进 profile，当前分支不再有该目录，
+            // 悬空链接指向不存在的源。此时重装无从谈起（无源），且残留悬空链接会让
+            // loader 无法解析。因此只要它仍以本地链接（`link:`/`file:`）形式安装在
+            // profile 里，就直接卸载该插件；registry/git 等非本地依赖（用户独立安装
+            // 的同名包）绝不误卸。
             let name = installed_name(preset).to_string();
             let is_orphan = dependencies
                 .get(&name)
@@ -640,6 +714,10 @@ fn prepare_internal_plugins(
             continue;
         };
         let name = installed_name(preset).to_string();
+        // 捆绑目录被解析到但源 package.json 不可读（悬空源/资源被清理）：pnpm 对指向
+        // 不存在目录的 `link:` 依赖会静默 exit 0（日志特征 `Installing a dependency
+        // from a non-existent directory`），重装必然再次假成功，形成启动死循环。这类
+        // 是「应用资源缺失」而非「路径变更」：直接给出精确错误，阻断本轮重装。
         if !internal_plugin_entry_is_ready(&bundled) {
             return Err(format!(
                 "INTERNAL_PLUGIN_SOURCE_MISSING: 内置插件 {name} 的捆绑源目录 {} 缺失或不可读（应用资源目录可能被移动/删除或盘符变更）。pnpm 会静默跳过安装（exit 0 无产物），导致服务启动时 loader 抛 ERR_MODULE_NOT_FOUND。请重新安装应用或恢复应用资源目录后重试。",
@@ -647,11 +725,18 @@ fn prepare_internal_plugins(
             ));
         }
         let expected = bundled_dep_spec(&bundled);
+        // ① 依赖声明：未声明，或声明的值不再指向当前捆绑目录（路径变更/被改
+        // 写）→ 重装；② 依赖真实性：node_modules 链接/拷贝须真实存在（用户
+        // 手动清过 node_modules 时声明可能残留但产物已不在）→ 重装。
         let dep_ok = dependencies
             .get(&name)
             .is_some_and(|actual| dep_matches_spec(actual, &expected));
         let entry = profile.join("node_modules").join(&name);
         let link_ok = internal_plugin_entry_is_ready(&entry);
+        // ③ 挂载登记：`dsh.profile.bundles` 缺项时插件从不挂载——宿主插件的 apply
+        // （含 dsh-tauri 的载体鉴权 gate）不运行，索引恒 401、健康检查永远
+        // `boot page returned 401`。这种「依赖在、bundle 没登记」的半残状态必须判为
+        // 需重装：只按 deps/link 判定会把它当成就绪，装过一次后永远修不回来。
         let bundle_ok = manifest
             .as_ref()
             .and_then(|value| value.pointer("/dsh/profile/bundles"))
@@ -665,6 +750,10 @@ fn prepare_internal_plugins(
             log::info!(
                 "INTERNAL_PLUGIN_NEEDS_REINSTALL: {name}（dep_ok={dep_ok}, link_ok={link_ok}, bundle_ok={bundle_ok}, expected={expected}）"
             );
+            // 应用升级会移动 `.app` 内的捆绑目录，旧 profile 可能留下指向上个
+            // 版本资源的悬空链接。pnpm 在处理这些入口时会在真正改写依赖前以
+            // 254 退出；先只清理 node_modules 入口（绝不跟随链接删除目标），再
+            // 走常规 add，令 pnpm 从当前捆绑目录重建链接。
             need.push((preset.id.clone(), name, entry));
         }
     }
@@ -697,11 +786,7 @@ fn require_running_plugins_ready(
     {
         return Err(format!(
             "INTERNAL_PLUGIN_RESTART_REQUIRED: 内置插件需要修复；请停止当前服务后通过正常启动重试（need={:?}, orphans={:?}, migration={}, sources_ready={}, fallback={}）。",
-            check
-                .need
-                .iter()
-                .map(|(id, _, _)| id.as_str())
-                .collect::<Vec<_>>(),
+            check.need.iter().map(|(id, _, _)| id.as_str()).collect::<Vec<_>>(),
             check.orphans,
             check.migration_pending,
             check.sources_ready,
@@ -834,7 +919,14 @@ async fn ensure_inner(
             }
         }
     }
+    // 无论本轮是否需要重装，都清理旧版 dsh 生成的 profile-local fallback。
+    // 否则本轮 no-op 后，用户稍后从市场安装插件仍会把同一批 junction 交给 pnpm。
+    //
     // best-effort（issue #466）：这只是旧目录的 housekeeping，失败绝不能中止本轮
+    // 的插件核对/重装——该目录属主是 root（不可删除）时，用户看到的会是
+    // 「Plugin installation 阶段失败：INTERNAL_PLUGIN_FALLBACK_REMOVE_FAILED」，
+    // 把「档案目录权限不可写」这个真正要修的问题掩盖掉。与孤儿卸载「任何失败
+    // 只记告警」的约定一致；安装失败分支同样忽略该错误。
     remove_legacy_profile_module_fallback_best_effort(&profile);
     if need.is_empty() {
         return Ok(());
@@ -850,6 +942,10 @@ async fn ensure_inner(
         ids.len(),
     );
 
+    // pnpm add 会先解析清单里的所有既有依赖。0.9.0 将随包目录从
+    // `preset-plugins` 迁至 `internal-plugins` 后，旧 file:/link: 路径已不存在，pnpm
+    // 会在真正改写依赖前以 ENOENT/254 退出。仅移除本轮即将重装的 internal 包声明
+    // 与 bundle 引用，保留所有其它插件；add 成功后 dsh 会把它们按当前路径写回。
     if let Some(value) = manifest.as_mut() {
         let names: HashSet<&str> = need.iter().map(|(_, name, _)| name.as_str()).collect();
         if remove_internal_plugins_from_manifest(value, &names) {
@@ -857,7 +953,15 @@ async fn ensure_inner(
         }
     }
 
+    // 必须等全部检查完成后再删除旧入口：多个 internal id 可能映射到同一 npm 包，
+    // 边遍历边删除会让后续原本健康的别名被误判缺失。统一去重后只删一次。
+    //
+    // 幂等跳过：仅删除「真的损坏/缺失」的入口。依赖声明缺失（dep_ok=false）但链接本身
+    // 健康（link_ok=true）时仍会进入 need，此时绝不要 delete + recreate——Windows 下
+    // 重建 junction/reparse point 后立即回读会随机 `-4094 [UNKNOWN] unknown error`
     // （issue #264），一处失败即令整个安装放弃、`link:` 依赖不落盘，下次启动又判定
+    // dep_ok=false 再装，形成不可恢复的启动死循环。保留健康链接，交给本轮 `dsh plugin
+    // add` 重写依赖声明即可（pnpm 处理 link: 依赖时会自行覆盖旧入口）。
     let mut entries = HashSet::new();
     for (_, _, entry) in &need {
         if !entries.insert(entry.clone()) {
@@ -877,9 +981,17 @@ async fn ensure_inner(
             )
         })?;
     }
+    // 复用常规安装编排（环境准备/补齐 pnpm/`dsh plugin add file:<dir>`）；
+    // 启动阶段无持有进程，install 内部不会停服务。失败同样交给调用方告警。
     let install_result = install_internal(app_handle, &ids, cancel, owner).await;
     if let Err(e) = install_result {
+        // 即使 pnpm 失败也清掉旧 fallback，下一次重试必须从干净入口开始。
         remove_legacy_profile_module_fallback_best_effort(&profile);
+        // pnpm 的 `link:` 安装路径在「建好目录链接后立刻回读 package.json」这一步
+        // 失败时（libuv UV_UNKNOWN / 退出码 -4094）可能是**环境性的恒定失败**
+        // （实时防护 / 云盘 / 重解析点过滤驱动），重试与重装都无法越过；此时改由
+        // 桌面端自建链接并补齐清单，让内置插件落盘、启动继续，而不是把应用永久
+        // 卡在 Plugin installation 阶段（见 [`materialize`]）。
         if is_link_materialization_failure(&e, &need) {
             crate::service::workflow::instances::emit(
                 app_handle,
@@ -904,6 +1016,8 @@ async fn ensure_inner(
                 }
             }
         }
+        // 同一签名但诊断里读不到失败路径：无法确认失败的是内置插件入口，因此不做
+        // 兜底（免得把用户自己依赖的真实失败吞成成功），只给可操作的排除项提示。
         if is_untraceable_link_readback_failure(&e) {
             log::warn!("INTERNAL_PLUGIN_OFFLINE_LINK_UNATTRIBUTED: {e}");
             return Err(format!(
@@ -914,6 +1028,13 @@ async fn ensure_inner(
         return Err(format!("INTERNAL_PLUGIN_INSTALL_FAILED: {e}"));
     }
 
+    // pnpm 成功 ≠ 链接与清单落盘：核心的 install 会按自己解析到的插件集重写
+    // `dependencies` 与 `dsh.profile.bundles`，解析不到的内置插件会被**剪掉**
+    // （本机 web profile 实测 13→2、11→0）；pnpm 也可能以 0 退出却没建出入口
+    // （目标目录对它不可见时只发警告，见 pnpm local-resolver）。两者都会让内置
+    // 插件不挂载：宿主插件的 apply 不运行，索引恒 401、健康检查永远 `boot page
+    // returned 401`、最终 Process boot 超时。收尾同时回读入口与清单，缺任一项
+    // 就用同一套物化路径写回（幂等）——否则 `bundle_ok` 每轮判需重装、每轮又被打回原形。
     let missing_manifest = presets_missing_from_manifest(&profile, &need);
     let unlinked = unlinked_internal_entries(&need);
     if missing_manifest.is_some() || !unlinked.is_empty() {
@@ -927,6 +1048,7 @@ async fn ensure_inner(
     Ok(())
 }
 
+/// 安装后仍未真实落盘的内置插件入口（`node_modules/<name>/package.json` 不可读）。
 fn unlinked_internal_entries(need: &[(String, String, PathBuf)]) -> Vec<String> {
     need.iter()
         .filter(|(_, _, entry)| !internal_plugin_entry_is_ready(entry))
@@ -934,6 +1056,8 @@ fn unlinked_internal_entries(need: &[(String, String, PathBuf)]) -> Vec<String> 
         .collect()
 }
 
+/// 安装收尾校验：返回清单里缺登记的安装包名（`dependencies` 与
+/// `dsh.profile.bundles` 任一缺失即算），全都在则返回 `None`。
 fn presets_missing_from_manifest(
     profile: &Path,
     need: &[(String, String, PathBuf)],
@@ -966,6 +1090,8 @@ fn presets_missing_from_manifest(
     (!missing.is_empty()).then_some(missing)
 }
 
+/// 安全软件排除项提示：兜底失败与「同类但无法归因」时都要给，避免用户只看到裸
+/// pnpm 报错而无从下手。
 fn link_readback_hint(profile: &Path) -> String {
     format!(
         "提示：若本机安全软件（实时防护 / EDR / 云盘同步）拦截了档案目录的目录链接，\
@@ -974,6 +1100,10 @@ fn link_readback_hint(profile: &Path) -> String {
     )
 }
 
+/// pnpm 诊断是否属于「`link:` 入口建成后回读 / 落盘失败」这一类签名（尚未归因）。
+///
+/// 注意退出码的措辞：`install` 落盘的是 `dsh plugin exited with code -4094`，
+/// 匹配 `code -4094` 而不是 `exit code -4094`。
 fn looks_like_link_readback_failure(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
     lower.contains("preinstall_failed")
@@ -981,10 +1111,26 @@ fn looks_like_link_readback_failure(error: &str) -> bool {
         && (lower.contains("code -4094") || lower.contains("unknown error, open"))
 }
 
+/// 同类签名但诊断里读不到失败路径：无从确认失败的就是内置插件入口。
 fn is_untraceable_link_readback_failure(error: &str) -> bool {
     failed_open_path(error).is_none() && looks_like_link_readback_failure(error)
 }
 
+/// 判定安装失败是否属于「pnpm 建好 `link:` 入口后无法回读 / 未落盘」且**可归因到
+/// 本轮待装的内置插件**——即离线自建链接能修、且修了不会掩盖别的失败的那一类。
+///
+/// - `PREINSTALL_SILENT_FAIL`：pnpm 以 0 退出却没落盘产物（源码存在时自建链接必然成功）；
+/// - `cannot resolve profile bundle "<name>"`：pnpm 以 0 退出后，dsh 结算新依赖时
+///   解析不到 `node_modules/<name>`（pnpm 对「目标目录不可见 / 刚建好的重解析点」
+///   只发警告并 exit 0），**且**点名的包是本轮待装入口；
+/// - `PREINSTALL_FAILED`：诊断含 `node_modules` 与 `unknown error, open
+///   '<profile>/node_modules/...'`（或退出码 `-4094`，libuv `UV_UNKNOWN`），**且**
+///   诊断里的失败路径确实落在本轮待装入口之下。
+///
+/// 网络 / spec / git 传输层 / 入口构建失败绝不命中：那些不是链接问题。同一签名也
+/// 可能来自用户自己的 `link:` 依赖（`pnpm add` 会一并解析档案依赖），路径不可归因
+/// 时一律不兜底——宁可漏修也不能把真实失败吞成「安装成功」，此时调用方改为给出
+/// 排除项提示（见 [`is_untraceable_link_readback_failure`] 与 [`link_readback_hint`]）。
 fn is_link_materialization_failure(error: &str, need: &[(String, String, PathBuf)]) -> bool {
     if error
         .to_ascii_lowercase()
@@ -1006,6 +1152,10 @@ fn is_link_materialization_failure(error: &str, need: &[(String, String, PathBuf
     }
 }
 
+/// 诊断是否点名了「本轮待装内置插件解析不到」。`dsh` 的措辞是
+/// `cannot resolve profile bundle "<package>"`，包名即 `dsh.profile.bundles` 里的
+/// 安装名；只比对安装名——预设 id 与安装名不同（scoped 包）时用 id 比对，会把用户
+/// 同名的普通依赖误认成内置插件。
 fn names_unresolved_internal_bundle(error: &str, need: &[(String, String, PathBuf)]) -> bool {
     if !error.contains("cannot resolve profile bundle") {
         return false;
@@ -1016,8 +1166,10 @@ fn names_unresolved_internal_bundle(error: &str, need: &[(String, String, PathBu
     })
 }
 
+/// 取 pnpm 诊断里 `unknown error, open '<path>'` 的路径（统一分隔符、去尾斜杠）。
 fn failed_open_path(error: &str) -> Option<String> {
     const MARKER: &str = "unknown error, open ";
+    // 大小写折叠只改 ASCII 字节，偏移量在两份字符串上一致，因此仍返回原始大小写。
     let lower = error.to_ascii_lowercase();
     let start = lower.find(MARKER)? + MARKER.len();
     let rest = error.get(start..)?.trim_start();
@@ -1030,12 +1182,14 @@ fn normalize_link_path(path: &str) -> String {
     path.replace('\\', "/").trim_end_matches('/').to_string()
 }
 
+/// 路径比较统一折叠大小写：Windows 不区分大小写，宁可漏兜底也不误吞其它依赖的失败。
 fn path_lives_under(path: &str, entry: &Path) -> bool {
     let entry = normalize_link_path(&entry.to_string_lossy()).to_ascii_lowercase();
     let path = path.to_ascii_lowercase();
     path == entry || path.starts_with(&format!("{entry}/"))
 }
 
+/// 用桌面端的目录链接实现落盘本轮待修复的内置插件入口（离线、不依赖 node/pnpm）。
 fn materialize_internal_links(
     app_handle: &AppHandle,
     profile: &Path,
@@ -1054,6 +1208,8 @@ fn materialize_internal_links(
         });
     }
     materialize_links(profile, &links)?;
+    // pnpm 失败路径已为这些 id 记过安装错误；兜底成功后必须清掉，否则插件面板
+    // 会继续显示「安装失败」而实际上插件已就绪（与 verify 的成功路径一致）。
     for (id, _, _) in need {
         if let Err(e) = super::errors::clear(app_handle, id) {
             log::warn!("failed to clear plugin error for {id} after offline link: {e}");
@@ -1062,6 +1218,7 @@ fn materialize_internal_links(
     Ok(())
 }
 
+/// best-effort 包装：旧版 profile-local fallback 清理失败只记告警，绝不阻断本轮的
 /// 插件核对与重装（issue #466）。返回 `Err` 的原函数保留完整错误细节供日志定位。
 fn remove_legacy_profile_module_fallback_best_effort(profile: &Path) {
     if let Err(e) = remove_legacy_profile_module_fallback(profile) {
@@ -1069,6 +1226,17 @@ fn remove_legacy_profile_module_fallback_best_effort(profile: &Path) {
     }
 }
 
+/// 清理旧版 profile-local fallback，避免 pnpm 管理跨目录 junction。
+///
+/// 先判回退目录是否存在，不存在即返回：要删的 junction 全部指向该目录
+/// （[`is_legacy_profile_fallback_target`]），本函数又是仓库内唯一的删除方——删除
+/// 之前必先扫过链接，遍历失败则提前返回、不删目录。所以「目录已不存在、却仍有指向
+/// 它的链接」只可能来自仓库外的删除（用户手工删掉该目录，或旧版核心自行清理）；那
+/// 属于残缺状态，后续插件安装与自愈会重新解析，不值得为它让每次启动都付全树遍历的
+/// 代价。
+///
+/// 该遍历（本机 2273 项 / 207 目录 ≈ 480ms）在健康档案下是纯开销，而它位于每次
+/// 启动都要走的核对路径上，必须跳过。
 fn remove_legacy_profile_module_fallback(profile: &Path) -> Result<(), String> {
     let fallback = profile.join(".dsh-module-fallback");
     if !fallback.is_dir() {
@@ -1093,6 +1261,7 @@ fn remove_legacy_profile_module_fallback(profile: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 递归删除旧 fallback 中的 junction，先处理链接本身，不跟随到资源目录。
 fn remove_legacy_fallback_links(root: &Path) -> Result<(), String> {
     let entries = std::fs::read_dir(root).map_err(|e| {
         format!(
@@ -1133,6 +1302,7 @@ fn remove_legacy_fallback_links(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 判断 junction 目标是否属于旧版 profile-local fallback。
 fn is_legacy_profile_fallback_target(target: &Path) -> bool {
     target
         .components()
@@ -1324,11 +1494,9 @@ mod tests {
             migrated["dsh"]["profile"]["bundles"],
             serde_json::json!(["builtin"])
         );
-        assert!(
-            std::fs::read_to_string(profile.join("cordis.patch.yml"))
-                .unwrap()
-                .contains("user-plugin")
-        );
+        assert!(std::fs::read_to_string(profile.join("cordis.patch.yml"))
+            .unwrap()
+            .contains("user-plugin"));
         assert_eq!(
             prepare_early_plugins_from(&profile, root.path(), &presets, None, |_| {
                 Some(source.clone())
@@ -1361,11 +1529,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["builtin"]
         );
-        assert!(
-            require_running_plugins_ready(&profile, &running)
-                .unwrap_err()
-                .starts_with("INTERNAL_PLUGIN_RESTART_REQUIRED:")
-        );
+        assert!(require_running_plugins_ready(&profile, &running)
+            .unwrap_err()
+            .starts_with("INTERNAL_PLUGIN_RESTART_REQUIRED:"));
         assert_eq!(
             std::fs::read_to_string(profile.join("cordis.yml")).unwrap(),
             running_root
@@ -1381,11 +1547,9 @@ mod tests {
         std::fs::write(&path, healthy.to_string()).unwrap();
         let running = running_check().unwrap();
         assert!(running.migration_pending);
-        assert!(
-            require_running_plugins_ready(&profile, &running)
-                .unwrap_err()
-                .starts_with("INTERNAL_PLUGIN_RESTART_REQUIRED:")
-        );
+        assert!(require_running_plugins_ready(&profile, &running)
+            .unwrap_err()
+            .starts_with("INTERNAL_PLUGIN_RESTART_REQUIRED:"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), healthy.to_string());
         assert_eq!(check(&healthy).unwrap(), EarlyPluginState::Ready);
         assert_eq!(
@@ -1489,6 +1653,8 @@ mod tests {
         assert_eq!(presets_missing_from_manifest(root.path(), &[]), None);
     }
 
+    /// 构造本轮待装列表 `(id, 包名, 入口)`：入口与 `ensure_inner` 一致地落在
+    /// `<profile>/node_modules/<包名>`，用报告里的真实 profile 路径。
     fn need_entries(names: &[&str]) -> Vec<(String, String, PathBuf)> {
         let profile = Path::new("C:\\Users\\w00012491\\.dsh\\profiles\\tauri");
         names
@@ -1504,6 +1670,7 @@ mod tests {
     }
 
     /// issue #264 的**恒定**版本：pnpm 建好 `link:` 目录链接后回读 package.json
+    /// 失败（libuv UV_UNKNOWN / 退出码 -4094），必须命中离线自建链接兜底。
     #[test]
     fn link_materialization_failure_detects_uv_unknown_readback() {
         let error = "PREINSTALL_FAILED: dsh plugin exited with code -4094: UNKNOWN  UNKNOWN: \
@@ -1511,6 +1678,7 @@ mod tests {
                      dsh-tauri-scheduler\\package.json'";
         let need = need_entries(&["dsh-tauri-scheduler"]);
         assert!(is_link_materialization_failure(error, &need));
+        // pnpm / Node 的措辞随版本变化，判定大小写不敏感
         assert!(is_link_materialization_failure(
             &error.to_ascii_lowercase(),
             &need
@@ -1527,6 +1695,7 @@ mod tests {
     }
 
     /// issue #1156：pnpm 以 0 退出（或 pnpm 没落盘却让 dsh 继续结算）时，dsh 的
+    /// `cannot resolve profile bundle` 点名了本轮待装入口，同样必须走离线自建链接兜底。
     #[test]
     fn link_materialization_failure_detects_unresolved_internal_bundle() {
         let error = "PREINSTALL_FAILED: dsh plugin exited with code 1: throw new Error(`${binName}: \
@@ -1538,10 +1707,12 @@ mod tests {
             error,
             &need_entries(&["dsh-tauri", "dsh-tauri-ui"])
         ));
+        // scoped 包：诊断里出现的是安装名
         assert!(is_link_materialization_failure(
             "cannot resolve profile bundle '@scope/dsh-tauri' from the dsh installation",
             &need_entries(&["@scope/dsh-tauri"])
         ));
+        // 预设 id 与安装名不同时只认安装名：同名 id 出现在错误里不能归因
         let scoped = vec![(
             "dsh-tauri".to_string(),
             "@scope/dsh-tauri".to_string(),
@@ -1555,6 +1726,7 @@ mod tests {
             "cannot resolve profile bundle \"@scope/dsh-tauri\" from the dsh installation",
             &scoped
         ));
+        // 点名的不是本轮待装入口（用户自己的依赖 / 其它包）：绝不兜底
         assert!(!is_link_materialization_failure(
             error,
             &need_entries(&["dsh-tauri-ui"])
@@ -1587,16 +1759,15 @@ mod tests {
         );
         std::fs::create_dir_all(profile.join("node_modules").join("dsh-tauri")).unwrap();
         std::fs::write(
-            profile
-                .join("node_modules")
-                .join("dsh-tauri")
-                .join("package.json"),
+            profile.join("node_modules").join("dsh-tauri").join("package.json"),
             r#"{"name":"dsh-tauri"}"#,
         )
         .unwrap();
         assert!(unlinked_internal_entries(&need).is_empty());
     }
 
+    /// 同一签名也可能来自用户自己的 `link:` 依赖（`pnpm add` 会一并解析项目依赖）：
+    /// 失败路径不属于本轮内置插件时绝不能兜底，否则真实失败被吞成「安装成功」。
     #[test]
     fn link_materialization_failure_rejects_foreign_dependency_path() {
         let error = "PREINSTALL_FAILED: dsh plugin exited with code -4094: UNKNOWN  UNKNOWN: \
@@ -1608,6 +1779,8 @@ mod tests {
         ));
     }
 
+    /// 同类签名但诊断里没有可解析的失败路径：不能归因到内置插件入口，因此既不
+    /// 兜底（免得掩盖用户依赖的失败）也不能只丢裸错误，要走「只给排除项提示」。
     #[test]
     fn link_materialization_failure_rejects_unattributed_diagnostic() {
         let error = "PREINSTALL_FAILED: dsh plugin exited with code -4094: UNKNOWN: cannot \
@@ -1616,6 +1789,7 @@ mod tests {
 
         assert!(!is_link_materialization_failure(error, &need));
         assert!(is_untraceable_link_readback_failure(error));
+        // 能解析出路径后就不再是「无法归因」，只是路径不属于本轮待装入口
         assert!(!is_untraceable_link_readback_failure(
             "PREINSTALL_FAILED: dsh plugin exited with code -4094: UNKNOWN: unknown error, open \
              'C:\\Users\\w00012491\\.dsh\\profiles\\tauri\\node_modules\\someone-else\\package.json'"
@@ -1637,6 +1811,7 @@ mod tests {
             "PREINSTALL_ENTRY_FAILED:\ndsh-tauri: PLUGIN_ENTRY_MISSING",
             &need
         ));
+        // 含 -4094 但诊断里没有 profile 链接路径：不是本兜底能解的那一类
         assert!(!is_link_materialization_failure(
             "PREINSTALL_FAILED: dsh plugin exited with code -4094: some unrelated output",
             &need
@@ -1812,6 +1987,8 @@ mod tests {
     }
 
     /// issue #466：旧版 profile-local fallback 目录不可删（典型：属主是 root）时，
+    /// 清理失败只能告警，绝不阻断本轮的插件核对/重装——否则用户看到的是这条
+    /// housekeeping 错误，而真正要修的是档案目录权限。
     #[cfg(unix)]
     #[test]
     fn unwritable_fallback_cleanup_is_best_effort() {
@@ -1820,20 +1997,25 @@ mod tests {
         let profile =
             std::env::temp_dir().join(format!("dsh-fallback-guard-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&profile);
+        // 目录结构：profile/.dsh-module-fallback/node_modules/<entry>
         let nested = profile.join(".dsh-module-fallback").join("node_modules");
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::write(nested.join("anymatch"), b"").unwrap();
 
+        // 去掉 node_modules 的写权限：递归删除其内部条目时 EACCES
         let mut locked = std::fs::metadata(&nested).unwrap().permissions();
         locked.set_mode(0o555);
         std::fs::set_permissions(&nested, locked).unwrap();
 
+        // 以 root 身份运行时权限位不生效（清理会成功，`nested` 已被删除），此时跳过
+        // 错误断言，且恢复权限前必须先确认目录还在
         if let Err(error) = remove_legacy_profile_module_fallback(&profile) {
             assert!(
                 error.starts_with("INTERNAL_PLUGIN_FALLBACK_REMOVE_FAILED"),
                 "{error}"
             );
         }
+        // best-effort 包装：无论底层成功与否都不得返回错误或 panic
         remove_legacy_profile_module_fallback_best_effort(&profile);
 
         if let Ok(metadata) = std::fs::metadata(&nested) {

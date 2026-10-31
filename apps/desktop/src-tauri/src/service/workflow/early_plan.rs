@@ -190,9 +190,10 @@ pub(super) fn prepare(
     let Some(version) = exact_core_version(&inputs, &core_dir) else {
         return Ok(None);
     };
-    let Some(node) = config::get_node_binary_path_at() else {
-        return Ok(None);
-    };
+    let node_root = inputs.root(deps::DEP_NODE);
+    let node_entry = deps::entry_relative_from(Some(&inputs.manifest), deps::DEP_NODE);
+    let pinned = matches!(inputs.mapping.get(deps::DEP_NODE), Some(Some(_)));
+    let node = config::node_binary_path_from(&node_root, &node_entry, pinned);
     #[cfg(windows)]
     if !super::early::probes_ready()? {
         return Ok(None);
@@ -209,7 +210,7 @@ pub(super) fn prepare(
         return Ok(None);
     }
     let bin_dir = cli::get_bin_dir_from(None, None);
-    let git_dir = config::get_git_cmd_dir_at();
+    let git_dir = config::git_cmd_dir_from(|| inputs.binary(deps::DEP_GIT));
     #[cfg(windows)]
     if !super::early::probes_ready()? {
         return Ok(None);
@@ -330,6 +331,7 @@ pub(super) fn prepare(
         core_version: Some(&version),
         required_plugins: Some(&required),
     })? != core::RuntimePreparation::Ready
+        || config::node_binary_path_from(&node_root, &node_entry, pinned) != node
     {
         return Ok(None);
     }
@@ -404,11 +406,9 @@ mod tests {
         }
         fs::write(&path, json!({"setting": ready}).to_string()).unwrap();
         super::super::instances::scope_sync("other".into(), || {
-            assert!(
-                prepare(root.path(), &root.path().join("missing"))
-                    .unwrap()
-                    .is_none()
-            );
+            assert!(prepare(root.path(), &root.path().join("missing"))
+                .unwrap()
+                .is_none());
         });
         assert!(entry(root.path(), Path::new("relative-resources")).is_none());
     }

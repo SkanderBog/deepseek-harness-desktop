@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use crate::AppHandle;
 use reqwest::{ClientBuilder, NoProxy, Proxy, Url};
 use std::time::{Duration, Instant};
-use tauri::Runtime;
+use tauri::{AppHandle, Runtime};
 
 pub fn normalize_proxy_url(value: &str) -> Result<String, String> {
     let value = value.trim();
@@ -46,6 +45,7 @@ pub(crate) fn client_builder(value: &str) -> Result<ClientBuilder, String> {
     Ok(builder.no_proxy().proxy(proxy))
 }
 
+/// 代理连通性测试结果（`reason` 是固定的失败分类，不含任何原始错误文本）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProxyTestResult {
     pub ok: bool,
@@ -54,6 +54,7 @@ pub struct ProxyTestResult {
     pub latency_ms: u64,
 }
 
+/// 用给定代理向 `target` 发一次真实请求，只读响应头，用于判断配置是否可用。
 pub async fn test(proxy_url: &str, target: &str, timeout: Duration) -> ProxyTestResult {
     let started = Instant::now();
     let failed = |reason: &str, status: Option<u16>| ProxyTestResult {
@@ -114,6 +115,20 @@ pub async fn test(proxy_url: &str, target: &str, timeout: Duration) -> ProxyTest
 }
 
 /// 子进程代理环境（issue #110）：把配置页的代理地址翻译成核心与插件子进程能读的
+/// 环境变量。
+///
+/// 核心（`@deepseek-ai/dsh-http-proxy`）只在启动时读 `http_proxy` / `https_proxy` /
+/// `no_proxy` 发布代理策略，并给**它自己** spawn 的子进程补 `NODE_USE_ENV_PROXY`；
+/// 桌面端 spawn 的进程不在那条链路上，必须显式下发。
+///
+/// 只写小写名：核心的读取顺序是小写优先、大写兜底，值相同故不重复写；curl、git、
+/// pnpm 同样认小写。`no_proxy` 与 [`client_builder`] 的绕过列表保持一致并补上
+/// Node 自己的匹配规则只认的写法，再逐条追加进程已有的 `NO_PROXY` / `no_proxy`
+/// （见 [`child_no_proxy`]）。空值返回空 map：用户没配代理时不注入任何键，子进程
+/// 照旧继承系统环境。
+///
+/// SOCKS 值原样下发：curl/git/pnpm 认，Node 侧由核心判为不支持后保持直连（与只配
+/// 代理不改代码时一致）。
 pub fn proxy_child_env(value: &str) -> HashMap<String, String> {
     let url = match normalize_proxy_url(value) {
         Ok(url) if !url.is_empty() => url,
@@ -126,6 +141,7 @@ pub fn proxy_child_env(value: &str) -> HashMap<String, String> {
     ])
 }
 
+// 仅补继承的 HTTP(S) 代理：单独注入 no_proxy 会让 GIO 改选环境 resolver，覆盖系统/PAC 代理。
 #[cfg(any(target_os = "linux", test))]
 pub(crate) fn prepare_inherited_proxy() {
     if ["http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY"]
@@ -133,15 +149,16 @@ pub(crate) fn prepare_inherited_proxy() {
         .any(|key| std::env::var(key).is_ok_and(|value| !value.trim().is_empty()))
     {
         let bypass = child_no_proxy();
-        unsafe {
-            std::env::set_var("no_proxy", &bypass);
-        }
-        unsafe {
-            std::env::set_var("NO_PROXY", bypass);
-        }
+        std::env::set_var("no_proxy", &bypass);
+        std::env::set_var("NO_PROXY", bypass);
     }
 }
 
+/// 子进程的代理绕过列表：固定回环条目加上进程已有的 `NO_PROXY` / `no_proxy`。
+///
+/// 追加而不是覆盖：Node 与 curl 都是「命中即绕过」，追加不会让既有例外失效；
+/// 小写 `no_proxy` 在 Node 中优先于大写，若直接覆盖，企业内网例外
+/// （如 `.corp.example`）就会失效，内网请求被送去代理。两个名字都读、按原样去重。
 fn child_no_proxy() -> String {
     let inherited = ["NO_PROXY", "no_proxy"]
         .iter()
@@ -152,6 +169,10 @@ fn child_no_proxy() -> String {
     merge_no_proxy(&inherited)
 }
 
+/// 固定回环条目与继承条目合并成一份列表。
+///
+/// Node 的匹配规则只认裸主机名与「起-止」IPv4 段、不认 CIDR，所以回环段除保留
+/// `127.0.0.0/8`（curl、git、pnpm 认）外再补一条 `127.0.0.1-127.255.255.255`。
 fn merge_no_proxy(inherited: &str) -> String {
     let mut entries = CHILD_NO_PROXY
         .split(',')
@@ -166,6 +187,8 @@ fn merge_no_proxy(inherited: &str) -> String {
     entries.join(",")
 }
 
+/// 子进程代理绕过列表的固定部分：回环地址与 [`client_builder`] 的约定保持一致，
+/// 并补上 Node 自己那套匹配规则认得的形式（见 [`merge_no_proxy`]）。
 const CHILD_NO_PROXY: &str =
     "localhost,.localhost,127.0.0.1,127.0.0.0/8,::1,[::1],127.0.0.1-127.255.255.255";
 
@@ -306,23 +329,19 @@ mod tests {
             .timeout(std::time::Duration::from_secs(3))
             .build()
             .unwrap();
-        assert!(
-            client
-                .get("https://dsh-proxy-test.invalid/resource")
-                .send()
-                .await
-                .is_err()
-        );
+        assert!(client
+            .get("https://dsh-proxy-test.invalid/resource")
+            .send()
+            .await
+            .is_err());
         let request = tokio::time::timeout(std::time::Duration::from_secs(3), proxy)
             .await
             .unwrap()
             .unwrap();
         assert!(request.starts_with("CONNECT dsh-proxy-test.invalid:443 HTTP/1.1\r\n"));
-        assert!(
-            request
-                .to_ascii_lowercase()
-                .contains("proxy-authorization: basic dxnlcjpzzwnyzxq=\r\n")
-        );
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("proxy-authorization: basic dxnlcjpzzwnyzxq=\r\n"));
     }
 
     #[test]
@@ -413,15 +432,9 @@ mod tests {
         let address = direct.local_addr().unwrap();
         let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
-        unsafe {
-            std::env::set_var("http_proxy", &proxy_url);
-        }
-        unsafe {
-            std::env::set_var("https_proxy", &proxy_url);
-        }
-        unsafe {
-            std::env::set_var("no_proxy", "corp.example");
-        }
+        std::env::set_var("http_proxy", &proxy_url);
+        std::env::set_var("https_proxy", &proxy_url);
+        std::env::set_var("no_proxy", "corp.example");
         let recording_proxy = tokio::spawn(async move {
             let mut requests = Vec::new();
             for _ in 0..4 {
@@ -436,11 +449,9 @@ mod tests {
                 let (mut stream, _) = direct.accept().await.unwrap();
                 let request = read_headers(&mut stream).await;
                 if request.starts_with("GET /ws ") {
-                    assert!(
-                        request
-                            .to_ascii_lowercase()
-                            .contains("upgrade: websocket\r\n")
-                    );
+                    assert!(request
+                        .to_ascii_lowercase()
+                        .contains("upgrade: websocket\r\n"));
                     stream.write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n").await.unwrap();
                     let mut ping = [0; 6];
                     stream.read_exact(&mut ping).await.unwrap();
@@ -481,12 +492,10 @@ mod tests {
         assert_eq!(std::env::var("http_proxy").unwrap(), proxy_url);
         assert_eq!(std::env::var("https_proxy").unwrap(), proxy_url);
         for key in ["no_proxy", "NO_PROXY"] {
-            assert!(
-                std::env::var(key)
-                    .unwrap()
-                    .split(',')
-                    .any(|entry| entry == "corp.example")
-            );
+            assert!(std::env::var(key)
+                .unwrap()
+                .split(',')
+                .any(|entry| entry == "corp.example"));
         }
         let after = client();
         assert_eq!(
@@ -523,13 +532,11 @@ mod tests {
                 .status(),
             502
         );
-        assert!(
-            after
-                .get("https://dsh-proxy-test.invalid/remote")
-                .send()
-                .await
-                .is_err()
-        );
+        assert!(after
+            .get("https://dsh-proxy-test.invalid/remote")
+            .send()
+            .await
+            .is_err());
         let requests = tokio::time::timeout(Duration::from_secs(3), recording_proxy)
             .await
             .unwrap()
@@ -721,6 +728,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_treats_an_empty_proxy_as_a_direct_connection() {
+        // 空代理 = 直连，目标必须走回环，否则会撞上运营商的 NXDOMAIN 劫持页面。
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         drop(listener);

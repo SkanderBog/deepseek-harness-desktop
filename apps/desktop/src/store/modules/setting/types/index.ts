@@ -1,4 +1,4 @@
-import type { Appearance } from '../../../../../../../packages/builtin-plugin-tauri/src/shared/appearance'
+import type { Appearance } from '../../../../../packages/dsh-tauri/src/shared/appearance'
 
 export interface AppSettingUpdate {
   proxyUrl?: string

@@ -1,33 +1,64 @@
+//! 本地插件热重载：把用户以本地路径安装的插件源码目录折算成一组 watch root，
+//! 写进桌面端独占的补丁层文件，随启动以 `--patch <文件>` 注入核心 HMR。
+//!
+//! 核心自带 `@deepseek-ai/dsh-hmr` 在档案下恒为启用状态，缺的只是「监听哪些目录」
+//! ——`config.root` 默认为空。补上这组 root 后，本地插件源码的改动由核心 HMR 直接
+//! 热重载（dispose + 重新 import + 重建插件 fiber），无需重启服务。
+//!
+//! 为什么单独一个文件：`$DSH_HOME/cordis.patch.yml` 与档案层 `cordis.patch.yml` 都是
+//! 用户手写资产（见 [`super::patch_guard`] 的约定），桌面端只在显式恢复流程里改写。
+//! HMR 是随安装状态变化的运行期状态，必须有自己的文件；该文件只在启动前复算，不被
+//! 任何清理流程触碰，无本地插件时直接删除（`--patch` 指向不存在的文件会让核心大声
+//! 失败，见 `dsh-app-boot` 的 `loadOverlayPatches`）。
+//!
+//! 三条硬约束（均为实测结论）：
+//! 1. 补丁的 `config` 是整体替换（逐键浅覆盖），条目里必须写完整配置对象；
+//! 2. watch root 必须是真实长路径：Windows 8.3 短名会让 chokidar 原生断言崩溃；
+//! 3. 相对 root 里一旦出现 `..`，忽略规则会被拼成跨盘串而全部失效，故同盘 root 用
+//!    不含 `..` 的相对路径、跨盘 root 用绝对路径。
+
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
-use tauri::Manager;
+use tauri::{AppHandle, Manager};
 
-use super::installed::{ProfilePackageJson, profile_dir};
+use super::installed::{profile_dir, ProfilePackageJson};
 use super::patch_guard::now_stamp;
-use crate::AppHandle;
 use crate::config;
 
+/// 桌面端独占的 HMR 补丁层文件名（与用户手写的 `cordis.patch.yml` 区分开）。
 pub(crate) const HMR_PATCH_FILENAME: &str = "cordis.hmr.patch.yml";
 
+/// 补丁条目必须逐字命中核心内置的 HMR 服务：`name` 写错会被静默跳过。
 const HMR_ENTRY_ID: &str = "hmr";
 const HMR_ENTRY_NAME: &str = "@deepseek-ai/dsh-hmr";
 
+/// 与核心默认值一致的 debounce（毫秒）；显式写出因为 `config` 是整体替换。
 const HMR_DEBOUNCE_MS: u64 = 100;
 
+/// 当前本地插件热重载状态（前端展示用）。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalHmrStatus {
+    /// 用户开关的持久化值（与「此刻是否真的在监听」无关）。
     pub enabled: bool,
+    /// 当前是否真的有本地插件源目录被监听（开关打开且存在待监听的目录）。
     pub watching: bool,
+    /// 生效时注入的补丁层路径。
     pub patch_path: Option<String>,
+    /// 被监听的本地插件源目录（真实长路径）。
     pub roots: Vec<String>,
 }
 
+/// HMR 补丁层路径（app-data 下，与用户补丁层无关）。
 pub(crate) fn patch_path(app_handle: &AppHandle) -> PathBuf {
     config::get_base_dir(app_handle).join(HMR_PATCH_FILENAME)
 }
 
+/// 复算并写出 HMR 补丁层：需要热重载时返回其路径，否则删除残留并返回 `None`。
+///
+/// 每次启动都要重算：`--patch` 只在本次进程有效，而本地插件的安装状态可能已经变化。
+/// 任何一步失败都退化为「不传 `--patch`」（热重载只是便利功能，不该阻断启动）。
 pub(crate) fn sync_layer(app_handle: &AppHandle) -> Option<PathBuf> {
     sync_layer_at(
         &config::get_base_dir(app_handle),
@@ -65,6 +96,7 @@ pub(crate) fn sync_layer_at(
     }
 }
 
+/// 当前本地插件热重载状态。
 pub(crate) fn status(app_handle: &AppHandle) -> LocalHmrStatus {
     let path = patch_path(app_handle);
     let roots = local_watch_roots(app_handle);
@@ -81,6 +113,8 @@ fn hmr_enabled(app_handle: &AppHandle) -> bool {
     config::read_store_dat_setting(app_handle).local_plugin_hmr
 }
 
+/// 需要热重载的本地插件源码目录：已装且已挂载（在 `dsh.profile.bundles` 里）、以
+/// `link:` / `file:` 声明、目录真实存在、且不属于随包分发的内置插件。
 pub(crate) fn local_watch_roots(app_handle: &AppHandle) -> Vec<PathBuf> {
     local_watch_roots_at(
         &profile_dir(app_handle),
@@ -132,6 +166,7 @@ fn read_manifest(profile: &Path) -> Option<ProfilePackageJson> {
     serde_json::from_str(&content).ok()
 }
 
+/// 本地依赖的原始路径部分：`link:` / `file:` 前缀之外的一律不是本地目录。
 fn local_dep_path(spec: &str) -> Option<String> {
     let raw = spec
         .strip_prefix("link:")
@@ -140,6 +175,8 @@ fn local_dep_path(spec: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+/// 解析成真实长路径：pnpm 的 `link:` 是目录联接，必须落到源码目录本身，
+/// 且必须是长名（8.3 短名会让 chokidar 原生断言崩溃）。
 fn resolve_dir(raw: &str, profile: &Path) -> Option<PathBuf> {
     let normalized = raw.replace('/', std::path::MAIN_SEPARATOR_STR);
     let path = Path::new(&normalized);
@@ -152,6 +189,7 @@ fn resolve_dir(raw: &str, profile: &Path) -> Option<PathBuf> {
     resolved.is_dir().then_some(resolved)
 }
 
+/// 随包分发的内置插件源码目录：改它没有意义（升级即被覆盖），不该进 watch root。
 fn is_bundled(resource_root: &Path, dir: &Path) -> bool {
     let flatten = |path: &Path| {
         let mut text = path
@@ -165,6 +203,7 @@ fn is_bundled(resource_root: &Path, dir: &Path) -> bool {
     flatten(dir).starts_with(&flatten(dunce::simplified(resource_root)))
 }
 
+/// 去掉被父目录覆盖的子目录：chokidar 递归监听父目录即可，重复 root 只增开销。
 fn prune_nested(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut kept: Vec<PathBuf> = Vec::new();
     for dir in dirs {
@@ -177,6 +216,11 @@ fn prune_nested(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
     kept
 }
 
+/// 一组 root 的 `base`：取成员最多的卷（同卷才能算出不含 `..` 的相对路径）。
+///
+/// 跨卷（本地插件分别装在 C:/D:）时只能给其中一个卷配 `base`，其余 root 用绝对
+/// 路径；`relative(base, 绝对路径)` 在 Windows 上原样返回绝对路径，忽略规则对那
+/// 部分 root 失效（只是多监听几个文件，不影响正确性）。
 fn pick_base(roots: &[PathBuf]) -> Option<PathBuf> {
     let mut groups: Vec<(std::ffi::OsString, Vec<PathBuf>)> = Vec::new();
     for root in roots {
@@ -202,6 +246,7 @@ fn pick_base(roots: &[PathBuf]) -> Option<PathBuf> {
     common_ancestor(&best?)
 }
 
+/// 一组绝对路径的最深公共祖先；跨卷（首个分量不同）时返回 `None`。
 fn common_ancestor(paths: &[PathBuf]) -> Option<PathBuf> {
     let first = paths.first()?;
     let mut shared: Vec<Component> = first.components().collect();
@@ -233,6 +278,13 @@ fn relative_root(base: &Path, root: &Path) -> String {
     }
 }
 
+/// `file://` URL：核心用 `fileURLToPath(new URL(config.base, ctx.baseUrl))` 还原目录，
+/// 只认 file 协议（裸 `D:/x` 会抛 ERR_INVALID_URL_SCHEME）。
+///
+/// 用 `Url::from_file_path` 而不是拼字符串：路径里的保留字符必须百分号编码，否则
+/// `#` 会被 `new URL()` 当成 fragment 起始符，`fileURLToPath` 只还原出 `#` 之前的
+/// 半截目录（实测 `D:/my#plugin` ⇒ `D:/my`）；编码后 `%23` 能逐字还原。非 UTF-8
+/// 路径、非磁盘盘符（UNC）以及含 `..` 的相对路径都返回 `None`。
 fn file_url(dir: &Path) -> Option<String> {
     if dir
         .components()
@@ -276,13 +328,33 @@ fn render_layer(roots: &[PathBuf]) -> Option<String> {
         "
     ignored:",
     );
-    for pattern in ignore_patterns() {
-        yaml.push_str(
-            "
-      - '",
-        );
-        yaml.push_str(&pattern);
-        yaml.push('\'');
+    for root in roots {
+        let relative = root_value(&base, root);
+        let mut escaped = String::new();
+        for ch in relative.chars() {
+            if "\\*?[]{}()!+@".contains(ch) {
+                escaped.push('\\');
+            }
+            escaped.push(ch);
+        }
+        let prefix = if relative == "." { "" } else { &escaped };
+        let native_prefix = prefix.replace('/', "[/\\\\]");
+        let mut patterns = ignore_patterns();
+        if !prefix.is_empty() {
+            patterns.extend(["node_modules".to_string(), ".*".to_string()]);
+        }
+        for pattern in patterns {
+            let pattern = if prefix.is_empty() {
+                pattern
+            } else if pattern.starts_with("**/") {
+                format!("{prefix}/{pattern}")
+            } else {
+                format!("{native_prefix}[/\\\\]{pattern}")
+            };
+            yaml.push_str("\n      - '");
+            yaml.push_str(&pattern.replace('\'', "''"));
+            yaml.push('\'');
+        }
     }
     yaml.push_str(
         "
@@ -302,12 +374,19 @@ fn root_value(base: &Path, root: &Path) -> String {
     }
 }
 
+/// 核心在匹配前调用 `path.relative()`，Windows 会重新产生反斜杠；仅 POSIX 规则会
+/// 漏掉依赖树并耗尽监听资源，因此两种分隔符都要覆盖，POSIX 仍保留 globstar 语义。
 fn ignore_patterns() -> Vec<String> {
     vec![
         "**/node_modules".to_string(),
         "**/node_modules/**".to_string(),
         "**/.*".to_string(),
         "**/.*/**".to_string(),
+        "**[/\\\\]node_modules".to_string(),
+        "**[/\\\\]node_modules[/\\\\]**".to_string(),
+        "node_modules[/\\\\]**".to_string(),
+        "**[/\\\\].*".to_string(),
+        ".*[/\\\\]**".to_string(),
         "cache".to_string(),
         "data".to_string(),
     ]
@@ -371,31 +450,13 @@ mod tests {
         dunce::canonicalize(&dir).unwrap()
     }
 
+    /// 实机热重载验证直接复用这份生产字节：只有显式给出 DSH_HMR_LAYER_DUMP 目录时
+    /// 才落盘，默认（含 CI）不写共享临时目录；变量存在但为空时同样不写，避免落到当前目录。
     fn dump_layer(name: &str, yaml: &str) {
         let Some(dir) = std::env::var_os("DSH_HMR_LAYER_DUMP").filter(|dir| !dir.is_empty()) else {
             return;
         };
         std::fs::write(Path::new(&dir).join(name), yaml).unwrap();
-    }
-
-    #[test]
-    fn ignore_patterns_keep_globstar_semantics() {
-        let patterns = ignore_patterns();
-        assert_eq!(
-            patterns,
-            vec![
-                "**/node_modules".to_string(),
-                "**/node_modules/**".to_string(),
-                "**/.*".to_string(),
-                "**/.*/**".to_string(),
-                "cache".to_string(),
-                "data".to_string(),
-            ]
-        );
-        for pattern in &patterns {
-            assert!(!pattern.contains('\\'), "{pattern}");
-            assert!(!pattern.contains('['), "{pattern}");
-        }
     }
 
     #[test]
@@ -523,12 +584,15 @@ mod tests {
         ]);
         assert_eq!(roots, vec![root.clone(), outside]);
 
+        // 前缀相同但不是祖先目录的兄弟目录必须保留（按路径分量比较，不是字符串前缀）
         let sibling = prune_nested(vec![root.join("a\\b"), root.join("a\\bc")]);
         assert_eq!(sibling, vec![root.join("a\\b"), root.join("a\\bc")]);
     }
 
     #[test]
     fn common_ancestor_stops_at_the_shared_prefix() {
+        // 夹具必须落在真实临时目录上：`X:\hmr-tmp` 这类 Windows 字面量在 Unix 上
+        // 只是单个相对分量（不是绝对路径），公共祖先会直接算成 `None`。
         let root = tmp_dir("common");
         assert_eq!(
             common_ancestor(&[root.join("a").join("b"), root.join("a").join("c")]),
@@ -555,9 +619,15 @@ mod tests {
 
     #[test]
     fn render_layer_writes_a_complete_hmr_config() {
+        // 夹具必须是真实的绝对目录：`X:\hmr-tmp` 在 Unix 上不是绝对路径，`pick_base`
+        // 会返回 `None`。base 行按同一实现函数算出（盘符大小写、分隔符都取真实临时
+        // 目录的形态，不硬编码平台），其余字节逐字固定。
         let root = tmp_dir("render").join("plugins");
         std::fs::create_dir_all(&root).unwrap();
-        let roots = vec![root.join("mine"), root.join("other").join("sub")];
+        let roots = vec![
+            root.join("repo").join(".worktrees").join("feature"),
+            root.join("other").join("sub"),
+        ];
         let yaml = render_layer(&roots).expect("render");
 
         let entries: Vec<serde_yaml::Value> = serde_yaml::from_str(&yaml).expect("parse");
@@ -569,11 +639,12 @@ mod tests {
         let base = config["base"].as_str().expect("base");
         assert!(base.starts_with("file:///"), "{base}");
         assert_eq!(config["root"].as_sequence().unwrap().len(), 2, "{yaml}");
-        assert_eq!(config["root"][0].as_str(), Some("mine"));
+        assert_eq!(config["root"][0].as_str(), Some("repo/.worktrees/feature"));
         assert_eq!(config["root"][1].as_str(), Some("other/sub"));
-        assert_eq!(config["ignored"].as_sequence().unwrap().len(), 6);
+        assert_eq!(config["ignored"].as_sequence().unwrap().len(), 26);
         assert_eq!(config["debounce"].as_u64(), Some(HMR_DEBOUNCE_MS));
 
+        // 逐字固定整份补丁层：核心按 id 整块替换 config，任何字段写错或漏写都会被静默忽略。
         let base_line = format!("    base: {}", file_url(&root).expect("file url"));
         let golden = [
             "- id: hmr",
@@ -581,15 +652,35 @@ mod tests {
             "  config:",
             base_line.as_str(),
             "    root:",
-            "      - mine",
+            "      - repo/.worktrees/feature",
             "      - other/sub",
             "    ignored:",
-            "      - '**/node_modules'",
-            "      - '**/node_modules/**'",
-            "      - '**/.*'",
-            "      - '**/.*/**'",
-            "      - 'cache'",
-            "      - 'data'",
+            "      - 'repo/.worktrees/feature/**/node_modules'",
+            "      - 'repo/.worktrees/feature/**/node_modules/**'",
+            "      - 'repo/.worktrees/feature/**/.*'",
+            "      - 'repo/.worktrees/feature/**/.*/**'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]**[/\\\\]node_modules'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]**[/\\\\]node_modules[/\\\\]**'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]node_modules[/\\\\]**'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]**[/\\\\].*'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\].*[/\\\\]**'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]cache'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]data'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\]node_modules'",
+            "      - 'repo[/\\\\].worktrees[/\\\\]feature[/\\\\].*'",
+            "      - 'other/sub/**/node_modules'",
+            "      - 'other/sub/**/node_modules/**'",
+            "      - 'other/sub/**/.*'",
+            "      - 'other/sub/**/.*/**'",
+            "      - 'other[/\\\\]sub[/\\\\]**[/\\\\]node_modules'",
+            "      - 'other[/\\\\]sub[/\\\\]**[/\\\\]node_modules[/\\\\]**'",
+            "      - 'other[/\\\\]sub[/\\\\]node_modules[/\\\\]**'",
+            "      - 'other[/\\\\]sub[/\\\\]**[/\\\\].*'",
+            "      - 'other[/\\\\]sub[/\\\\].*[/\\\\]**'",
+            "      - 'other[/\\\\]sub[/\\\\]cache'",
+            "      - 'other[/\\\\]sub[/\\\\]data'",
+            "      - 'other[/\\\\]sub[/\\\\]node_modules'",
+            "      - 'other[/\\\\]sub[/\\\\].*'",
             "    debounce: 100",
         ]
         .join("\n")
@@ -597,6 +688,8 @@ mod tests {
         assert_eq!(yaml, golden);
     }
 
+    /// 含保留字符（`#`）的真实目录：源码路径带 `#` 时 URL 必须百分号编码，否则
+    /// `new URL()` 把它当 fragment 起始符，核心会去监听被截断的父目录。
     fn reserved_dir(tag: &str) -> PathBuf {
         let dir = tmp_dir(tag).join("my#plugin");
         std::fs::create_dir_all(&dir).unwrap();
@@ -614,6 +707,7 @@ mod tests {
         assert!(base.contains("my%23plugin"), "{base}");
         assert!(!base.contains('#'), "{base}");
 
+        // 还原必须逐字回到真实源码目录：`#` 直接写进 URL 时这里只会得到 `my`。
         let restored = tauri::Url::parse(base).expect("parse url").to_file_path();
         assert_eq!(restored.ok(), Some(source));
     }
@@ -636,6 +730,7 @@ mod tests {
 
         let entries: Vec<serde_yaml::Value> = serde_yaml::from_str(&yaml).expect("parse");
         let config = &entries[0]["config"];
+        // `file://` 之后 Windows 还多一层根斜杠（`file:///C:/x`），Unix 剥完即是绝对路径。
         let raw = config["base"]
             .as_str()
             .expect("base")
@@ -649,6 +744,8 @@ mod tests {
             .iter()
             .map(|item| base.join(item.as_str().expect("root item")))
             .collect::<Vec<_>>();
+        // base 与 root 拼回来必须正好是插件的真实源码目录：任何一步的形态偏差都会让
+        // 核心监听一个不存在的目录（chokidar 对缺失的监听根目录是静默的）。
         assert_eq!(resolved, vec![source]);
     }
 

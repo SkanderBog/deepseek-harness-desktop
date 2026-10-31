@@ -1,9 +1,11 @@
-use crate::AppHandle;
-
 pub mod activation;
+pub mod appearance;
 pub mod autostart;
 pub mod builder;
+pub mod compat;
 pub mod deep_link;
+pub mod frame_log;
+pub(crate) mod frontend_preload;
 #[cfg(unix)]
 pub mod login_path;
 pub mod notification;
@@ -11,15 +13,18 @@ pub mod paste;
 pub mod payload;
 pub mod pet;
 pub mod pet_mouse;
+pub mod plugin_boot;
 #[cfg(all(windows, any(not(debug_assertions), test)))]
 pub(crate) mod single_instance;
 pub mod startup;
+#[cfg(windows)]
+pub mod tauri_internals;
 pub mod window;
 pub mod zoom;
 
 pub use builder::{builder, handler, setup, tray};
 
-pub fn product_name<R: tauri::Runtime>(app: &AppHandle<R>) -> &str {
+pub fn product_name<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> &str {
     app.config()
         .product_name
         .as_deref()

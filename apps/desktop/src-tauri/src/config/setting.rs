@@ -1,8 +1,7 @@
 use super::constants::*;
-use crate::AppHandle;
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, OnceLock};
-use tauri::{Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_store::StoreExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,49 +16,93 @@ pub struct Setting {
     #[serde(default)]
     pub harness_max_heap_mb: Option<u32>,
     pub auto_start: bool,
+    /// 是否自动更新桌面应用：开启时启动后轮询检查、发现新版本即静默下载，并在
+    /// 退出时自动打开安装器。关闭后只剩「帮助 → 检查更新」这类用户显式发起的
+    /// 更新链路，不再静默下载或强制安装（第三方打包与自行管理版本的用户需要，
     /// issue #1132）。
     #[serde(default = "default_auto_update")]
     pub auto_update: bool,
     pub language: String,
     #[serde(default)]
     pub dsh_pkg_commit: Option<String>,
+    /// 已安装 Harness 发行版对应的 GitHub release tag（与 dsh_pkg_commit 配套，
+    /// 用于甄别“记录滞后于文件”与“同版本热修”两种不一致）
     #[serde(default)]
     pub dsh_pkg_tag: Option<String>,
+    /// 命令行集成开关：安装后在用户 PATH 中注册 `dsh` 命令
     #[serde(default = "default_cli_link_enabled")]
     pub cli_link_enabled: bool,
+    /// 预装插件引导是否已完成（确认安装或跳过都算完成，之后不再弹出）
     #[serde(default)]
     pub preinstall_done: bool,
+    /// 上次引导结束时的清单 `plugins` 节内容指纹。资源清单每次安装都会被
+    /// 强制覆盖、旧文件不复存在，只能把「上次看到的内容」记在这里，每次启动再比对：
+    /// 内容有变更 → 重新进入预设引导。`None` = 老用户升级（无基线）→ 弹一次建立基线。
     #[serde(default)]
     pub preset_hash: Option<String>,
+    /// 当前使用的档案 id（`$DSH_HOME/profiles/<id>`，默认 web）。
+    /// 桌面端启动服务与插件管理都以它为准（见 service::profile）。
+    /// 老用户 store 里可能仍是旧引导档案名 `desktop`：启动迁移
+    /// （`service::profile::migrate_desktop_profile_name`）会把它改指 `tauri`。
     #[serde(default = "default_active_profile")]
     pub active_profile: String,
+    /// 首装档案引导是否已完成：桌面端首次安装时自动新建引导档案（`tauri`）并
+    /// 切换为当前档案（见 service::profile::migrate_desktop_profile_name），成功
+    /// 后置位，之后启动不再重做（一次性幂等标记）。
     #[serde(default)]
     pub desktop_profile_ready: bool,
+    /// 活动核心的显式选择：`Some("local")` = 用户 CLI 安装的本地核心，
+    /// `Some("app")` = 桌面端预打包核心；`None` = 自动（本地核心存在时优先）。
     #[serde(default)]
     pub active_core: Option<String>,
+    /// 用户手动设置的服务端口（设置页「端口」输入，见 bridge::config）。
+    /// 自动避让递增（配置端口被占 → 逐级顶高，见 workflow::launch）后，启动时
+    /// 该端口空闲则回落回用户选择的值；`None` = 从未手动设置，回落目标为默认
     /// 端口（3080/3081）。避免端口只增不减、一路从 3080 漂到 3084+（issue #91）。
     #[serde(default)]
     pub manual_port: Option<u16>,
+    /// 桌面主 WebView 的缩放比例。旧配置缺失时回落到 100%，读取与写入时均会
+    /// 归一化到受支持的 50%–200% 范围和 10% 步长。
     #[serde(default = "default_zoom_factor")]
     pub zoom_factor: f64,
+    /// 点击主窗口关闭按钮时的行为：`tray` = 隐藏到托盘继续驻留，`quit` = 直接退出应用。
+    /// 附加窗口（新建窗口 / 远端弹窗）不驻留托盘，关闭即销毁，不受该设置影响。
+    /// 只接受 `tray` / `quit` 两个字面量，读取与写入时均归一化，未知值回落 `tray`；
+    /// 字段刻意用 `String` 而非 enum——任一字段反序列化失败会让整个 `Setting` 回落
+    /// 默认，严格 enum 的一个意外值会连带清空端口/语言/档案等全部设置。
     #[serde(default = "default_close_action")]
     pub close_action: String,
+    /// 保留备份份数（手动备份触发裁剪）。
     #[serde(default = "default_backup_retention_count")]
     pub backup_retention_count: u32,
+    /// 备份是否包含凭据文件（`.credentials.yaml`）。
     #[serde(default)]
     pub backup_include_credentials: bool,
+    /// 桌宠能力是否永久启用；临时隐藏不能改动此字段。
     #[serde(default)]
     pub pet_enabled: bool,
+    /// 当前选中的桌宠模型包（预设 id，或 `chat:` / `codex:` 来源限定 id）；
+    /// `None` = 从未选择，对外回落清单里的第一只预设宠物；空串 = 用户显式取消选择。
     #[serde(default)]
     pub active_pet: Option<String>,
+    /// 桌宠精灵图的显示宽度（逻辑像素）；`None` = 沿用窗口侧默认值。
     #[serde(default)]
     pub pet_size: Option<f64>,
+    /// 是否允许抛射桌宠（拖拽甩出后带速度飞行、撞到屏幕边缘回弹）。
+    ///
     /// 默认关闭：飞行/回弹会打断「把宠物拖到某处」这一主要用途（issue #930），
+    /// 需要该效果的用户显式开启。拖拽本身不受此字段影响。
     #[serde(default)]
     pub throw_enabled: bool,
+    /// 强制以 XWayland 运行（默认关闭，下次启动生效）。
+    ///
+    /// 影响的是整个应用而非只有桌宠：原生 Wayland 下桌宠既不能置顶也不能定位
     /// （issue #649），把应用拉到 XWayland 是在 GNOME 上恢复这两项能力的唯一办法，
+    /// 代价是主窗口也一并经 XWayland 渲染。默认关闭，由用户显式开启。
     #[serde(default)]
     pub force_xwayland: bool,
+    /// 本地插件热重载：把已挂载的本地路径插件源码目录交给核心 HMR 监听，
+    /// 源码改动即时生效（无需重启服务）。没有本地插件时不产生任何补丁层。
     #[serde(default = "default_local_plugin_hmr")]
     pub local_plugin_hmr: bool,
 }
@@ -76,34 +119,47 @@ pub fn normalize_harness_max_heap_mb(value: Option<u32>) -> Option<u32> {
     value.filter(|mb| (HARNESS_HEAP_MIN_MB..=HARNESS_HEAP_MAX_MB).contains(mb))
 }
 
+/// 默认档案：桌面端内置的 web 档案
 fn default_active_profile() -> String {
     "web".to_string()
 }
 
+/// 命令行集成默认开启（开发者工具场景，安装完成即可用）
 fn default_cli_link_enabled() -> bool {
     true
 }
 
+/// 自动更新默认开启：与沿袭下来的「静默下载 + 退出时自动安装」行为一致，
+/// 老 store 缺字段时不会被静默关掉。
 fn default_auto_update() -> bool {
     true
 }
 
+/// 界面默认缩放为 100%。
 pub fn default_zoom_factor() -> f64 {
     1.0
 }
 
+/// 默认关闭行为：隐藏到托盘继续驻留（D-09）。
 pub fn default_close_action() -> String {
     CLOSE_ACTION_TRAY.to_string()
 }
 
+/// 默认保留备份份数：10 份。
 pub fn default_backup_retention_count() -> u32 {
     10
 }
 
+/// 本地插件热重载默认开启：只有确实装了本地路径插件时才会产生监听目录，
+/// 未使用该能力的用户完全不受影响。
 pub fn default_local_plugin_hmr() -> bool {
     true
 }
 
+/// 把外部或旧存储中的关闭行为收敛到白名单，未知值一律回落到默认行为。
+///
+/// 只做精确匹配：不做 `trim()`、不做大小写折叠——store 可被手工编辑、旧版本或其它
+/// 平台写入，宽松匹配会让 `"quit "` / `"TRAY"` 这类值以非预期形态进入下游判断。
 pub fn normalize_close_action(value: &str) -> String {
     match value {
         CLOSE_ACTION_TRAY | CLOSE_ACTION_QUIT => value.to_string(),
@@ -111,6 +167,7 @@ pub fn normalize_close_action(value: &str) -> String {
     }
 }
 
+/// 将外部或旧存储中的缩放值限制到桌面端支持的稳定步长。
 pub fn normalize_zoom_factor(value: f64) -> f64 {
     if !value.is_finite() {
         return default_zoom_factor();
@@ -120,6 +177,7 @@ pub fn normalize_zoom_factor(value: f64) -> f64 {
     (clamped * steps_per_unit).round() / steps_per_unit
 }
 
+/// 归一化保留份数到有效范围 [1, 50]，未知/越界回落默认 10。
 pub fn normalize_backup_retention(retention_count: u32) -> u32 {
     if retention_count == 0 || retention_count > 50 {
         default_backup_retention_count()
@@ -137,6 +195,7 @@ fn normalize_setting(setting: &mut Setting) {
     setting.backup_retention_count = normalize_backup_retention(setting.backup_retention_count);
 }
 
+/// 默认服务端口：debug 构建与生产隔离，避免开发时与已运行的桌面端争用 3080。
 pub fn default_port() -> u16 {
     if cfg!(debug_assertions) {
         DSH_DEV_PORT
@@ -179,6 +238,7 @@ impl Default for Setting {
     }
 }
 
+/// 当前是否为 E2E 运行（内嵌 WebDriver server 被请求）。
 pub fn is_e2e_run() -> bool {
     std::env::var_os(E2E_PORT_ENV_VAR).is_some_and(|v| !v.is_empty())
 }
@@ -203,10 +263,16 @@ fn resolve_e2e_app_data_dir(
     Ok(Some(home.join("app-data")))
 }
 
+/// 当前进程应使用的 Store 持久化文件名（生产 / 开发 / E2E 三方隔离的唯一真值）。
+///
+/// store（端口、installed、active_core、窗口几何等）属于「应用数据」而非共用核心：
+/// 生产默认 3080、开发默认 3081，共用一份 store 会让两边端口一路漂移并相互污染状态；
+/// E2E 若复用开发文件，用例写入的窗口几何会覆盖用户正在使用的开发版配置。
 pub fn store_dat_file_name() -> &'static str {
     resolve_store_dat_file(is_e2e_run(), cfg!(debug_assertions))
 }
 
+/// `store_dat_file_name` 的纯函数内核：把「是否 E2E」「是否 debug」映射到文件名。
 fn resolve_store_dat_file(e2e: bool, debug: bool) -> &'static str {
     if e2e {
         STORE_DAT_TEST_FILE
@@ -217,6 +283,14 @@ fn resolve_store_dat_file(e2e: bool, debug: bool) -> &'static str {
     }
 }
 
+/// 启动最早期读取 `force_xwayland`，绕过 `tauri_plugin_store` 直接解析 store 文件。
+///
+/// `GDK_BACKEND` 必须在 GTK 初始化之前设置，那时 `AppHandle` 尚不存在，插件的
+/// `StoreExt` 用不了。路径由 `logger::identifier_dir()` 与 `store_dat_file_name()` 拼出，
+/// 与插件的 `BaseDirectory::AppData` + 文件名解析一致，开发 / E2E / 生产三份 store
+/// 不互读。store 靠文件名区分 dev，目录不带 `dev/` 一层，与日志的做法不同。
+/// 文件缺失、JSON 非法、键缺失一律按关闭处理：此处早于 `logger::init()`，
+/// 无处告警，静默回落到默认行为比中断启动合适。
 pub fn force_xwayland_setting() -> bool {
     crate::logger::identifier_dir()
         .map(|dir| dir.join(store_dat_file_name()))
@@ -224,6 +298,7 @@ pub fn force_xwayland_setting() -> bool {
         .is_some_and(|raw| force_xwayland_in_store_json(&raw))
 }
 
+/// `force_xwayland_setting` 的纯函数内核，便于单测覆盖各种损坏输入。
 fn force_xwayland_in_store_json(raw: &str) -> bool {
     let Ok(root) = serde_json::from_str::<serde_json::Value>(raw) else {
         return false;
@@ -243,8 +318,16 @@ fn setting_write_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// 首装检测结果（进程内缓存）：`true` = 本次启动时 store 持久化文件尚不存在，
+/// 即桌面端首次安装/首次启动（无论是否装过 dsh CLI——后者正是需要隔离的
+/// 场景：CLI 侧的大量插件/补丁不应涌入桌面端档案）。
 static FIRST_INSTALL: OnceLock<bool> = OnceLock::new();
 
+/// 首装检测：store 持久化文件不存在 → 桌面端首次安装。
+///
+/// 必须在窗口创建与任何 store 写入之前调用一次（builder setup 最先）：窗口
+/// 几何恢复/退出保存都会写 store 并创建文件，判定晚于它们会把首装误判为升级。
+/// 判定结果进程内缓存，之后任何时点读取都拿到本次启动的同一结论。
 pub fn detect_first_install<R: Runtime>(app_handle: &AppHandle<R>) -> bool {
     detect_first_install_at(app_handle.path().app_data_dir().ok().as_deref())
 }
@@ -254,6 +337,7 @@ pub(crate) fn detect_first_install_at(app_data: Option<&std::path::Path>) -> boo
         .get_or_init(|| app_data.is_some_and(|dir| !dir.join(store_dat_file_name()).exists()))
 }
 
+/// 读取首装检测结果；尚未检测（或检测失败）时返回 `false`，保守按老用户处理。
 pub fn is_first_install() -> bool {
     FIRST_INSTALL.get().copied().unwrap_or(false)
 }
@@ -320,6 +404,8 @@ fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Set
     replacement
 }
 
+/// 兼容旧调用方的整对象写入，但始终保留锁内读到的最新缩放、关窗动作、桌宠与本地
+/// 插件热重载等持久字段，避免长流程用陈旧 `Setting` 覆盖精确更新路径刚写入的值（丢更新）。
 pub fn set_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>, mut setting: Setting) {
     let value = {
         let _guard = setting_write_lock()
@@ -333,6 +419,7 @@ pub fn set_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>, mut setting:
     emit_setting(app_handle, &value);
 }
 
+/// 在一个短临界区内读取、修改并写回设置，避免多个精确字段更新彼此丢失。
 pub fn update_store_dat_setting<R: Runtime, F>(app_handle: &AppHandle<R>, update: F) -> Setting
 where
     F: FnOnce(&mut Setting),
@@ -351,6 +438,8 @@ where
     setting
 }
 
+/// 泛型 `Runtime`：允许从非 Wry 具体化的窗口句柄（如工具函数的
+/// `WebviewWindow<R>`）读取设置；具体类型调用方不受影响。
 pub fn get_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>) -> Setting {
     let _guard = setting_write_lock()
         .lock()
@@ -358,10 +447,12 @@ pub fn get_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>) -> Setting {
     read_store_dat_setting(app_handle)
 }
 
+/// 已安装 Harness 发行版对应的 GitHub release commit hash
 pub fn get_dsh_pkg_commit(app_handle: &AppHandle) -> Option<String> {
     get_store_dat_setting(app_handle).dsh_pkg_commit
 }
 
+/// 已安装 Harness 发行版对应的 GitHub release tag
 pub fn get_dsh_pkg_tag(app_handle: &AppHandle) -> Option<String> {
     get_store_dat_setting(app_handle).dsh_pkg_tag
 }
@@ -376,31 +467,39 @@ pub fn set_dsh_pkg_identity(app_handle: &AppHandle, commit: String, tag: String)
 #[cfg(test)]
 mod tests {
     use super::{
-        STORE_DAT_DEV_FILE, STORE_DAT_FILE, STORE_DAT_TEST_FILE, STORE_SETTING_KEY, Setting,
-        ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN, default_close_action, default_zoom_factor,
-        force_xwayland_in_store_json, normalize_close_action, normalize_setting,
-        normalize_zoom_factor, preserve_persisted_fields, resolve_e2e_app_data_dir,
-        resolve_store_dat_file, setting_from_value, unwrap_json_value,
+        default_close_action, default_zoom_factor, force_xwayland_in_store_json,
+        normalize_close_action, normalize_setting, normalize_zoom_factor,
+        preserve_persisted_fields, resolve_e2e_app_data_dir, resolve_store_dat_file,
+        setting_from_value, unwrap_json_value, Setting, STORE_DAT_DEV_FILE, STORE_DAT_FILE,
+        STORE_DAT_TEST_FILE, STORE_SETTING_KEY, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
     };
 
+    /// 启动前读取跑在 `logger::init()` 之前，任何损坏输入都只能静默回落到关闭。
     #[test]
     fn force_xwayland_falls_back_to_off_on_any_unreadable_store() {
+        // 正常形状：`setting` 的值是对象。
         assert!(force_xwayland_in_store_json(
             r#"{"setting":{"force_xwayland":true}}"#
         ));
         assert!(!force_xwayland_in_store_json(
             r#"{"setting":{"force_xwayland":false}}"#
         ));
+        // 历史形状：`setting` 的值是一个内含对象的 JSON 字符串，read_store_dat_setting
+        // 同样兼容；漏掉这一支会让部分用户的设置被静默读成关闭。
         assert!(force_xwayland_in_store_json(
             r#"{"setting":"{\"force_xwayland\":true}"}"#
         ));
+        // 字段缺失（老版本写下的 store）。
         assert!(!force_xwayland_in_store_json(
             r#"{"setting":{"port":3080}}"#
         ));
+        // 键缺失、JSON 非法、空文件。
         assert!(!force_xwayland_in_store_json(r#"{"window_state":{}}"#));
         assert!(!force_xwayland_in_store_json("{ not json"));
         assert!(!force_xwayland_in_store_json(""));
+        // 字符串包裹但内层非法。
         assert!(!force_xwayland_in_store_json(r#"{"setting":"not json"}"#));
+        // 值不是 bool：不做真值推断，按关闭处理。
         assert!(!force_xwayland_in_store_json(
             r#"{"setting":{"force_xwayland":"yes"}}"#
         ));
@@ -409,6 +508,8 @@ mod tests {
         ));
     }
 
+    /// 启动前读取按字符串字面量取字段，与 `Setting` 的序列化形状只靠约定对齐。
+    /// 字段改名不会有编译错误，只会让读取静默失效，这里拿真实序列化结果兜住。
     #[test]
     fn force_xwayland_key_matches_the_serialized_setting() {
         let setting = Setting {
@@ -467,6 +568,7 @@ mod tests {
         assert_eq!(resolve_store_dat_file(false, false), STORE_DAT_FILE);
     }
 
+    /// 三方文件名必须互不相同：任何一处塌缩都会让某一方改写另一方的用户状态。
     #[test]
     fn store_dat_file_names_are_pairwise_distinct() {
         let names = [STORE_DAT_FILE, STORE_DAT_DEV_FILE, STORE_DAT_TEST_FILE];

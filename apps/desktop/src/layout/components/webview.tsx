@@ -1,56 +1,45 @@
-import type { Appearance } from '../../../../../packages/builtin-plugin-tauri/src/shared/appearance'
 import type { DshShortcutRow, DshViewCommand } from '@/hooks/use-dsh-shortcuts'
-import type { DshWebviewElement } from '@/types/webview'
 import { useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
-import { emit } from '@tauri-apps/api/event'
-import { Effect, EffectState, getCurrentWindow } from '@tauri-apps/api/window'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { type } from '@tauri-apps/plugin-os'
 import { useEffect, useRef, useState } from 'react'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
+import { useAppearance } from '@/hooks/use-appearance'
 import { DSH_VIEW_COMMANDS, shortcutHint, useDshShortcuts } from '@/hooks/use-dsh-shortcuts'
 import { useDshStyle } from '@/hooks/use-dsh-style'
+import { useIframeMessage } from '@/hooks/use-iframe-message'
+import { useIframePost } from '@/hooks/use-iframe-post'
 import { useListen } from '@/hooks/use-listen'
 import { store } from '@/store'
 import { Recovery } from '@/ui/plugin/recovery'
-import { appearanceColors, appearanceSidebarFill, appearanceStartupFill, appearanceTranslucent, normalizeAppearance } from '../../../../../packages/builtin-plugin-tauri/src/shared/appearance'
 import { FullSidebarNavbar } from './full-sidebar-navbar'
-import { GuestWebview } from './iframe'
+import { Iframe } from './iframe'
 import { REMOTE_SECTION, REMOTE_TAB_ACCESS, REMOTE_TAB_MACHINES } from './nav-bridge'
 import { Navbar } from './navbar'
 import { Setup } from './setup'
 import { PreinstallSetup } from './setup-preinstall'
-import { useGuestMessage } from './webview-bridge'
 import { isFullSidebarWindow } from './window-presentation'
 
-const FULL_SIDEBAR_REVEAL_MS = 15_000
-
-function shellAppearanceCss(appearance: Appearance, scheme: 'dark' | 'light', transparent: boolean): string {
-  const alpha = transparent && appearance.transparency ? appearance.opacity : 100
-  const backdropFilter = transparent && appearanceTranslucent(appearance) && appearance.blur ? 'blur(16px)' : 'none'
-  if (appearance.palette === 'default' && alpha === 100 && !transparent)
-    return ''
-  const { canvas, panel, surface, text, muted, accent, border } = appearanceColors(appearance, scheme)
-  return [
-    alpha < 100 ? 'html,body,[data-testid="dsh-shell-root"]{background:transparent!important}' : '',
-    `html[data-theme]{--color-canvas:${canvas};--color-startup:${appearanceStartupFill(appearance, canvas)};--color-panel:${panel};--color-panel-2:${surface};--color-ink:${text};--color-info:${accent};--foreground:${text};--muted:${muted};--background:${canvas};--surface:${panel};--surface-secondary:${surface};--surface-tertiary:${surface};${border ? `--color-line:${border};--color-line-strong:${border};--color-btn-border:${border};--border:${border};--separator:${border};--field-border:${border};` : ''}}`,
-    `[data-testid="dsh-navbar-root"]{background:${appearanceSidebarFill(canvas, panel, alpha < 100, alpha)}!important;${backdropFilter === 'none' ? '' : `backdrop-filter:${backdropFilter};-webkit-backdrop-filter:${backdropFilter};`}}`,
-    alpha < 100 && appearance.sidebarOnly ? `[data-testid="dsh-config-dialog"]{background:${panel}!important}` : '',
-    '[data-testid="dsh-shell-root"]>main{background:transparent!important}',
-  ].filter(Boolean).join('\n')
+interface NavBridgeMessage {
+  type?: string
+  collapsed?: boolean
+  rows?: unknown
 }
+
+const FULL_SIDEBAR_REVEAL_MS = 15_000
 
 export function Webview() {
   const [fullSidebarRevealed, setFullSidebarRevealed] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const guestRef = useRef<DshWebviewElement | null>(null)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
   const pendingSettingsTabRef = useRef<string | null>(null)
-  const nativeEffectQueueRef = useRef(Promise.resolve())
+  const appearanceCss = useAppearance(iframeRef)
+  const post = useIframePost(iframeRef)
 
   const [dshStyle] = useDshStyle()
   const [{ rows: shortcutRows }, setDshShortcuts] = useDshShortcuts()
-  const setting = useStore(store.setting)
 
   const { status, serviceHealthy, serviceRunning, iframeKey, iframeLoaded, iframeAlive, iframeError, startupPhase, busyAction } = useStore(store.harness)
   const { recovery } = useStore(store.recovery)
@@ -59,7 +48,7 @@ export function Webview() {
   const borderTint = remoteView.tint
   const remoteMode = activeTunnelUrl !== ''
   const live = status === 'ready' && (remoteMode || serviceHealthy)
-  const branch = status === 'ready' ? 'guest' : status === 'preinstall' ? 'preinstall' : status === 'error' && recovery.required ? 'recovery' : 'setup'
+  const branch = status === 'ready' ? 'iframe' : status === 'preinstall' ? 'preinstall' : status === 'error' && recovery.required ? 'recovery' : 'setup'
   useWatch([branch, status, remoteMode, serviceHealthy, serviceRunning, iframeKey, iframeLoaded, iframeAlive, iframeError, startupPhase, busyAction], () => {
     console.warn('[Webview] shell view', {
       branch,
@@ -74,36 +63,6 @@ export function Webview() {
       startupPhase,
       busyAction,
     })
-  }, { immediate: true })
-
-  const transparent = (window as Window & { __DSH_TRANSPARENT__?: boolean }).__DSH_TRANSPARENT__ === true
-  const appearance = normalizeAppearance(setting.appearance)
-  const scheme = dshStyle.colorScheme ?? (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark')
-  const appearanceCss = shellAppearanceCss(appearance, scheme, transparent)
-
-  // keep:effect 原生背景效果只能经窗口 API 命令式设置/清除，串行化避免后发先至
-  useWatch([setting.appearance, setting.hydrated], () => {
-    if (!setting.hydrated || !transparent)
-      return
-    let platform: ReturnType<typeof type>
-    try {
-      platform = type()
-    }
-    catch {
-      return
-    }
-    if (platform !== 'windows' && platform !== 'macos')
-      return
-
-    const appWindow = getCurrentWindow()
-    nativeEffectQueueRef.current = nativeEffectQueueRef.current
-      .then(() => appearance.transparency && appearance.blur
-        ? appWindow.setEffects({
-            effects: [Effect.Acrylic, Effect.Mica, Effect.UnderWindowBackground],
-            state: EffectState.FollowsWindowActiveState,
-          })
-        : appWindow.clearEffects())
-      .catch(error => console.warn('[Webview] native backdrop effect failed:', error))
   }, { immediate: true })
 
   function syncViewMenu() {
@@ -132,9 +91,11 @@ export function Webview() {
   }
 
   function openSettingsTab(tab: string) {
-    void emit('dsh://settings:open', { section: REMOTE_SECTION, tab })
+    post({ type: 'dsh://settings:open', section: REMOTE_SECTION, tab })
   }
 
+  // 远端视图下 iframe 里是远端页面，设置分区在它那边不存在：先切回本机，
+  // 等本机插件重新 boot 就绪（`dsh://plugin-boot:ready`）再定位，避免发出无人接收的消息。
   function openLocalSettingsTab(tab: string) {
     if (remoteMode) {
       pendingSettingsTabRef.current = tab
@@ -144,23 +105,25 @@ export function Webview() {
     openSettingsTab(tab)
   }
 
-  useListen<{ collapsed?: unknown }>('dsh://sidebar:collapsed', ({ payload }) => {
-    setSidebarCollapsed(Boolean(payload?.collapsed))
-  })
-  useListen<{ rows?: unknown }>('dsh://shortcuts', ({ payload }) => {
-    setDshShortcuts({ rows: parseShortcutRows(payload?.rows) })
-  })
-  useListen('dsh://full-sidebar:ready', () => setFullSidebarRevealed(true))
-  useListen('dsh://window:close', () => {
-    void getCurrentWindow().close()
-  })
-  useGuestMessage((data) => {
-    if (data.type !== 'dsh://plugin-boot:ready')
-      return
-    const pending = pendingSettingsTabRef.current
-    if (pending !== null) {
-      pendingSettingsTabRef.current = null
-      openSettingsTab(pending)
+  useIframeMessage<NavBridgeMessage>(iframeRef, (data) => {
+    if (data.type === 'dsh://sidebar:collapsed') {
+      setSidebarCollapsed(Boolean(data.collapsed))
+    }
+    else if (data.type === 'dsh://shortcuts') {
+      setDshShortcuts({ rows: parseShortcutRows(data.rows) })
+    }
+    else if (data.type === 'dsh://full-sidebar:ready') {
+      setFullSidebarRevealed(true)
+    }
+    else if (data.type === 'dsh://window:close') {
+      void getCurrentWindow().close()
+    }
+    else if (data.type === 'dsh://plugin-boot:ready') {
+      const pending = pendingSettingsTabRef.current
+      if (pending !== null) {
+        pendingSettingsTabRef.current = null
+        openSettingsTab(pending)
+      }
     }
   })
 
@@ -176,8 +139,8 @@ export function Webview() {
         return <PreinstallSetup />
       case 'ready':
         return (
-          <GuestWebview
-            guestRef={guestRef}
+          <Iframe
+            iframeRef={iframeRef}
             srcOverride={remoteMode ? activeTunnelUrl : null}
             borderTint={borderTint}
           />
@@ -187,9 +150,10 @@ export function Webview() {
     }
   }
 
+  // 窗口形态在进程内不会变：建窗时注入一次载荷，这里读一次就够。
   const fullSidebar = isFullSidebarWindow()
 
-  // keep:effect 全屏形态窗口的兜底揭开计时器必须随卸载清除
+  // 全屏形态窗口先盖住内容区：插件在帧内就位前不露半成品 chrome，兜底超时后强制揭开。
   useEffect(() => {
     if (!fullSidebar || fullSidebarRevealed)
       return
@@ -199,11 +163,11 @@ export function Webview() {
 
   const bridge = live
     ? {
-        onToggleSidebar: () => void emit('dsh://sidebar:toggle'),
-        onNewChat: () => void emit('dsh://session:new'),
-        onOpenFolder: () => void emit('dsh://workspace:add'),
-        onOpenShortcuts: () => void emit('dsh://shortcuts:open'),
-        onViewCommand: (command: DshViewCommand) => void emit('dsh://view:command', { command }),
+        onToggleSidebar: () => post({ type: 'dsh://sidebar:toggle' }),
+        onNewChat: () => post({ type: 'dsh://session:new' }),
+        onOpenFolder: () => post({ type: 'dsh://workspace:add' }),
+        onOpenShortcuts: () => post({ type: 'dsh://shortcuts:open' }),
+        onViewCommand: (command: DshViewCommand) => post({ type: 'dsh://view:command', command }),
         onOpenMachineManager: () => openLocalSettingsTab(REMOTE_TAB_MACHINES),
         onOpenRemoteAccess: () => openLocalSettingsTab(REMOTE_TAB_ACCESS),
       }
@@ -211,6 +175,7 @@ export function Webview() {
 
   return (
     <main className="relative flex flex-col min-h-0 flex-1" style={dshStyle.frame || {}}>
+      {/* 挂在 Iframe 外：启动页/预装引导/恢复页先于 Iframe 渲染，否则拿不到透明与调色板 token */}
       <style>{appearanceCss}</style>
       <If
         cond={fullSidebar}

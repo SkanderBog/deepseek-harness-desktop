@@ -1,15 +1,18 @@
 use std::path::Path;
 
-use crate::AppHandle;
-use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
+use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
 
 const PATCH_MARKER: &str = "dsh-tauri: tolerate workspace view state written by a newer core";
 
-const GROUP_EXPANSION_ORIGINAL: &str = "d.groupExpansion = Object.fromEntries(Object.entries(d.groupExpansion).filter(([key]) => retained.has(key)));";
-const SESSION_ORDER_ORIGINAL: &str = "d.sessionOrderByAccount = Object.fromEntries(Object.entries(d.sessionOrderByAccount).filter(([key]) => retained.has(key)));";
+const GROUP_EXPANSION_ORIGINAL: &str =
+    "d.groupExpansion = Object.fromEntries(Object.entries(d.groupExpansion).filter(([key]) => retained.has(key)));";
+const SESSION_ORDER_ORIGINAL: &str =
+    "d.sessionOrderByAccount = Object.fromEntries(Object.entries(d.sessionOrderByAccount).filter(([key]) => retained.has(key)));";
 
-const GROUP_EXPANSION_PATCHED: &str = "d.groupExpansion = Object.fromEntries(Object.entries(d.groupExpansion ?? {}).filter(([key]) => retained.has(key))); /* dsh-tauri: tolerate workspace view state written by a newer core */";
-const SESSION_ORDER_PATCHED: &str = "d.sessionOrderByAccount = Object.fromEntries(Object.entries(d.sessionOrderByAccount ?? {}).filter(([key]) => retained.has(key))); /* dsh-tauri: tolerate workspace view state written by a newer core */";
+const GROUP_EXPANSION_PATCHED: &str =
+    "d.groupExpansion = Object.fromEntries(Object.entries(d.groupExpansion ?? {}).filter(([key]) => retained.has(key))); /* dsh-tauri: tolerate workspace view state written by a newer core */";
+const SESSION_ORDER_PATCHED: &str =
+    "d.sessionOrderByAccount = Object.fromEntries(Object.entries(d.sessionOrderByAccount ?? {}).filter(([key]) => retained.has(key))); /* dsh-tauri: tolerate workspace view state written by a newer core */";
 
 const WORKSPACE_CLIENT_JS: &str = "node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js";
 
@@ -39,7 +42,7 @@ fn patch_source(source: &str) -> PatchOutcome {
 pub fn apply_at(core_dir: &Path) -> Result<(), String> {
     patch_core_file(core_dir, WORKSPACE_CLIENT_JS, patch_source)
 }
-pub fn apply(app_handle: &AppHandle) -> Result<(), String> {
+pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
     patch_dsh(app_handle, WORKSPACE_CLIENT_JS, patch_source)
 }
 

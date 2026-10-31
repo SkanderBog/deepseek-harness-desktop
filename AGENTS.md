@@ -6,6 +6,8 @@
 ## Next 分支专用规范
 
 - 迁移必须保证一比一路径级还原，代码也必须保持一致。
+- 新的桌面端采用 Electron 架构、DSH 界面采用 Webview 显示，不再使用 iframe。
+- 不再需要通过 iframe message 进行通讯，所有通讯都通过 Webview 内直接与 tauri 进行通讯。
 - 剔除不适用代码（Webview2、WKWebView、WebKitGTK 兼容代码）
 - 源头问题修复，遇到源头问题优先 crates/ 目录下的子仓库修复，再考虑本仓库修复。
 

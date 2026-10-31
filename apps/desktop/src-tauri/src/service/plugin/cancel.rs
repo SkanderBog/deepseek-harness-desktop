@@ -1,15 +1,25 @@
+//! 取消正在进行的预装插件安装。
+//!
+//! 跨平台结束由本应用拉起的 `dsh plugin` 安装进程树：
+//! - Unix（macOS/Linux）：进程以独立进程组启动（`process_group(0)`，见
+//!   `process.rs`），此处对注册的 PID 强制结束整组（含 pnpm / git 等子进程）；
+//! - Windows：对创建时记录的精确 PID 执行 `taskkill /T /F`，不再按命令行模糊
+//!   枚举，避免误杀其它插件操作或用户进程。
+
 use serde::Serialize;
-use tauri::{Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use super::process::{ActivePluginProcess, ProcessOwner};
-use crate::AppHandle;
 
+/// 前端监听“安装已取消”事件名
 const PREINSTALL_CANCEL_EVENT: &str = "preinstall-cancelled";
 
+/// 取消事件载荷（预留扩展字段）
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreinstallCancelPayload {}
 
+/// 强制结束当前插件安装进程树。返回是否找到并成功结束了活动进程。
 pub(crate) async fn terminate_active_install() -> bool {
     let active = super::process::active_plugin_processes();
     if active.is_empty() {
@@ -24,6 +34,13 @@ pub(crate) async fn terminate_active_install() -> bool {
         })
 }
 
+/// 退出前同步回收所有进行中的插件安装进程树（`RunEvent::Exit` 调用）。
+///
+/// 安装子进程以独立进程组启动（`process_group(0)`），父进程退出**不会**连带结束
+/// 它们；而取消只由前端命令（`cancel_plugin_processes` / `cancel_internal_plugins`）
+/// 触发。用户在安装看起来毫无进展时关窗，留下的孤儿会继续占着档案与 pnpm store，
+/// 下一次启动的安装便排在它后面——表现为永久卡在「Loading internal plugins…」且
+/// 后端日志一行输出都没有。回收必须在退出路径上显式做。
 pub(crate) fn terminate_active_installs_blocking() -> bool {
     let active = super::process::active_plugin_processes();
     if active.is_empty() {
@@ -36,6 +53,7 @@ pub(crate) fn terminate_active_installs_blocking() -> bool {
     terminate_pid_trees(active)
 }
 
+/// 逐个结束进程树；单个失败不影响其余，返回是否全部成功。
 fn terminate_pid_trees(active: Vec<(ProcessOwner, ActivePluginProcess)>) -> bool {
     let mut all_terminated = true;
     for (owner, process) in active {
@@ -118,6 +136,7 @@ pub(crate) fn terminate_pid_tree(pid: u32) -> bool {
 
 #[cfg(not(windows))]
 pub(crate) fn terminate_pid_tree(pid: u32) -> bool {
+    // `--` 防止负 PID 被解析为信号；KILL 保证忽略 TERM 的 pnpm/git 后代也退出。
     let group = std::process::Command::new("kill")
         .args(["-KILL", "--", &format!("-{pid}")])
         .status()
@@ -141,6 +160,7 @@ pub(crate) fn terminate_probe_tree(pid: u32) -> bool {
     unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) == 0 }
 }
 
+/// 取消正在进行的预装插件安装。
 pub async fn cancel(app_handle: &AppHandle) {
     terminate_active_install().await;
 

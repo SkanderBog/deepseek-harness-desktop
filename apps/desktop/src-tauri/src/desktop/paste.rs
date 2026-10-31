@@ -1,3 +1,21 @@
+//! 剪贴板回退桥：让 Linux/WebKitGTK 下 iframe 的「贴图 / 贴文件」走原生剪贴板。
+//!
+//! WebKitGTK 不通过 Web API 暴露 `image/*` 与文件（`text/uri-list` /
+//! `x-special/gnome-copied-files`）剪贴板条目，因此截图或从文件管理器复制文件后，
+//! 在桌面端内嵌的 dsh iframe 中输入框按 Ctrl+V 时，`paste` 事件的 `clipboardData`
+//! 里既没有图片、没有文件、往往也没有文本。本脚本在**捕获阶段**监听 `paste`，
+//! 检测到「无图片且无文本」时：preventDefault → 先向宿主请求读取系统剪贴板文件
+//! （宿主调用 `bridge::read_clipboard_files`）→ 有文件则把全部条目塞进同一个
+//! `DataTransfer` 构造 `File` 并重发一次合成 `paste`；无文件再回退读取剪贴板图片
+//! （宿主调用 `bridge::read_clipboard_image`）→ 拿到 PNG data URL → 构造 `File`
+//! 重发合成 `paste`。两条路径都让 dsh 聊天框按普通附件处理，与浏览器行为一致。
+//!
+//! 与 [`crate::desktop::notification::NOTIFICATION_SHIM_JS`] / [`crate::desktop::compat::ABORT_SIGNAL_ANY_SHIM_JS`]
+//! 走同一套注入通道（Windows 在 FrameCreated → ContentLoading 时 ExecuteScript，
+//! 其余平台 `initialization_script_for_all_frames`）。脚本带 `__dsh_clipboard_image_bridge__`
+//! 幂等守卫，重复注入安全；只处理「直接 iframe」发来的剪贴板请求，避免多层 iframe 误转发。
+//!
+//! 安全：文件路径完全来自**系统剪贴板**（宿主侧读取并回传），iframe 只能请求
 //! 「读剪贴板」而不能指定路径，因此不能借本桥读取本机任意文件（issue #1160）。
 
 pub(crate) const PASTE_SHIM_JS: &str = r#"(function () {

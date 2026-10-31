@@ -1,4 +1,19 @@
+//! 内置插件入口的离线落盘兜底：pnpm 的 `link:` 安装路径失败时，改由桌面端自己
+//! 建立 `node_modules/<name>` 目录链接并补齐 profile 清单。
+//!
+//! 为什么需要：pnpm 安装 `link:` 依赖的最后一步是「建好目录链接后立刻回读
+//! `package.json`」，该回读在部分 Windows 环境**恒定**失败——libuv 报
+//! `UV_UNKNOWN`（退出码 -4094，输出含 `UNKNOWN: unknown error, open
 //! '<profile>/node_modules/<name>/package.json'`）。issue #264 把它当作瞬时
+//! 态（重解析点落定 / 杀软扫新路径）用重试覆盖，但实时防护、云盘或重解析点
+//! 过滤驱动一旦稳定拦下该回读，重试就永远无法越过：`link:` 依赖不落盘 →
+//! 下次启动又判 `dep_ok=false` 重装 → 应用每次都卡在 Plugin installation 阶段。
+//!
+//! 兜底之所以成立：链接本身由桌面端的目录链接实现建立（无特权 junction 回退，
+//! 与 pnpm 生成的布局一致），**不需要 pnpm 回读**；可读性由本进程核验。清单
+//! 的 `dependencies` 与 `dsh.profile.bundles` 写成与 pnpm 成功安装一致的值，
+//! 保证 loader 能解析并加载插件。唯一不做的是 `pnpm-lock.yaml` 的 importers
+//! 条目，由下一次用户安装插件时 pnpm 自行补齐。
 
 use std::path::{Path, PathBuf};
 
@@ -6,6 +21,7 @@ use super::manifest::{
     internal_plugin_entry_is_ready, remove_stale_plugin_entry, write_profile_manifest,
 };
 
+/// 一个待自建的内置插件入口（`spec` 为写入清单的 `link:` 依赖值）。
 pub(super) struct OfflineLink {
     pub id: String,
     pub name: String,
@@ -14,6 +30,10 @@ pub(super) struct OfflineLink {
     pub entry: PathBuf,
 }
 
+/// 强制重建全部入口链接并写回清单；任一入口不可读即整体失败。
+///
+/// 强制重建（而不是复用既有入口）是必须的：既有入口可能正是 pnpm 建好后无法
+/// 回读的那一个，保留它等于把同一失败带进下一轮启动。
 pub(super) fn materialize_links(profile: &Path, links: &[OfflineLink]) -> Result<(), String> {
     let node_modules = profile.join("node_modules");
     std::fs::create_dir_all(&node_modules).map_err(|e| {
@@ -39,6 +59,8 @@ pub(super) fn materialize_links(profile: &Path, links: &[OfflineLink]) -> Result
             failures.push(format!("{}: 清理旧入口失败 {e}", link.id));
             continue;
         }
+        // 预设显式声明 scoped `package`（如 `@scope/name`）时入口位于
+        // `node_modules/@scope/name`：父目录不存在会直接让建链失败，先补齐。
         if let Some(parent) = link.entry.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 failures.push(format!(
@@ -82,6 +104,8 @@ pub(super) fn materialize_links(profile: &Path, links: &[OfflineLink]) -> Result
     Ok(())
 }
 
+/// 把 `dependencies` 与 `dsh.profile.bundles` 写成与 pnpm 成功安装等价的形态，
+/// 只增改本次的包名，绝不触碰用户的其它依赖与 bundle 顺序。
 fn upsert_manifest(manifest: &mut serde_json::Value, links: &[OfflineLink]) -> Result<(), String> {
     let object = manifest.as_object_mut().ok_or_else(|| {
         "INTERNAL_PLUGIN_OFFLINE_MANIFEST_INVALID: profile package.json is not an object"
@@ -148,6 +172,7 @@ mod tests {
         root
     }
 
+    /// 造一个「捆绑源目录 + profile」的最小现场：源目录含可读 package.json。
     fn fixture(label: &str, names: &[&str]) -> (PathBuf, PathBuf, Vec<OfflineLink>) {
         let root = tmp_root(label);
         let profile = root.join("profile");
@@ -204,6 +229,7 @@ mod tests {
         let manifest = manifest(&profile);
         assert_eq!(manifest["dependencies"]["dsh-tauri"], links[0].spec);
         assert_eq!(manifest["dependencies"]["dsh-tauri-ui"], links[1].spec);
+        // 用户既有依赖与 bundle 顺序必须原样保留，新 bundle 追加在末尾
         assert_eq!(
             manifest["dependencies"]["dshmarket"],
             "github:dsh-market/dshmarket"
@@ -242,6 +268,9 @@ mod tests {
 
     #[test]
     fn materialize_links_creates_scoped_entry_parent() {
+        // 预设可显式声明 scoped 包名（installed_name 以 package 为准，见
+        // installed.rs::installed_name_resolves_package_else_id），入口落在
+        // node_modules/@scope/ 下：兜底必须自己补齐父目录。
         let scope = "@baihejiangnan/dsh-session-context-menu";
         let (root, profile, links) = fixture("scoped", &[scope]);
 
@@ -273,6 +302,7 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("dsh-tauri"), "{error}");
+        // 失败时不得写入清单：半成品清单会让下一次启动少一个 bundle
         let manifest = manifest(&profile);
         assert!(manifest["dependencies"].get("dsh-tauri").is_none());
         let _ = std::fs::remove_dir_all(root);

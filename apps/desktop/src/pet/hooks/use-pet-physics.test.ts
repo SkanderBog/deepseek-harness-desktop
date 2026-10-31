@@ -6,6 +6,7 @@ import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePetPhysics } from './use-pet-physics'
 
+/** useListen 的同步登记表：假事件直接投喂给订阅者，不经过 Tauri。 */
 const deviceListeners = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>())
 
 vi.mock('@/hooks/use-listen', () => ({
@@ -47,9 +48,11 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => mocks.window,
 }))
 
+/** 屏幕工作区 1920x1080（物理像素，jsdom 的 dpr = 1），窗口逻辑位置 (500, 400)。 */
 const WORK_AREA = { position: { x: 0, y: 0 }, size: { width: 1920, height: 1080 } }
 const WINDOW_POSITION = { x: 500, y: 400 }
 
+/** 组件校验后送回来的甩出请求：几何铺满视口，脚底在容器底边。 */
 function flingEvent(vx: number, vy: number): PetPhysicsEvent {
   return {
     vx,
@@ -82,12 +85,14 @@ function pressMouse(pressed: boolean): void {
   })
 }
 
+/** 抓住宠物：命中箱上的左键按下（`useWindowDraggable({ onGrab })` 转来的信号）。 */
 function grab(controls: PetPhysicsControls): void {
   act(() => {
     controls.onGrab()
   })
 }
 
+/** 投喂窗口 Moved：`clock` 控制采样时刻，采样值 = 物理像素 / dpr。 */
 function dragWindow(clock: { now: number }, samples: Array<{ t: number, x: number, y: number }>): void {
   for (const sample of samples) {
     clock.now = sample.t
@@ -98,6 +103,7 @@ function dragWindow(clock: { now: number }, samples: Array<{ t: number, x: numbe
   }
 }
 
+/** 一次完整的「抓取 → 高速拖拽 → 松手」手势（5000 CSS px/s，远超 500 的甩出门槛）。 */
 function flingGesture(controls: PetPhysicsControls, clock: { now: number }): void {
   const start = clock.now
   grab(controls)
@@ -206,6 +212,7 @@ describe('usePetPhysics', () => {
 
     expect(pet.fling).toHaveBeenCalledTimes(1)
 
+    // 设备流的同一次松开随后到达：`pressedRef` 已清，不再结算（也就不会用陈旧轨迹甩出去）。
     clock.now = 130
     pressMouse(false)
     act(() => {
@@ -256,6 +263,7 @@ describe('usePetPhysics', () => {
 
     advanceFrames(2)
 
+    // 工作区高 1080 - 脚底 100 = 地板 980；vx 600 CSS px/s 首帧走 9.6px。
     const first = mocks.window.setPosition.mock.calls[1][0] as { x: number, y: number }
     expect(first.x).toBe(Math.round(WINDOW_POSITION.x + 600 * 0.016))
 
@@ -480,6 +488,7 @@ describe('usePetPhysics', () => {
     pressMouse(true)
     advanceFrames(10)
 
+    // 全屏左键流分不清「抓宠物」与「在别处点击」：飞行必须继续。
     expect(mocks.window.setPosition.mock.calls.length).toBeGreaterThan(calls)
 
     pressMouse(false)

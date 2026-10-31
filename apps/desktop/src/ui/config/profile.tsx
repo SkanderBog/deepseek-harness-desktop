@@ -25,6 +25,7 @@ import { toast } from '@/utils/toast'
 
 type ProfileView = 'list' | { profile: string }
 
+/** 宿主档案错误的 `CODE` → 提示 key（错误串是 `CODE: 详情`，详见 `service::profile`） */
 const PROFILE_ERROR_KEYS: Record<string, string> = {
   PROFILE_EMPTY_NAME: 'profiles.error_empty_name',
   PROFILE_NAME_TOO_LONG: 'profiles.error_name_too_long',
@@ -38,6 +39,8 @@ export function ConfigProfile() {
     queryKey: queryKeys.profiles,
     queryFn: () => invoke<Profile[]>('get_profiles'),
   })
+  // 切换档案会写桌面端 store（触发 `setting_updated`），监听该事件一并失效重拉，
+  // 保证面板列表与后端设置始终一致。
   useInvalidateOnSettingUpdated(queryKeys.profiles)
 
   function invalidate() {
@@ -65,6 +68,7 @@ export function ConfigProfile() {
     onSuccess: invalidate,
   })
 
+  /** 写操作封装：等待列表重拉完成再返回，调用方拿到的列表与后端一致 */
   async function createProfile(name: string): Promise<Profile> {
     const created = await create.mutateAsync(name)
     await refetch()
@@ -95,9 +99,12 @@ export function ConfigProfile() {
   const profiles = profileList ?? []
   const loading = isLoading
   const error = profileError ? String(profileError) : ''
+  /** 当前使用中的档案，即迁移的目标（不可更改） */
   const activeProfile = profiles.find(profile => profile.active)
+  /** 操作进行中标记（新建/切换/删除/重置/克隆任一） */
   const busy = create.isPending || activate.isPending || remove.isPending || reset.isPending || clone.isPending
 
+  /** 迁移入口的禁用条件：操作进行中、没有当前档案、或没有第二个档案可作来源 */
   const migrateBlocked = busy || !activeProfile || profiles.length < 2
 
   const [dialogHolder, openDialog] = useOverlay(Modal, { type: 'holder' })
@@ -107,17 +114,31 @@ export function ConfigProfile() {
   const [name, setName] = useState('')
   const [activeView, setActiveView] = useState<ProfileView>('list')
 
+  // 克隆档案：命名对话框状态
   const [cloning, setCloning] = useState<{ sourceId: string, sourceName: string } | null>(null)
   const [cloneName, setCloneName] = useState('')
 
+  // 迁移档案数据：来源档案在对话框内选择，目标恒为当前使用中的档案
   const [migrateDialogHolder, openMigrateDialog] = useOverlay(ProfileMigrateDialog, { type: 'holder' })
 
+  /**
+   * 档案名会直接当磁盘目录名与 CLI `--profile` 参数，只能用 ASCII 字母数字（`-`/`_`/空格
+   * 分隔，其余字符被丢弃，与后端 `normalize_profile_id` 同一套规则）。归一化后为空说明
+   * 整个名字都不可用（例如纯中文）：在输入框下面就讲清楚，按钮同时置灰，不让用户提交后
+   * 才撞上一个机器错误码。
+   */
   function profileNameHint(value: string): string | null {
     if (value.trim() === '' || normalizeProfileId(value) !== '')
       return null
     return t('profiles.name_invalid_hint')
   }
 
+  /**
+   * 宿主错误串换成用户能看懂的一句话；未知错误码照原样显示，免得把真实原因吞掉。
+   *
+   * 「名字不可用」直接用输入框那条提示文案，「已存在」复用已有的 `clone_exists`（带名字），
+   * 其余按码查表——同一件事在两个地方各写一份文案就是新的漂移源。
+   */
   function profileErrorText(error: unknown, name: string): string {
     const code = String(error).split(':')[0]?.trim() ?? ''
     if (code === 'PROFILE_INVALID_NAME')
@@ -131,6 +152,7 @@ export function ConfigProfile() {
   const createNameHint = profileNameHint(name)
   const cloneNameHint = profileNameHint(cloneName)
 
+  /** 推导下一个未占用的自动递增名称（仅作为建议，后端才是权威） */
   function suggestCloneName(base: string): string {
     const taken = new Set(profiles.map(p => p.id))
     for (let n = 1; n <= 1000; n++) {
@@ -217,6 +239,7 @@ export function ConfigProfile() {
     if (createNameHint !== null)
       return
     try {
+      // 创建成功后列表已刷新出新档案，UI 本身就有变化，不再弹成功 toast
       await createProfile(trimmed)
       toggleCreating(false)
       setName('')
@@ -248,6 +271,7 @@ export function ConfigProfile() {
       return
     }
     try {
+      // 删除成功后列表已移除该档案，UI 本身就有变化，不再弹成功 toast
       await removeProfile(id)
     }
     catch (err) {
@@ -256,6 +280,13 @@ export function ConfigProfile() {
     }
   }
 
+  /**
+   * 重置档案：清空档案数据（插件/补丁/设置）后按模板重新初始化。
+   *
+   * 会话存放在 `$DSH_HOME/sessions`（档案目录之外），重置不受影响。
+   * 只有当前使用中的档案会被运行中的服务锁住目录，因此仅此时沿用备份还原的编排
+   * （先停服务并确认已停止，再重置，最后重新拉起）；重置其余档案不打扰在跑的服务。
+   */
   async function onReset(id: string) {
     const target = profiles.find(p => p.id === id)
     if (!target || busy)
@@ -312,6 +343,7 @@ export function ConfigProfile() {
     }
   }
 
+  // 备份子视图：点击档案的「备份」芯片后进入
   if (activeView !== 'list') {
     return (
       <ConfigBackup onBack={() => setActiveView('list')} />
@@ -337,6 +369,7 @@ export function ConfigProfile() {
         )}
       />
 
+      {/* 加载 / 失败 / 列表 */}
       <Panel.Loadable loading={loading} error={error}>
         <div className="flex flex-col gap-4">
           {profiles.map(profile => (
@@ -413,6 +446,7 @@ export function ConfigProfile() {
               )}
             />
           ))}
+          {/* 新建档案：内联输入 or 触发入口 */}
           <If
             cond={!creating}
             else={(
@@ -467,6 +501,7 @@ export function ConfigProfile() {
       {dialogHolder}
       {migrateDialogHolder}
 
+      {/* 克隆档案：命名对话框（创建型，accent；可编辑建议名称） */}
       <AlertDialog
         isOpen={cloning !== null}
         onOpenChange={(open) => {

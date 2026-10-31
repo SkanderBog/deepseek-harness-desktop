@@ -1,8 +1,10 @@
+//! 关于信息与当前安装版本对应的发行记录。
+
 use super::meta::fetch_tag_published_at;
 use super::version::{current_version, parse_version};
 use super::{COPYRIGHT, POWERED_BY, REPO_URL};
-use crate::AppHandle;
 
+/// 关于对话框信息。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopAboutInfo {
@@ -36,7 +38,7 @@ fn release_tag(version: &str) -> Option<String> {
     Some(format!("v{version}"))
 }
 
-pub async fn about(app_handle: &AppHandle) -> DesktopAboutInfo {
+pub async fn about(app_handle: &tauri::AppHandle) -> DesktopAboutInfo {
     let version = current_version();
     let published_at = match release_tag(&version) {
         Some(tag) => fetch_tag_published_at(app_handle, &tag)

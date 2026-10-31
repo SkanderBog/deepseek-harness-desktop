@@ -20,6 +20,7 @@ import { store } from '@/store'
 import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
 
+/** 操作 chip 的样式变体：busy 时禁止点击并降低透明度，否则可点击。 */
 const actionChip = tv({
   variants: {
     busy: {
@@ -32,6 +33,7 @@ const actionChip = tv({
   },
 })
 
+/** 队列里的进程类型 → 面板行内动作名（队列叫 upgrade/uninstall，按钮叫 update/remove） */
 const QUEUED_ACTIONS: Record<PluginProcess['type'], string> = {
   install: 'install',
   upgrade: 'update',
@@ -40,6 +42,7 @@ const QUEUED_ACTIONS: Record<PluginProcess['type'], string> = {
   enable: 'enable',
 }
 
+/** 兼容性检查的问题码 → i18n key：管理器把宿主返回的 problem 原样透传给调用方 */
 const searchProblemKeys: Record<PluginSearchProblem, string> = {
   'local-missing': 'plugins.search_local_missing',
   'not-found': 'plugins.search_not_found',
@@ -48,6 +51,10 @@ const searchProblemKeys: Record<PluginSearchProblem, string> = {
   'unknown': 'plugins.search_unknown',
 }
 
+/**
+ * 安装框文本 → spec 列表：默认按逗号/空白拆分（可一次装多个），但目录选择器回填的那
+ * 一条要整体保留——路径里的空格属于路径本身，拆开只会得到两条都不存在的 spec。
+ */
 function splitRefs(value: string, picked: string | null): string[] {
   const trimmed = value.trim()
   if (trimmed === '')
@@ -57,6 +64,7 @@ function splitRefs(value: string, picked: string | null): string[] {
   return trimmed.split(/[\s,]+/).filter(Boolean)
 }
 
+/** 宿主 `get_local_plugin_hmr` 的返回：开关值、补丁层路径与当前真正被监听的源码目录。 */
 interface LocalHmrStatus {
   enabled: boolean
   watching: boolean
@@ -64,6 +72,13 @@ interface LocalHmrStatus {
   roots: string[]
 }
 
+/**
+ * 「插件」面板：已安装插件的安装/升级/卸载/禁用/启用全部经 `useDshPluginsManager` 收口
+ * （队列、授权、Toast、组结算重启由管理器统一负责），面板只保留确认对话框与行内 busy。
+ *
+ * 快照（创建/还原/删除）不在管理器范围内
+ * 仍由面板直接调用宿主命令；这些操作同样会改写插件状态，因此成功后失效插件列表查询。
+ */
 export function ConfigPlugin() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -75,10 +90,14 @@ export function ConfigPlugin() {
 
   const [showInternal, toggleShowInternal] = useToggle()
   const [advanced, toggleAdvanced] = useToggle()
+  /** 行内动作标记 `<id>:<action>`：按行独立，某行的动作不阻塞其他行继续入队 */
   const [busy, setBusy] = useState<string[]>([])
+  /** 安装输入的原始文本：支持逗号/空白分隔的多个 spec */
   const [installRef, setInstallRef] = useState('')
+  /** 目录选择器回填的整条 spec：与输入框内容逐字相等时才按单条处理（见 {@link splitRefs}） */
   const [pickedSpec, setPickedSpec] = useState<string | null>(null)
   const [installing, setInstalling] = useState(false)
+  /** 兼容性预检结果：安装前先经 manager.search 展示解析到的版本与兼容性 */
   const [searchResults, setSearchResults] = useState<PluginSearchResult[] | null>(null)
   const [upgradingAll, toggleUpgradingAll] = useToggle()
   const upgradable = managedPlugins.filter(plugin => (plugin.updateAvailable || plugin.error != null) && !rowBusy(plugin.id))
@@ -123,6 +142,7 @@ export function ConfigPlugin() {
     },
   })
 
+  /** 热重载状态只读展示：补丁层与被监听的源码目录都由后端按已挂载的本地插件算出来。 */
   const hmr = useQuery({
     queryKey: queryKeys.localPluginHmr,
     queryFn: () => invoke<LocalHmrStatus>('get_local_plugin_hmr'),
@@ -149,6 +169,10 @@ export function ConfigPlugin() {
     },
   })
 
+  /**
+   * 目录选择器只把选中的目录回填进安装框（`link:` spec），安装仍走与手打完全相同的链路：
+   * 用户可以先核对路径再点安装，也能就地改掉。
+   */
   async function onPickLocalDir() {
     if (installing)
       return
@@ -170,10 +194,19 @@ export function ConfigPlugin() {
     }
   }
 
+  /** 该插件在管理器队列里的进程类型（不在队列里为 null）。 */
   function queuedType(id: string): PluginProcess['type'] | null {
     return manager.processes.find(process => process.name === id)?.type ?? null
   }
 
+  /**
+   * 管理器动作只等待组结算：授权等待期间的横幅与结果 Toast 都由管理器弹出，
+   * 面板仅负责行内 busy 与「同一行不重复派发」。不同行的动作互不禁用，
+   * 后续点击会作为新组进入管理器队列。
+   *
+   * 队列里已有该插件的同义动作时也算忙（升级 = 更新、卸载 = 移除）：Spinner 跟着队列走，
+   * 不必等宿主返回；整行禁点由 [`rowBusy`](self) 负责。
+   */
   function busyWith(id: string, action: string): boolean {
     if (busy.includes(`${id}:${action}`))
       return true
@@ -181,6 +214,7 @@ export function ConfigPlugin() {
     return queued !== null && QUEUED_ACTIONS[queued] === action
   }
 
+  /** 队列里已有该插件的进程时整行禁点：再点只会把它作为新组塞进同一个队列。 */
   function rowBusy(id: string): boolean {
     return queuedType(id) !== null || busy.some(item => item.startsWith(`${id}:`))
   }
@@ -209,6 +243,8 @@ export function ConfigPlugin() {
   }
 
   async function onUpgrade(id: string, latest: string | null) {
+    // 面板此刻显示着目标版本，把它一起交给管理器：宿主据此核验「装的到底是不是这个版本」，
+    // 并在来源被钉死时用显式安装兜底（见 `update_dsh_plugins`）。
     const ref = latest === null ? id : { spec: id, version: latest }
     await runAction(id, 'update', () => manager.upgrade(ref))
   }
@@ -257,6 +293,10 @@ export function ConfigPlugin() {
     await runAction(id, 'remove', () => manager.uninstall(id))
   }
 
+  /**
+   * 新增安装入口：`manager.search` 只把解析到的版本与兼容性标记显示出来（只读，不改 Profile），
+   * 安装本身一律交给 `manager.install`；不兼容由宿主拒绝后在管理器里弹授权气泡，面板不提前拦。
+   */
   async function onInstall() {
     const refs = splitRefs(installRef, pickedSpec)
     if (refs.length === 0 || installing)
@@ -359,6 +399,7 @@ export function ConfigPlugin() {
     markBusy(id, 'restore')
     try {
       await restore.mutateAsync(id)
+      // 还原期间后端已停止服务：复用 ui/config/backup 的「重启服务」toast 交互
       const key = toast(t('plugins.restore_restart_hint', { name }), {
         variant: 'accent',
         timeout: 10_000,
@@ -410,6 +451,7 @@ export function ConfigPlugin() {
     }
   }
 
+  /** 插件行：可管理插件列表与「内置插件」折叠分组共用同一行结构 */
   function renderPluginRow(plugin: Plugin) {
     return (
       <Item
@@ -474,6 +516,7 @@ export function ConfigPlugin() {
         )}
         right={(
           <>
+            {/* 升级入口仅在确有更新（updateAvailable）或插件异常（error，修复入口）时显示 */}
             <If cond={plugin.updateAvailable || plugin.error != null}>
               <Chip
                 className={actionChip({ busy: rowBusy(plugin.id) })}
@@ -521,6 +564,8 @@ export function ConfigPlugin() {
             </If>
             <If cond={!plugin.internal}>
               <If cond={advanced}>
+                {/* 单插件快照：快照始终可用（已存在时覆盖确认）；还原/删除快照仅在
+                    存在快照时显示。还原会停服务，还原后 toast 提示重启（issue #303） */}
                 <Chip
                   className={actionChip({ busy: rowBusy(plugin.id) })}
                   variant="primary"
@@ -642,6 +687,7 @@ export function ConfigPlugin() {
 
       <Panel.Loadable loading={manager.loading} error={manager.error}>
         <div className="flex flex-col gap-4">
+          {/* 安装入口：接受 npm spec（可逗号/空白分隔多个），搜索结果只作展示，安装统一入队 */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
               <Input
@@ -740,6 +786,8 @@ export function ConfigPlugin() {
             {managedPlugins.map(plugin => renderPluginRow(plugin))}
           </If>
           <If cond={internalPlugins.length > 0}>
+            {/* 「内置插件」分组头：默认折叠，点标题展开/收起。内置插件由启动自愈维护，
+                与可升级/可卸载的插件并列只会让用户误当作普通插件 */}
             <button
               type="button"
               className="flex items-center gap-1 px-1 pt-2 text-left text-xs font-medium text-muted"

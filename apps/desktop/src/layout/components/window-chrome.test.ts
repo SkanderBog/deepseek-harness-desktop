@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import process from 'node:process'
 import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { applyFrameMode, frameMode, useFullscreen, useMaximized } from './window-chrome'
@@ -20,7 +19,7 @@ vi.mock('@tauri-apps/api/window', () => ({
   }),
 }))
 
-const frameCss = readFileSync(resolve(process.cwd(), 'apps/desktop/src/styles/main.css'), 'utf8').replaceAll('\r\n', '\n')
+const frameCss = readFileSync(resolve(process.cwd(), 'src/styles/main.css'), 'utf8')
 
 afterEach(() => {
   cleanup()

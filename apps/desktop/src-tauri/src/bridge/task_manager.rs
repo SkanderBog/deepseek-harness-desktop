@@ -6,7 +6,6 @@ use serde::Serialize;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tauri::Manager;
 
-use crate::Webview;
 use crate::service::workflow;
 
 #[derive(Clone, Serialize)]
@@ -34,7 +33,7 @@ fn monitor() -> &'static Mutex<Monitor> {
     MONITOR.get_or_init(|| Mutex::new(Monitor::default()))
 }
 
-fn ensure_shell(webview: &Webview) -> Result<(), String> {
+fn ensure_shell(webview: &tauri::Webview) -> Result<(), String> {
     let url = webview
         .url()
         .map_err(|error| format!("TASK_MANAGER_ORIGIN: {error}"))?;
@@ -176,7 +175,7 @@ fn validate_end(process: &TaskManagerProcess, start_time: u64) -> Result<(), Str
 
 #[tauri::command]
 pub async fn get_task_manager_processes(
-    webview: Webview,
+    webview: tauri::Webview,
 ) -> Result<Vec<TaskManagerProcess>, String> {
     ensure_shell(&webview)?;
     let profile =
@@ -194,7 +193,7 @@ pub async fn get_task_manager_processes(
 
 #[tauri::command]
 pub async fn end_task_manager_process(
-    webview: Webview,
+    webview: tauri::Webview,
     pid: u32,
     start_time: u64,
 ) -> Result<(), String> {
@@ -281,23 +280,17 @@ mod tests {
             start_time: 102,
             can_end: true,
         };
-        assert!(
-            validate_end(&process, 101)
-                .unwrap_err()
-                .starts_with("TASK_MANAGER_STALE:")
-        );
-        assert!(
-            validate_end(&process, 0)
-                .unwrap_err()
-                .starts_with("TASK_MANAGER_STALE:")
-        );
+        assert!(validate_end(&process, 101)
+            .unwrap_err()
+            .starts_with("TASK_MANAGER_STALE:"));
+        assert!(validate_end(&process, 0)
+            .unwrap_err()
+            .starts_with("TASK_MANAGER_STALE:"));
         assert_eq!(validate_end(&process, 102), Ok(()));
         process.can_end = false;
-        assert!(
-            validate_end(&process, 102)
-                .unwrap_err()
-                .starts_with("TASK_MANAGER_PROTECTED:")
-        );
+        assert!(validate_end(&process, 102)
+            .unwrap_err()
+            .starts_with("TASK_MANAGER_PROTECTED:"));
     }
 
     #[test]

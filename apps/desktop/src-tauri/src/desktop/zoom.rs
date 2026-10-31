@@ -1,7 +1,11 @@
-use crate::WebviewWindow;
+//! 内嵌 Harness 页面缩放快捷键桥。
+//!
+//! 键盘事件不会从跨源 iframe 冒泡到桌面壳层，因此在直接子 frame 中捕获
+//! Ctrl/Cmd + `+`/`-`/`0`，再把经过收窄的动作交给宿主。宿主仍会校验消息来源。
+
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSOperatingSystemVersion, NSProcessInfo};
-use tauri::Runtime;
+use tauri::{Runtime, WebviewWindow};
 
 #[cfg(any(target_os = "macos", test))]
 const MINIMUM_MACOS_ZOOM_MAJOR: isize = 11;
@@ -38,6 +42,7 @@ fn current_platform_zoom_support_error() -> Option<String> {
     None
 }
 
+/// 在系统支持时调用原生 WebView 缩放；macOS 10.15 不触碰 11.0 才引入的选择器。
 pub fn apply_native_zoom<R: Runtime>(
     window: &WebviewWindow<R>,
     zoom_factor: f64,
@@ -52,7 +57,7 @@ pub fn apply_native_zoom<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::{MINIMUM_MACOS_ZOOM_MAJOR, macos_zoom_support_error};
+    use super::{macos_zoom_support_error, MINIMUM_MACOS_ZOOM_MAJOR};
 
     #[test]
     fn native_zoom_requires_macos_11_or_newer() {

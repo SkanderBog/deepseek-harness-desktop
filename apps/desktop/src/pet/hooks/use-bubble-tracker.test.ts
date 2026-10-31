@@ -1,3 +1,10 @@
+/**
+ * use-bubble-tracker.test.ts — 桌宠气泡层单测（文案纯函数 + 会话快照 → pet.bubble 映射）。
+ *
+ * 气泡自身的叠加、原地更新、定时收起与多会话动作聚合由 `dsh-pet-component` 负责，
+ * 这里锁两件事：文案选句（同 seed 恒定、分组回落、任务句式）与宿主侧剩下的契约
+ * （档位推导、子代理静默、终态只下发一次、挂载前被丢弃的气泡能靠 flush 补齐）。
+ */
 import type { PetBubbleHandle, PetBubbleOptions } from 'dsh-pet-component'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { setPetLanguage } from '../i18n'
@@ -127,6 +134,7 @@ describe('sessionTitle', () => {
     const title = sessionTitle({ id: 'session-2a2abd15-b0d4-499c-aed1-dd1424003bb3' })
     expect(title).toBe('新会话')
     expect(title).not.toContain('session-')
+    // 空白标题与缺失标题同档：都不得回落到 id。
     expect(sessionTitle({ title: '   ', displayTitle: '' })).toBe('新会话')
   })
 
@@ -145,6 +153,7 @@ type Call
     | { type: 'close', id: string | undefined }
     | { type: 'clear' }
 
+/** 假命令面：`mounted` 控制 `pet.bubble` 返回 key 还是空串（组件未挂载）。 */
 function createFakeBubble(initiallyMounted = true) {
   const calls: Call[] = []
   const state = { mounted: initiallyMounted }

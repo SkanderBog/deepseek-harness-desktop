@@ -18,6 +18,7 @@ export interface ConfigBackupProps {
   onBack: () => void
 }
 
+/** 把字节转为 MB 展示（保留 1 位小数）。 */
 function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}`
 }
@@ -89,6 +90,7 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
       silence(e, 'backup: dialog cancelled')
       return
     }
+    // 先停止 DSH 服务（释放 profile 目录的文件锁）
     toast(t('backup.restored_stopped_toast'), { variant: 'accent' })
     try {
       await invoke('shutdown_harness')
@@ -96,9 +98,11 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
     catch (e) {
       console.warn('[ConfigBackup] shutdown_harness failed (may already be stopped):', e)
     }
+    // 无论 shutdown 成功与否，都验证服务已真正停止
     await waitForHarnessStopped()
     try {
       await restoreBackup(timestamp, false)
+      // 还原后自动启动 DSH 服务（后台异步，不阻塞 UI）
       invoke('launch_harness').catch((e) => {
         console.warn('[ConfigBackup] launch_harness failed:', e)
       })
@@ -180,6 +184,7 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
         <span>{t('backup.back_to_profiles')}</span>
       </Button>
 
+      {/* 手动备份 */}
       <Panel.Header title={t('backup.manual_section')} description={t('backup.profile_scope')} />
       <div className="flex flex-col gap-3">
         <Button
@@ -234,6 +239,7 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
         </div>
       </If>
 
+      {/* 备份列表 */}
       <Panel.Header title={t('backup.list_section')} description="" />
       <Panel.Loadable loading={loading} error={error}>
         <If

@@ -1,4 +1,3 @@
-mod asar;
 mod core;
 mod extractor;
 mod github;
@@ -6,18 +5,19 @@ mod installable;
 mod progress;
 mod utils;
 
-pub use asar::{
-    entry_exists as asar_entry_exists, read_entry as read_asar_entry, validate_dsh_archive,
-};
+// 导出公共接口
 pub use core::{
     download_file, download_file_from_sources, ensure_extract, fetch_node_sha256, verify_sha256,
 };
-pub(crate) use core::{remove_dir_with_retry, rename_with_retry};
 pub use github::{
-    DshPkgReleaseMeta, LatestDshPkg, UpdateCheck, fetch_dsh_pkg_asset, fetch_dsh_pkg_releases,
-    fetch_dsh_pkg_tags, fetch_dsh_pkg_version, fetch_latest_dsh_pkg_info, is_preview_tag,
-    parse_version_from_tag, record_matches_latest_release, resolve_update,
+    fetch_dsh_pkg_asset, fetch_dsh_pkg_releases, fetch_dsh_pkg_tags, fetch_dsh_pkg_version,
+    fetch_latest_dsh_pkg_info, is_preview_tag, parse_version_from_tag,
+    record_matches_latest_release, resolve_update, DshPkgReleaseMeta, LatestDshPkg, UpdateCheck,
 };
-pub use installable::{Dsh, InstallKind, Installable, Pnpm, record_mappings, tasks};
+// 供核心面板切换版本时使用（跨模块内部接口，不进公共 API）
+pub(crate) use core::{remove_dir_with_retry, rename_with_retry};
+// 依赖任务清单与映射回写：安装流程与启动检测共用同一组任务定义。
+pub use installable::{record_mappings, tasks, Dsh, InstallKind, Installable, Nodejs, Pnpm};
 pub use progress::ProgressTracker;
+// GitHub API 限流冷却器：任何访问 api.github.com 的服务都应收敛到这一个入口
 pub use utils::github_api;

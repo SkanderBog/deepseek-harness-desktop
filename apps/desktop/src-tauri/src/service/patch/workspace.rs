@@ -1,9 +1,11 @@
+//! 保留显式关联到源工作区的工作树会话，不改变其隔离 cwd 与目录校验。
+
 use std::path::Path;
 
-use crate::AppHandle;
-use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
+use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
 
 const PATCH_MARKER: &str = "dsh-tauri-worktree: relaxed explicit workspace membership";
+// 0.2.1-alpha.5 将 sessionPath 比较改为 candidateMatches，需整组匹配避免局部放宽。
 const MEMBERSHIP_LAYOUTS: [(&str, &str); 2] = [
     (
         "return this.record.sessionIds.filter((id) => this.host.sessionPath(id) === this.record.path);",
@@ -39,7 +41,7 @@ fn patch_source(source: &str) -> PatchOutcome {
 pub fn apply_at(core_dir: &Path) -> Result<(), String> {
     patch_core_file(core_dir, WORKSPACE_INDEX_JS, patch_source)
 }
-pub fn apply(app_handle: &AppHandle) -> Result<(), String> {
+pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
     patch_dsh(app_handle, WORKSPACE_INDEX_JS, patch_source)
 }
 

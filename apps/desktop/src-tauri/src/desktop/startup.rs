@@ -49,7 +49,7 @@ fn process_integrity_level() -> std::io::Result<u32> {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use windows_sys::Win32::Security::{
         GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, IsValidSid,
-        TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenIntegrityLevel,
+        TokenIntegrityLevel, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -70,6 +70,7 @@ fn process_integrity_level() -> std::io::Result<u32> {
         if required < std::mem::size_of::<TOKEN_MANDATORY_LABEL>() as u32 {
             return Err(std::io::Error::last_os_error());
         }
+        // TOKEN_MANDATORY_LABEL 含指针，缓冲区必须满足其对齐要求。
         let mut buffer = vec![0usize; (required as usize).div_ceil(std::mem::size_of::<usize>())];
         if GetTokenInformation(
             token.as_raw_handle(),
@@ -272,12 +273,12 @@ mod tests {
     #[test]
     fn real_low_integrity_process_shows_an_actionable_error_before_app_setup() {
         use std::os::windows::process::CommandExt;
+        use windows_sys::core::BOOL;
         use windows_sys::Win32::Foundation::{HWND, LPARAM};
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW,
             WM_CLOSE,
         };
-        use windows_sys::core::BOOL;
 
         unsafe extern "system" fn dismiss_error(window: HWND, parameter: LPARAM) -> BOOL {
             let probe = &mut *(parameter as *mut (u32, bool));
@@ -354,8 +355,8 @@ mod tests {
         }
         use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
         use windows_sys::Win32::Security::{
-            SID, SID_AND_ATTRIBUTES, SID_IDENTIFIER_AUTHORITY, SetTokenInformation,
-            TOKEN_ADJUST_DEFAULT, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenIntegrityLevel,
+            SetTokenInformation, TokenIntegrityLevel, SID, SID_AND_ATTRIBUTES,
+            SID_IDENTIFIER_AUTHORITY, TOKEN_ADJUST_DEFAULT, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
         };
         use windows_sys::Win32::System::SystemServices::SE_GROUP_INTEGRITY;
         use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};

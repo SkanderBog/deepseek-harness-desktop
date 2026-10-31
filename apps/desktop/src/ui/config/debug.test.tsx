@@ -60,6 +60,7 @@ vi.mock('@/store', () => ({
 const SAVED = 'socks5h://127.0.0.1:1080'
 const EDITED = 'http://127.0.0.1:7897'
 
+/** 让 `store.setting.update` 挂起，模拟「保存仍在途」。 */
 function deferUpdate() {
   let release!: () => void
   const pending = new Promise<void>((resolve) => {

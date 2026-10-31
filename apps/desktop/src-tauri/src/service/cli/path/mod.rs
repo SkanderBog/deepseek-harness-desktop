@@ -1,7 +1,16 @@
+//! 用户 PATH 注册与路径计算：bin 目录定位、Windows 注册表读写与
+//! `WM_SETTINGCHANGE` 广播、Unix shell rc 幂等块更新（备份 + 失败回滚），以及
+//! 用户 pnpm 探测。
+//!
+//! 模块划分：
+//! - [`pnpm`]：用户 pnpm 探测（PATH + mise/Windows 标准目录，排除本应用 shim）
+//! - [`registry`]：Windows 注册表辅助（仅 Windows）
+//! - [`rc`]：Unix shell rc 幂等块注入/移除（仅 Unix）
+
 #[cfg(not(windows))]
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::Manager;
+use tauri::{AppHandle, Manager};
 
 #[cfg(windows)]
 use super::shim::SHIM_CMD_NAME;
@@ -11,7 +20,7 @@ use super::shim::SHIM_SH_NAME;
 use crate::config::CLI_ROOT_DEV_DIR_NAME;
 
 #[cfg(not(windows))]
-use rc::{RC_FILES, RC_MARK_START, inject_shell_rc, strip_shell_rc};
+use rc::{inject_shell_rc, strip_shell_rc, RC_FILES, RC_MARK_START};
 #[cfg(windows)]
 use registry::{path_contains_token, read_user_path, remove_path_token, write_user_path};
 
@@ -19,7 +28,6 @@ mod pnpm;
 mod rc;
 #[cfg(windows)]
 mod registry;
-use crate::AppHandle;
 
 #[cfg(windows)]
 pub(crate) use pnpm::find_user_pnpm_executable;
@@ -28,17 +36,27 @@ pub(crate) use registry::{
     delete_user_env, expand_env, notify_environment_change, read_user_env, write_user_env,
 };
 // 数据目录（issue #871）在 Unix 上复用 rc 的「标记块 + 备份写回」原语，
+// 免得再抄一份 rc 文件读写实现。rc 模块本身是私有的，跨模块用要在这里再导出。
 pub(crate) use pnpm::find_user_pnpm_from;
 pub use pnpm::{find_user_pnpm, pnpm_env_value};
 #[cfg(unix)]
 pub(crate) use rc::{strip_rc_block, upsert_rc_block, write_rc_with_backup};
 
+/// Windows 下 shim 根目录名（`%LOCALAPPDATA%\<此目录>\bin`）
 #[cfg_attr(not(windows), allow(dead_code))] // 仅 Windows 的 bin 目录计算使用
 const CLI_ROOT_DIR_NAME: &str = "deepseek-harness";
 
+/// Unix 下 shim 所在目录（XDG 约定）
 #[cfg(unix)]
 const UNIX_BIN_DIR: &str = ".local/bin";
 
+// ---------------------------------------------------------------------------
+// 路径计算
+// ---------------------------------------------------------------------------
+
+/// bin 目录：
+/// - Windows：`%LOCALAPPDATA%\deepseek-harness\bin`（用户级、不随应用数据目录变动）
+/// - Unix：`~/.local/bin`（XDG 约定，通常已在 PATH 中）
 pub fn get_bin_dir(app_handle: &AppHandle) -> PathBuf {
     #[cfg(windows)]
     {
@@ -86,6 +104,7 @@ pub(crate) fn get_bin_dir_from(
     }
 }
 
+/// 主 shim 文件路径（状态展示用）
 pub fn get_shim_path(app_handle: &AppHandle) -> PathBuf {
     let bin_dir = get_bin_dir(app_handle);
     #[cfg(windows)]
@@ -98,6 +117,8 @@ pub fn get_shim_path(app_handle: &AppHandle) -> PathBuf {
     }
 }
 
+/// 当前用户 PATH 中是否已包含 bin 目录（Windows 以注册表为准，
+/// 因为进程内 PATH 在广播 WM_SETTINGCHANGE 后不会自动更新）
 pub fn path_registered(app_handle: &AppHandle) -> bool {
     #[cfg(windows)]
     {
@@ -112,11 +133,13 @@ pub fn path_registered(app_handle: &AppHandle) -> bool {
     #[cfg(not(windows))]
     {
         let bin_dir = get_bin_dir(app_handle);
+        // 1. 当前进程 PATH 已包含（新终端直接可用）
         if std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
             .any(|p| p == bin_dir)
         {
             return true;
         }
+        // 2. rc 文件中已注入标记块（重启 shell 后可用）
         let home = app_handle
             .path()
             .home_dir()
@@ -129,6 +152,11 @@ pub fn path_registered(app_handle: &AppHandle) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------
+// PATH 注册 / 注销（Windows：注册表 + WM_SETTINGCHANGE；Unix：shell rc）
+// ---------------------------------------------------------------------------
+
+/// 注册 bin 目录到用户 PATH（幂等）
 pub fn register_path(app_handle: &AppHandle) -> Result<(), String> {
     if path_registered(app_handle) {
         return Ok(());
@@ -139,6 +167,9 @@ pub fn register_path(app_handle: &AppHandle) -> Result<(), String> {
         let bin_str = bin_dir
             .to_str()
             .ok_or_else(|| "PATH_BIN_DIR_NOT_UTF8: bin dir is not valid UTF-8".to_string())?;
+        // 注册表读取失败（None）时中止，绝不把失败当成空 PATH 写回（那会清空
+        // 用户 PATH 其它条目）；`Path` 值缺失（ERROR_FILE_NOT_FOUND）返回的
+        // Some("") 才按空串处理。
         let current = read_user_path()
             .ok_or_else(|| "PATH_REG_READ_FAILED: failed to read user PATH".to_string())?;
         let new_value = if current.trim().is_empty() {
@@ -157,6 +188,7 @@ pub fn register_path(app_handle: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 从用户 PATH 中移除 bin 目录（幂等）
 pub fn unregister_path(app_handle: &AppHandle) -> Result<(), String> {
     #[cfg(windows)]
     {

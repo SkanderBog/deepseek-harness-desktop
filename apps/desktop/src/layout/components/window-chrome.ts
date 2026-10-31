@@ -3,12 +3,15 @@ import { useWatch } from '@reause/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useEffect, useState } from 'react'
 
+/** WKWebView 的 macOS UA 稳定包含 Macintosh，用于切换平台原生窗口 chrome。 */
 export const IS_MACOS = typeof navigator !== 'undefined' && navigator.userAgent.includes('Macintosh')
 
+/** 浏览器预览与 jsdom 没有原生窗口，原生调用必须在此拦截，不能靠 catch 兜底。 */
 export function hasNativeWindow(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
+/** 自绘外框模式：'' 关闭；最大化 / 全屏统一 flat；常规窗口贴边画圆角与描边。 */
 export function frameMode(maximized: boolean, fullscreen = false): string {
   const frame = (window as Window & { __DSH_FRAME__?: boolean }).__DSH_FRAME__ === true
   if (!frame)
@@ -26,6 +29,7 @@ export function applyFrameMode(maximized: boolean, fullscreen = false) {
     delete document.documentElement.dataset.dshFrame
 }
 
+/** 等待原生状态就绪后再覆盖 bootstrap 的首帧模式。 */
 export function useFrameChrome() {
   const framed = typeof window !== 'undefined' && (window as Window & { __DSH_FRAME__?: boolean }).__DSH_FRAME__ === true
   const maximized = useMaximized(framed)
@@ -89,6 +93,7 @@ export function useFullscreen(enabled = true): boolean | undefined {
   return isFullscreen
 }
 
+/** macOS 原生全屏时收起整条壳层导航栏。 */
 export function useMacOSFullscreen(): boolean {
   const isFullscreen = useFullscreen(IS_MACOS)
   return IS_MACOS && Boolean(isFullscreen)
@@ -145,6 +150,7 @@ export function useMaximized(enabled = true): boolean | undefined {
   return isMaximized
 }
 
+/** 拖拽区指针处理：`data-tauri-drag-region` 原生只认鼠标，触摸/笔输入要手动进入系统拖拽。 */
 export function onDragRegionPointerDown(event: PointerEvent<HTMLDivElement>) {
   if (event.pointerType === 'mouse')
     return

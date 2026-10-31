@@ -27,6 +27,7 @@ export interface BubbleTracker {
   dispose: () => void
 }
 
+/** 订阅会话事件驱动桌宠气泡的 React Hook */
 export function useBubbleTracker(pet: PetRef, source?: PetSource | null) {
   const trackerRef = useRef<BubbleTracker | null>(null)
   trackerRef.current ??= createBubbleTracker(pet.bubble)
@@ -69,10 +70,12 @@ export function useBubbleTracker(pet: PetRef, source?: PetSource | null) {
   useListen('session:create', event => tracker.apply(event.payload, 'create'))
   useListen('session:update', event => tracker.apply(event.payload, 'update'))
   useListen('session:remove', event => tracker.apply(event.payload, 'remove'))
+  // 宿主累计态归零后（应用重启、宿主热重载）不会再补发 remove：残留气泡只能靠这一帧整批作废。
   useListen('session:clear', () => tracker.clear())
   useUnmount(() => tracker.dispose())
 }
 
+/** 创建会话气泡桥状态机 */
 export function createBubbleTracker(bubble: PetBubbleHandle): BubbleTracker {
   const sessions = new Map<string, BubbleSession>()
   const previousMotion = new Map<string, Motion | undefined>()

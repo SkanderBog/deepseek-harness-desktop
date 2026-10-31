@@ -1,13 +1,23 @@
+//! 文件下载（断点续传 + 多源回退）、SHA-256 完整性校验与原子解压落盘。
+//! GitHub 发行版元数据与更新判定见 [`super::github`]。
+
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::AppHandle;
 use crate::service::download::ProgressTracker;
 use tauri::{Manager, Runtime};
 
+/// 下载文件到内存
+///
+/// # 参数
+/// - `tracker`: 进度追踪器
+/// - `url`: 要下载的文件 URL
+///
+/// # 返回
+/// 成功返回文件内容 `Ok(Vec<u8>)`，失败返回错误信息
 pub async fn download_file<'a, R: Runtime>(
     tracker: &'a ProgressTracker<'a, R>,
     url: String,
@@ -15,6 +25,13 @@ pub async fn download_file<'a, R: Runtime>(
     download_file_from_sources(tracker, vec![url]).await
 }
 
+/// 按顺序依次尝试多个下载源（GitHub 官方直连 → 多个 GitHub 代理镜像兜底），
+/// 某个源全部重试失败后自动切换下一个源，并通过 `tracker` 在界面上告知用户
+/// 当前使用的下载源；全部源均失败时返回最后一个源的错误并注明尝试过的源数。
+///
+/// 断点续传只在单个源内部生效（`download_with_retry` 的字节缓冲按源独立）：
+/// 换源必然从头下载，避免把不同来源的半成品拼成一个文件；镜像只是原样透传
+/// 官方资产，最终内容仍由 SHA-256 校验兜底。
 pub async fn download_file_from_sources<'a, R: Runtime>(
     tracker: &'a ProgressTracker<'a, R>,
     urls: Vec<String>,
@@ -24,6 +41,7 @@ pub async fn download_file_from_sources<'a, R: Runtime>(
     }
     let mut last_err = String::new();
     for (index, url) in urls.iter().enumerate() {
+        // 切换下载源时告知用户（detail 展示在进度面板，log 进入日志流）
         if index > 0 {
             let host = reqwest::Url::parse(url)
                 .ok()
@@ -51,6 +69,7 @@ pub async fn download_file_from_sources<'a, R: Runtime>(
     })
 }
 
+/// 对单个 URL 执行断点续传重试，全部尝试失败返回中文可读错误。
 async fn download_with_retry<'a, R: Runtime>(
     tracker: &'a ProgressTracker<'a, R>,
     url: &str,
@@ -58,8 +77,12 @@ async fn download_with_retry<'a, R: Runtime>(
     log::info!("Starting file download: {}", url);
     validate_download_url(url)?;
 
+    // 只在整个下载开始时写一次 "Download <url>" 日志，之后进度由 detail/percentage
+    // 驱动：同一 URL 若随每个 50ms 进度 tick 重复写入，日志面板会把同一文件刷成
+    // 多条完全相同行（历史 issue：一个文件的下载任务却出现多条日志）。
     tracker.update(0.0, String::new(), format!("Download {}", url));
 
+    // 创建具备 User-Agent 的客户端
     let client = crate::config::proxy::http_client_builder(tracker.window.app_handle())?
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (deepseek-harness-desktop)")
         .connect_timeout(std::time::Duration::from_secs(20))
@@ -70,7 +93,13 @@ async fn download_with_retry<'a, R: Runtime>(
             e.to_string()
         })?;
 
+    // GitHub CDN（objects/release-assets.githubusercontent.com）的大文件传输
+    // 偶发中途断流（连接被重置、chunked body 提前结束，表现为"error decoding
+    // response body"），这类瞬时错误重试通常即可成功。重试时带 Range 头从
+    // 上次断点续传（CDN 支持 206），避免每次都从头下载 38MB。
+    // 最多 MAX_DOWNLOAD_ATTEMPTS 次，失败退避递增（2s/4s/8s/8s）。
     const MAX_DOWNLOAD_ATTEMPTS: usize = 5;
+    // buffer 由外层持有：每次尝试在已有字节基础上续传/追加，成功后整体返回
     let mut buffer: Vec<u8> = Vec::new();
     for attempt in 1..=MAX_DOWNLOAD_ATTEMPTS {
         if attempt > 1 {
@@ -108,12 +137,16 @@ async fn download_with_retry<'a, R: Runtime>(
             }
         }
     }
+    // 全部尝试失败：只把可读的中文提示暴露给界面（原始传输错误保留在日志，
+    // 避免 "error decoding response body" 这类底层信息直接糊在界面上）。
     Err(format!(
         "DOWNLOAD_INTERRUPTED: 下载中断（网络传输被重置），已自动重试 {MAX_DOWNLOAD_ATTEMPTS} 次仍失败，已下载约 {:.1} MB，请检查网络后重试",
         buffer.len() as f64 / 1_000_000.0
     ))
 }
 
+/// 下载进度百分比（0.0–100.0）；总长未知（0）时返回 -1 表示「不确定进度」，
+/// 避免除零产生 +inf/NaN 污染前端进度条。
 fn download_progress_percent(received_total: u64, total_size: u64) -> f64 {
     if total_size > 0 {
         (received_total as f64 / total_size as f64) * 100.0
@@ -122,6 +155,11 @@ fn download_progress_percent(received_total: u64, total_size: u64) -> f64 {
     }
 }
 
+/// 单次下载尝试：发起 GET 请求并把响应体流式读入 `buffer`。
+///
+/// 已有部分数据时自动带 `Range: bytes=<已有>-` 续传；服务端返回 200（不支持
+/// Range）则清空从头下载。续传成功不代表整体完成——调用方必须比对摘要校验，
+/// 任何中途断流都会以 Err 返回并触发外层重试。
 async fn download_attempt<'a, R: Runtime>(
     client: &reqwest::Client,
     tracker: &'a ProgressTracker<'a, R>,
@@ -149,6 +187,8 @@ async fn download_attempt<'a, R: Runtime>(
     })?;
     validate_download_url(res.url().as_str())?;
 
+    // 416 属防御分支：理论上不会发生（断流说明还没收完，resume_from 必然
+    // 小于文件总长），若出现则清空 buffer 让下一次尝试从头下载，避免死循环。
     if res.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
         log::warn!("Server returned 416 for range request, restarting from zero");
         buffer.clear();
@@ -159,12 +199,15 @@ async fn download_attempt<'a, R: Runtime>(
         return Err(format!("Download failed: HTTP {}", res.status()));
     }
 
+    // 206 = 续传成功，保留已有字节只追加后续分片；200 = 服务端不支持 Range
+    // （或首次下载），整体从头开始。
     let range_accepted = res.status() == reqwest::StatusCode::PARTIAL_CONTENT;
     if !range_accepted && resume_from > 0 {
         log::warn!("Server ignored Range request, restarting download from zero");
         buffer.clear();
     }
 
+    // 进度按"已收字节 + 本次分片"计算；总长 = 断点偏移 + 本次 Content-Length
     let total_size = if range_accepted {
         resume_from + res.content_length().unwrap_or(0)
     } else {
@@ -179,6 +222,8 @@ async fn download_attempt<'a, R: Runtime>(
         })?;
         buffer.extend_from_slice(&chunk);
         let received_total = buffer.len() as u64;
+        // 未知总长（服务器未给 Content-Length/分块传输）时进度取 -1，
+        // 避免 `received / 0 = +inf` 或 NaN 进度传给前端
         let progress_pct = download_progress_percent(received_total, total_size);
         tracker.update(
             progress_pct,
@@ -187,6 +232,8 @@ async fn download_attempt<'a, R: Runtime>(
                 received_total as f64 / 1_000_000.0,
                 total_size as f64 / 1_000_000.0
             ),
+            // 进度阶段不再重复写 URL：仅由上面的 "Download <url>" 一行标识本次
+            // 下载，避免随进度 tick 产生大量重复日志（前端对空 log 直接忽略）。
             String::new(),
         );
     }
@@ -210,6 +257,8 @@ fn validate_download_url(url: &str) -> Result<(), String> {
                 | "github.com"
                 | "release-assets.githubusercontent.com"
                 | "objects.githubusercontent.com"
+                // 国内镜像：npmmirror 系列（node dist 会 302 到 cdn.npmmirror.com）
+                // 与 GitHub Release 代理（原样透传，重定向后仍落在镜像自身域名）
                 | "npmmirror.com"
                 | "cdn.npmmirror.com"
                 | "registry.npmmirror.com"
@@ -225,6 +274,7 @@ fn validate_download_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 校验下载内容的 SHA-256，拒绝未通过完整性校验的运行时与核心包。
 pub fn verify_sha256(buffer: &[u8], expected: &str) -> Result<(), String> {
     let expected = expected
         .strip_prefix("sha256:")
@@ -243,10 +293,8 @@ pub fn verify_sha256(buffer: &[u8], expected: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn fetch_node_sha256(
-    app_handle: &AppHandle,
-    download_url: &str,
-) -> Result<String, String> {
+/// 从 Node.js 官方同版本 SHASUMS256.txt 中读取当前平台包的摘要。
+pub async fn fetch_node_sha256(app_handle: &tauri::AppHandle, download_url: &str) -> Result<String, String> {
     let (base, filename) = download_url.rsplit_once('/').ok_or_else(|| {
         "INTEGRITY_METADATA_INVALID: Node.js download URL has no filename".to_string()
     })?;
@@ -275,6 +323,15 @@ pub async fn fetch_node_sha256(
         .ok_or_else(|| format!("INTEGRITY_METADATA_MISSING: no checksum for {filename}"))
 }
 
+/// 删除目录并等待 Windows 文件锁释放。
+///
+/// 结束 dsh/node 进程后，加载进内存的 DLL 句柄不会立即释放，删除目录可能
+/// 短暂失败（os error 32）。这里轮询等待，最长约 10 秒。
+///
+/// # 性能
+/// 锁等待期间用 `tokio::time::sleep` 让出异步运行时，而不是阻塞占用一个
+/// Tokio worker：安装流程的进度事件与其它异步任务（健康检查、日志轮转）
+/// 不会因一次长锁等待而被一并冻结。
 pub(crate) async fn remove_dir_with_retry(dest: &Path) -> bool {
     const MAX_ATTEMPTS: u32 = 40;
     const RETRY_DELAY: Duration = Duration::from_millis(250);
@@ -325,6 +382,13 @@ async fn remove_path_if_exists(path: &Path) -> Result<(), String> {
     }
 }
 
+/// 重试式重命名：等待 Windows 文件锁释放（os error 32 随进程句柄释放而消失）。
+///
+/// 结束 dsh/node 进程树后，子进程加载进内存的 DLL 句柄释放存在短暂滞后
+/// （与 remove_dir_with_retry 相同的场景），紧跟其后的目录重命名可能一次失败。
+/// 这里轮询重试，最长约 30 秒；除进程句柄外，Windows 杀毒/索引服务也可能
+/// 在大规模解压后短暂持有目录句柄，10 秒窗口不足以等待其释放。
+/// 重试仍失败才返回底层错误交由调用方映射。
 pub(crate) async fn rename_with_retry(from: &Path, to: &Path) -> Result<(), std::io::Error> {
     const MAX_ATTEMPTS: u32 = 60;
     const RETRY_DELAY: Duration = Duration::from_millis(500);
@@ -343,10 +407,8 @@ pub(crate) async fn rename_with_retry(from: &Path, to: &Path) -> Result<(), std:
             Err(e) if e.raw_os_error() == Some(32) => {
                 return Err(std::io::Error::new(
                     e.kind(),
-                    format!(
-                        "{e}; end node.exe processes still using the core directory in Task Manager or restart Windows, then retry"
-                    ),
-                ));
+                    format!("{e}; end node.exe processes still using the core directory in Task Manager or restart Windows, then retry"),
+                ))
             }
             Err(e) => return Err(e),
         }
@@ -354,7 +416,9 @@ pub(crate) async fn rename_with_retry(from: &Path, to: &Path) -> Result<(), std:
     unreachable!("rename_with_retry loop always returns")
 }
 
+/// 将已经完整解压并验证结构的临时目录切换为正式目录；切换失败时恢复旧版本。
 async fn commit_staged_install(staging: &Path, dest: &Path, backup: &Path) -> Result<(), String> {
+    // 上次若恰好在“旧目录改名为备份”后崩溃，先恢复旧版本再进行本次切换。
     if !dest.exists() && backup.exists() {
         rename_with_retry(backup, dest).await.map_err(|e| {
             format!(
@@ -387,12 +451,23 @@ async fn commit_staged_install(staging: &Path, dest: &Path, backup: &Path) -> Re
     }
     if had_previous {
         if let Err(e) = remove_path_if_exists(backup).await {
+            // 新版本已经切换成功，备份清理失败不应把成功安装误报为失败。
             log::warn!("Failed to remove previous installation backup: {e}");
         }
     }
     Ok(())
 }
 
+/// 确保解压文件到指定目录
+///
+/// # 参数
+/// - `tracker`: 进度追踪器
+/// - `name`: 文件名
+/// - `buffer`: 压缩文件内容
+/// - `dest`: 解压目标目录
+///
+/// # 返回
+/// 成功返回 `Ok(())`，失败返回错误信息
 pub async fn ensure_extract<'a, R: Runtime>(
     tracker: &'a ProgressTracker<'a, R>,
     name: String,
@@ -403,6 +478,7 @@ pub async fn ensure_extract<'a, R: Runtime>(
     use super::extractor::{extract_tgz, extract_zip};
     use super::utils::flatten_directory;
 
+    // 始终先落到同盘临时路径，全部成功后再原子切换，避免更新失败破坏旧版本。
     let parent = dest.parent().unwrap_or(Path::new("."));
     let leaf = dest
         .file_name()
@@ -412,17 +488,13 @@ pub async fn ensure_extract<'a, R: Runtime>(
     let backup = parent.join(format!(".{leaf}.backup"));
     remove_path_if_exists(&staging).await?;
 
+    // 判断文件类型
     let pure_name = name.split('?').next().unwrap_or(&name).to_lowercase();
     let is_tgz = pure_name.ends_with(".tar.gz") || pure_name.ends_with(".tgz");
-    let is_asar_zip = pure_name.ends_with(".asar.zip");
     let is_zip = pure_name.ends_with(".zip");
-    log::debug!(
-        "File type: tgz={}, zip={}, asar_zip={}",
-        is_tgz,
-        is_zip,
-        is_asar_zip
-    );
+    log::debug!("File type: tgz={}, zip={}", is_tgz, is_zip);
 
+    // 目标是文件，跳过，直接写入文件
     if !is_tgz && !is_zip {
         log::debug!("Non-compressed file, writing directly");
         if let Some(parent) = staging.parent() {
@@ -450,6 +522,7 @@ pub async fn ensure_extract<'a, R: Runtime>(
         e.to_string()
     })?;
 
+    // 根据文件类型解压
     if is_tgz {
         log::debug!("Using tgz extractor");
         extract_tgz(tracker, &buffer, &staging)?;
@@ -458,26 +531,25 @@ pub async fn ensure_extract<'a, R: Runtime>(
         extract_zip(tracker, &buffer, &staging)?;
     }
 
+    // 处理解压后的"套娃"文件夹
     log::debug!("Flattening directory structure");
     flatten_directory(&staging).map_err(|e| {
         log::error!("Failed to flatten directory: {}", e);
         e.to_string()
     })?;
 
-    if is_asar_zip {
-        let archive = super::utils::normalize_asar_name(&staging)?;
-        super::asar::validate_dsh_archive(&archive)?;
-    }
-
+    // 权限修复与隔离属性移除 (仅限 Unix/macOS)
     #[cfg(unix)]
     {
         use super::utils::fix_recursive_permissions;
+        // 递归赋予可执行权限 (755)
         log::debug!("Fixing file permissions");
         fix_recursive_permissions(&staging).map_err(|e| {
             log::error!("Failed to fix permissions: {}", e);
             format!("Failed to fix permissions: {}", e)
         })?;
 
+        // macOS 移除 quarantine 属性
         #[cfg(target_os = "macos")]
         {
             use std::process::Command;
@@ -498,10 +570,14 @@ mod tests {
 
     #[test]
     fn progress_percent_never_emits_nan_or_inf() {
+        // 总长已知：常规百分比
         assert_eq!(download_progress_percent(50, 100), 50.0);
         assert_eq!(download_progress_percent(0, 100), 0.0);
+        // 总长未知（0）：返回 -1 而非 inf/NaN（除零保护）
         assert_eq!(download_progress_percent(50, 0), -1.0);
+        // 尚未开始且总长未知也不产生 NaN
         assert_eq!(download_progress_percent(0, 0), -1.0);
+        // 数值绝对不出现非有限值
         for pct in [
             download_progress_percent(50, 0),
             download_progress_percent(0, 0),
@@ -528,6 +604,7 @@ mod tests {
         .is_ok());
         assert!(validate_download_url("http://nodejs.org/dist/file.zip").is_err());
         assert!(validate_download_url("https://example.com/file.zip").is_err());
+        // 国内镜像源（含 npmmirror 302 后的最终落地域名）
         assert!(validate_download_url("https://npmmirror.com/mirrors/node/v22/file.zip").is_ok());
         assert!(
             validate_download_url("https://cdn.npmmirror.com/binaries/node/v22/file.zip").is_ok()
@@ -567,6 +644,7 @@ mod tests {
         assert!(!staging.exists());
         assert!(!backup.exists());
 
+        // 模拟上次切换在 dest -> backup 后崩溃，本次应先恢复再安全切换。
         fs::rename(&dest, &backup).expect("simulate interrupted switch");
         fs::create_dir_all(&staging).expect("create next staged install");
         fs::write(staging.join("version.txt"), "next").expect("write next version");

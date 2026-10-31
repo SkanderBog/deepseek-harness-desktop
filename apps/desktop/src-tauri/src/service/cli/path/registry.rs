@@ -1,8 +1,19 @@
+//! Windows 注册表辅助：HKCU\\Environment 下用户级环境变量的读取、写入与删除、
+//! WM_SETTINGCHANGE 广播，以及 PATH token 的展开与匹配。仅 Windows 编译
+//! （mod registry 已在 mod.rs 门控）。
+//!
+//! 变量名只是同一个注册表入口的参数：read_user_env / write_user_env /
+//! delete_user_env 是唯一实现；read_user_path / write_user_path 是旧 PATH 语义的
+//! 薄封装，保留 Option<String> 返回值以兼容既有调用方。
+
+/// 将 Rust 字符串转为 Win32 API 需要的 NUL 结尾 UTF-16 缓冲
 #[inline]
 pub(super) fn to_wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// 读取用户 PATH。既有调用方以 None 表示读取失败、空串表示未设置，因此把
+/// Ok(None) 映射回空串以保持语义不变。
 pub(super) fn read_user_path() -> Option<String> {
     match read_user_env("Path") {
         Ok(Some(value)) => Some(value),
@@ -11,10 +22,15 @@ pub(super) fn read_user_path() -> Option<String> {
     }
 }
 
+/// 读取用户环境变量：Ok(None) 表示该变量未设置，Err 表示注册表读取失败。
+///
+/// 失败必须与「未设置/空值」区分：把读取失败当成空值会让上层覆盖用户已有设置，
+/// PATH 注册逻辑正是靠 None 才敢中止写入。值类型不做限制，REG_SZ 与 REG_EXPAND_SZ
+/// 都按字符串返回，其中的 %VAR% 原样保留。
 pub(crate) fn read_user_env(name: &str) -> Result<Option<String>, String> {
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA};
     use windows_sys::Win32::System::Registry::{
-        HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE,
     };
 
     unsafe {
@@ -80,14 +96,20 @@ pub(crate) fn read_user_env(name: &str) -> Result<Option<String>, String> {
     }
 }
 
+/// 写入用户 PATH
 pub(super) fn write_user_path(new_value: &str) -> Result<(), String> {
     write_user_env("Path", new_value)
 }
 
+/// 写入（或新建）用户环境变量。
+///
+/// 沿用已有值的数据类型（REG_SZ / REG_EXPAND_SZ）；值不存在时按 REG_EXPAND_SZ
+/// 创建，与 Windows 自身写用户环境变量的行为一致。写注册表不会通知已运行的
+/// 进程，需要新值对后续进程生效时由调用方广播 notify_environment_change。
 pub(crate) fn write_user_env(name: &str, value: &str) -> Result<(), String> {
     use windows_sys::Win32::System::Registry::{
-        HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_EXPAND_SZ, REG_SZ,
-        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
+        KEY_QUERY_VALUE, KEY_SET_VALUE, REG_EXPAND_SZ, REG_SZ,
     };
 
     unsafe {
@@ -142,10 +164,11 @@ pub(crate) fn write_user_env(name: &str, value: &str) -> Result<(), String> {
     }
 }
 
+/// 删除用户环境变量；变量本就不存在时视为成功（删除是幂等收尾动作）。
 pub(crate) fn delete_user_env(name: &str) -> Result<(), String> {
     use windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND;
     use windows_sys::Win32::System::Registry::{
-        HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, RegCloseKey, RegDeleteValueW, RegOpenKeyExW,
+        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE,
     };
 
     unsafe {
@@ -177,10 +200,11 @@ pub(crate) fn delete_user_env(name: &str) -> Result<(), String> {
     }
 }
 
+/// 广播 WM_SETTINGCHANGE，让资源管理器与后续启动的程序重新读取环境变量
 pub(crate) fn notify_environment_change() {
     use windows_sys::Win32::Foundation::{LPARAM, WPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
+        SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
     };
     let wide = to_wide_null("Environment");
     unsafe {
@@ -196,6 +220,7 @@ pub(crate) fn notify_environment_change() {
     }
 }
 
+/// 展开字符串中的 %VAR%（Windows）
 pub(crate) fn expand_env(value: &str) -> String {
     use windows_sys::Win32::System::Environment::ExpandEnvironmentStringsW;
     let wide = to_wide_null(value);
@@ -208,6 +233,7 @@ pub(crate) fn expand_env(value: &str) -> String {
     String::from_utf16_lossy(&buf[..end])
 }
 
+/// PATH 值（分号分隔）中是否已包含指定目录（大小写不敏感，先展开 %VAR%）
 pub(super) fn path_contains_token(path_value: &str, token: &str) -> bool {
     let expanded = expand_env(path_value);
     let token_lower = token.to_lowercase();
@@ -216,6 +242,7 @@ pub(super) fn path_contains_token(path_value: &str, token: &str) -> bool {
         .any(|p| !p.is_empty() && p.trim_end_matches('\\').to_lowercase() == token_lower)
 }
 
+/// 从 PATH 值中移除指定目录 token（同时处理 %LOCALAPPDATA% 未展开形式）
 pub(super) fn remove_path_token(path_value: &str, token: &str) -> String {
     let token_lower = token.to_lowercase();
     let unexpanded_lower = token_lower.replace(
@@ -251,6 +278,10 @@ mod tests {
         );
     }
 
+    /// 匹配规则是「整段比较 + 大小写归一 + PATH 项尾部反斜杠归一」，不做前缀匹配：
+    /// D:\\Tools 不应命中 D:\\Tools2，否则注册表写入会误判为「已注册」。
+    /// 归一发生在 PATH 项一侧，因此调用方传入的 token 必须本身不带尾部反斜杠
+    /// （get_bin_dir 由 PathBuf::join 拼出，满足该前提）。
     #[test]
     fn path_token_match_normalizes_case_and_trailing_separator() {
         let value = "C:\\Windows;D:\\Tools\\;E:\\Tools2";

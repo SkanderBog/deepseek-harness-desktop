@@ -16,6 +16,11 @@ vi.mock('@tauri-apps/api/window', () => ({
   },
 }))
 
+/**
+ * 窗口尺寸必须按页面的 `devicePixelRatio` 换算：KDE 分数缩放 + XWayland 下
+ * Tauri 缩放系数是 1、页面却是 1.5，按 `LogicalSize` 下发会让页面视口比宠物还矮，
+ * 宠物顶部与头顶气泡被裁掉。
+ */
 describe('usePetWindowSize', () => {
   const originalRatio = globalThis.devicePixelRatio
 
@@ -31,6 +36,7 @@ describe('usePetWindowSize', () => {
 
   it('keeps the CSS viewport at the intended size under a 1.5 device pixel ratio', () => {
     globalThis.devicePixelRatio = 1.5
+    // 160% 鲸鱼：宠物 352 宽、16:9 → 页面需要 420×280 CSS 像素。
     renderHook(() => usePetWindowSize(352, 9 / 16, true))
     expect(setSizeMock).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ width: 630, height: 420 }))
   })

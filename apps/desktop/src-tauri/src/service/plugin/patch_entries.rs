@@ -1,42 +1,77 @@
+//! 补丁层悬空 `insert` 条目的预检与显式清理。
+//!
+//! `cordis.patch.yml` 是用户自有层，手写的 `insert` 条目会在启动时被 loader
+//! 当成真实插件行 import。包被卸载后条目还留在补丁层里（市场会拒绝卸载「仍被
+//! 用户补丁引用」的插件，用户于是改走手工删依赖 / `pnpm remove`），或者本地
+//! `link:` 源目录被删掉，loader 就在 import 时抛 `ERR_MODULE_NOT_FOUND`，让
+//! **整棵插件树**加载失败——应用彻底起不来，用户只看到一坨 Node 堆栈。
+//!
+//! 上游契约是「补丁文件存在却应用不了就大声失败」，这里不改变该契约，只把它
+//! 提前成一条可操作的错误：哪个文件、哪一行、哪个包；错误页据此给出「移除悬空
+//! 条目」的一键恢复（[`strip_unresolved_entries_in`]），原文件先备份为
+//! `<原名>.bak-<时间戳>`，绝不静默改写用户补丁。
+//!
+//! 只判定「必然被挂载」的一类：顶层没有 `id` 的 `insert` 会无条件追加到根树，
+//! 条目一定会被 import。顶层带 `id` 的 insert 只在目标 group 存在时才生效
+//! （上游 `applyEntryPatches` 找不到目标只 warn 后跳过），是否需要该 group 取决于
+//! 组合后的树，桌面端不做猜测——这类只记 debug 日志，绝不阻断启动。
+
 use std::collections::HashMap;
 use std::path::Path;
 
 use serde_yaml::{Mapping, Value};
+use tauri::AppHandle;
 
 use super::atomic_write::write_patch_layer_atomically;
 use super::installed::ProfilePackageJson;
 use super::patch_guard::{backup_path, now_stamp, patch_layer_paths};
 use super::patch_yaml::{parse_patch_layer, render_patch_layer};
-use crate::AppHandle;
 
+/// 启动失败错误串的前缀；前端据此识别并渲染「移除悬空条目」入口。
 pub(crate) const PATCH_ENTRY_UNRESOLVED: &str = "PATCH_LAYER_ENTRY_UNRESOLVED";
 
+/// 补丁层里一个解析不到对应包的 `insert` 条目。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct UnresolvedPatchEntry {
+    /// 补丁层文件路径（档案层或 home 层）。
     pub layer: String,
+    /// `name` 所在的 1-based 行号（定位不到条目起始行时回落）。
     pub line: usize,
+    /// 条目的 loader id（展示用）。
     pub id: Option<String>,
+    /// 引用的包名。
     pub name: String,
+    /// 该包是否仍写在档案 `dependencies` 里（是则「重装插件」比「删条目」更对症）。
     pub declared: bool,
 }
 
+/// 一个被清理过的补丁层。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StrippedPatchLayer {
+    /// 原始补丁文件路径。
     pub original: String,
+    /// 清理前的备份路径（`<原名>.bak-<UTC 时间戳>`）。
     pub backup: String,
+    /// 移除的条目数。
     pub removed: usize,
 }
 
+/// 一次清理动作的结果：逐层列出备份路径与移除数量。
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct PatchEntryStripReport {
     pub layers: Vec<StrippedPatchLayer>,
 }
 
+/// 把悬空条目拼成给前端的错误串：`PREFIX: {"entries":[...]}`。
+///
+/// 用 JSON 承载结构化明细（文件 / 行号 / 包名 / 是否已声明），前端只做解析与
+/// 展示，避免在这里拼人类可读文本再回头解析。
 pub(crate) fn unresolved_entries_message(entries: &[UnresolvedPatchEntry]) -> String {
     let payload = serde_json::json!({ "entries": entries });
     format!("{PATCH_ENTRY_UNRESOLVED}: {payload}")
 }
 
+/// 从「当前档案层 + home 层」移除解析不到的 `insert` 条目并返回备份路径。
 pub(crate) fn strip_active_unresolved_entries(
     app_handle: &AppHandle,
 ) -> Result<PatchEntryStripReport, String> {
@@ -46,6 +81,8 @@ pub(crate) fn strip_active_unresolved_entries(
     strip_unresolved_entries_in(&profile, &dsh_home, Some(&install_anchor))
 }
 
+/// 扫描指定档案层与 home 层；`install_anchor` 是活动核心入口（用于判定 dsh 安装树
+/// 自带的包，测试传 `None`）。
 pub(crate) fn scan_unresolved_entries_in(
     profile_dir: &Path,
     dsh_home: &Path,
@@ -59,6 +96,11 @@ pub(crate) fn scan_unresolved_entries_in(
     unresolved
 }
 
+/// 移除指定档案层与 home 层里解析不到的 `insert` 条目。
+///
+/// 只动被判定为悬空的 insert 项：同一条目里的其它 insert 与其它配置原样保留；
+/// `insert` 被清空且条目再无其它字段时整个条目一并移除。改写前先把原文件复制成
+/// `<原名>.bak-<时间戳>`——用户手写的补丁层绝不无声丢失。
 pub(crate) fn strip_unresolved_entries_in(
     profile_dir: &Path,
     dsh_home: &Path,
@@ -105,6 +147,7 @@ pub(crate) fn strip_unresolved_entries_in(
     Ok(report)
 }
 
+/// 扫描单个补丁层：返回「必然被挂载且解析不到包」的条目。
 fn scan_layer(
     layer: &Path,
     profile_dir: &Path,
@@ -114,6 +157,7 @@ fn scan_layer(
     let Ok(raw) = std::fs::read_to_string(layer) else {
         return Vec::new();
     };
+    // 解析不了的补丁层交给 patch_guard 的语法错误路径，不在这里重复报错。
     let Ok(doc) = parse_patch_layer(&raw) else {
         return Vec::new();
     };
@@ -130,6 +174,8 @@ fn scan_layer(
         let Some(items) = map_get(map, "insert").and_then(Value::as_sequence) else {
             continue;
         };
+        // 顶层带 id 的 insert 只在目标 group 存在时挂载：是否需要该 group 取决于
+        // 组合后的树，桌面端不猜，只记日志。
         let target = if has_effective_id(map) {
             &mut group_scoped
         } else {
@@ -224,6 +270,7 @@ fn strip_entries(
     (kept, removed)
 }
 
+/// 档案 `dependencies` 的键集合；清单缺失/损坏时返回空表（只影响提示措辞）。
 fn declared_dependencies(profile_dir: &Path) -> HashMap<String, String> {
     std::fs::read_to_string(profile_dir.join("package.json"))
         .ok()
@@ -232,6 +279,7 @@ fn declared_dependencies(profile_dir: &Path) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
+/// 裸包名（可被 Node 解析的 specifier）；路径、`file:` URL、`!!js` 表达式都不判定。
 fn is_bare_package_name(name: &str) -> bool {
     if name.is_empty() || name.contains(char::is_whitespace) {
         return false;
@@ -255,6 +303,10 @@ fn package_resolvable(profile_dir: &Path, install_anchor: Option<&Path>, name: &
         || install_anchor.is_some_and(|anchor| resolvable_from(anchor, name))
 }
 
+/// 按 Node 的 `node_modules` 查找顺序（逐级向上的父目录）判定包是否存在。
+///
+/// 与 dsh-app-boot 的 `packageDirFromAnchor` 同一判定（探测目录里的 `package.json`，
+/// 不要求包导出 `./package.json`），因此结果与 loader 的 import 一致。
 fn resolvable_from(anchor: &Path, name: &str) -> bool {
     anchor.ancestors().any(|dir| {
         dir.join("node_modules")
@@ -264,6 +316,7 @@ fn resolvable_from(anchor: &Path, name: &str) -> bool {
     })
 }
 
+/// 顶层序列项的起始行号（1-based）；补丁层是顶层数组，`- ` 必须顶格。
 fn top_level_item_lines(raw: &str) -> Vec<usize> {
     raw.lines()
         .enumerate()
@@ -275,6 +328,7 @@ fn top_level_item_lines(raw: &str) -> Vec<usize> {
         .collect()
 }
 
+/// 条目内 `name` 所在行；定位不到时回落该条目的起始行。
 fn item_line(raw: &str, starts: &[usize], index: usize, name: &str) -> usize {
     let lines: Vec<&str> = raw.lines().collect();
     let start = starts.get(index).copied().unwrap_or(1);
@@ -291,6 +345,11 @@ fn item_line(raw: &str, starts: &[usize], index: usize, name: &str) -> usize {
         .unwrap_or(start)
 }
 
+/// 补丁条目是否带「生效的」顶层 id（与上游 `if (id)` 的真值判定一致）。
+///
+/// 上游是 JS 真值：`id: ''`、`id: null`、`id: false`、`id: 0` 都走「无 id」分支
+/// （insert 追加到顶层、必然被挂载），只有这些才需要预检；写成 `Some(_) => true`
+/// 会把 `id: false` / `id: 0` 误当成 group 作用域而漏检。
 fn has_effective_id(map: &Mapping) -> bool {
     match map_get(map, "id") {
         Some(Value::String(id)) => !id.is_empty(),
@@ -303,12 +362,14 @@ fn has_effective_id(map: &Mapping) -> bool {
     }
 }
 
+/// 取映射字段；用迭代而不是 `Mapping::get`，避开 serde_yaml 的索引泛型差异。
 fn map_get<'a>(map: &'a Mapping, key: &str) -> Option<&'a Value> {
     map.iter()
         .find(|(field, _)| field.as_str() == Some(key))
         .map(|(_, value)| value)
 }
 
+/// 复制映射并去掉一个字段。
 fn without_key(map: &Mapping, key: &str) -> Mapping {
     let mut out = Mapping::new();
     for (field, value) in map {
@@ -319,6 +380,7 @@ fn without_key(map: &Mapping, key: &str) -> Mapping {
     out
 }
 
+/// 复制映射并就地替换一个字段的值（保持原有字段顺序）。
 fn with_key(map: &Mapping, key: &str, value: Value) -> Mapping {
     let mut out = Mapping::new();
     for (field, existing) in map {
@@ -347,6 +409,7 @@ mod tests {
         dir
     }
 
+    /// 在档案目录里造一个已安装的包（loader 只看 `package.json` 是否存在）。
     fn install_package(profile: &Path, name: &str) {
         let dir = profile.join("node_modules").join(name);
         std::fs::create_dir_all(&dir).unwrap();
@@ -383,6 +446,7 @@ mod tests {
         std::fs::remove_dir_all(anchor).unwrap();
     }
 
+    /// 事故形态：包已卸载、手写的 insert 还在补丁层里。
     const DANGLING_LAYER: &str = "- insert:\n    - id: file-edit\n      name: dsh-file-edit\n";
 
     #[test]
@@ -470,6 +534,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 顶层带 id 的 insert 只在目标 group 存在时才挂载，不猜测、不阻断。
     #[test]
     fn group_scoped_insert_is_not_blocking() {
         let profile = tmp_dir("group-profile");
@@ -485,6 +550,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// 路径 / `file:` URL / `!!js` 形式的 name 由上游改写，不做判定。
     #[test]
     fn non_bare_names_are_skipped() {
         let profile = tmp_dir("non-bare-profile");
@@ -500,6 +566,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// 语法错误的补丁层交给 patch_guard，不在这里重复报错。
     #[test]
     fn unparsable_layer_is_left_to_patch_guard() {
         let profile = tmp_dir("unparsable-profile");
@@ -555,12 +622,14 @@ mod tests {
         .unwrap();
 
         assert!(scan_unresolved_entries_in(&profile, &home, Some(&bin)).is_empty());
+        // 没有安装锚点时同一份补丁层会被判定为悬空，证明锚点确实参与了判定。
         assert_eq!(scan_unresolved_entries_in(&profile, &home, None).len(), 1);
         let _ = std::fs::remove_dir_all(&install);
         let _ = std::fs::remove_dir_all(&profile);
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// 只剥离悬空的 insert 项：同一条目里的其它 insert、其它条目与其它字段都保留。
     #[test]
     fn strip_removes_only_dangling_inserts() {
         let profile = tmp_dir("strip-profile");
@@ -578,11 +647,9 @@ mod tests {
         assert_eq!(report.layers[0].removed, 1);
         let backup = PathBuf::from(&report.layers[0].backup);
         assert!(backup.is_file());
-        assert!(
-            std::fs::read_to_string(&backup)
-                .unwrap()
-                .contains("dsh-gone")
-        );
+        assert!(std::fs::read_to_string(&backup)
+            .unwrap()
+            .contains("dsh-gone"));
         let stripped = std::fs::read_to_string(profile.join("cordis.patch.yml")).unwrap();
         assert!(stripped.contains("dsh-keep"), "{stripped}");
         assert!(stripped.contains("untouched"), "{stripped}");
@@ -613,6 +680,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// insert 被清空且条目再无其它字段时整个条目移除，补丁层回落成空数组。
     #[test]
     fn strip_drops_an_entry_left_empty() {
         let profile = tmp_dir("empty-profile");
@@ -641,6 +709,7 @@ mod tests {
                 .len(),
             1
         );
+        // 第二次点击：已无可剥离条目，不再产生备份。
         let second = strip_unresolved_entries_in(&profile, &home, None).unwrap();
         assert!(second.layers.is_empty());
         assert_eq!(std::fs::read_dir(&profile).unwrap().count(), 2);
@@ -648,6 +717,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// home 层的悬空条目同样被预检与清理（它作用于所有档案）。
     #[test]
     fn home_layer_is_scanned_and_stripped() {
         let profile = tmp_dir("home-strip-profile");
@@ -710,6 +780,8 @@ mod tests {
         assert!(!with_id("id: ''"));
         assert!(!with_id("id: null"));
         assert!(!with_id("name: x"));
+        // 上游是 JS 真值判定：false 与 0 同样走「无 id」分支（insert 追加到顶层），
+        // 漏判这两个会让本该预检的条目被当成 group 作用域而漏检。
         assert!(!with_id("id: false"));
         assert!(!with_id("id: 0"));
         assert!(with_id("id: true"));
@@ -737,14 +809,13 @@ mod tests {
         );
         assert!(error.contains("symlink"), "{error}");
         assert_eq!(std::fs::read_to_string(&target).unwrap(), DANGLING_LAYER);
-        assert!(
-            std::fs::symlink_metadata(&link)
-                .unwrap()
-                .file_type()
-                .is_symlink()
-        );
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
+    /// 原子改写：成功路径不留临时文件，且内容与备份都在。
     #[test]
     fn strip_leaves_no_temp_file_behind() {
         let profile = tmp_dir("atomic-profile");

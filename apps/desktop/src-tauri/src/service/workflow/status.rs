@@ -1,4 +1,5 @@
-use crate::AppHandle;
+use tauri::AppHandle;
+
 #[derive(Debug, Clone, serde::Serialize, PartialEq)]
 pub enum Status {
     Initial,

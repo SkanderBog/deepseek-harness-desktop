@@ -25,6 +25,7 @@ export interface BubbleSession {
   id: string
 }
 
+/** seed → 稳定非负整数 */
 export function seedNumber(seed: string | number | undefined): number {
   const value = String(seed ?? '')
   const numeric = Number(value)
@@ -135,6 +136,7 @@ function toolArgDetail(tool: string, args: unknown): string | undefined {
     }
   }
   catch {
+    /* 忽略非合法 JSON */
   }
   return undefined
 }

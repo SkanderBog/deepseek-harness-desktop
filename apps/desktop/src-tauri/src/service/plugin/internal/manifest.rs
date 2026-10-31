@@ -1,8 +1,12 @@
+//! profile 清单与 `node_modules` 入口文件操作：内置插件就绪判定、待重装包声明
+//! 的精准移除（保留其它插件）、原子写回清单与失效入口清理。
+
 use std::collections::HashSet;
 #[cfg(windows)]
 use std::os::windows::fs::FileTypeExt;
 use std::path::Path;
 
+/// 读取并解析入口清单，避免仅凭文件存在就把截断或不可读的内置插件视为健康。
 pub(super) fn internal_plugin_entry_is_ready(entry: &Path) -> bool {
     let Ok(raw) = std::fs::read(entry.join("package.json")) else {
         return false;
@@ -10,6 +14,11 @@ pub(super) fn internal_plugin_entry_is_ready(entry: &Path) -> bool {
     serde_json::from_slice::<serde_json::Value>(&raw).is_ok_and(|manifest| manifest.is_object())
 }
 
+/// 清理 profile bundle 列表中的重复引用，保留首次出现的顺序。
+///
+/// 旧工作目录切换期间，重复执行安装/迁移可能把同一个 bundle 追加多次；
+/// Cordis 会把每个引用都展开，最终报 duplicate loader entry。只修改 bundle
+/// 列表，不删除任何依赖或用户插件。
 pub(super) fn dedupe_profile_bundles(manifest: &mut serde_json::Value) -> bool {
     let Some(bundles) = manifest
         .get_mut("dsh")
@@ -30,6 +39,11 @@ pub(super) fn dedupe_profile_bundles(manifest: &mut serde_json::Value) -> bool {
     bundles.len() != before
 }
 
+/// 从 profile 自身的 patch 层移除已经由 bundle 提供的重复 loader entry。
+///
+/// 旧版本从另一个桌面目录启动时，可能把插件的 `cordis.patch.yml` 内容复制到
+/// profile patch；当前 bundle 又会再次提供同一 id。只移除顶层 `insert` 中与
+/// bundle id 相同的条目，保留 win-terminal-inspector 等用户插件。
 pub(super) fn remove_duplicate_bundle_entries_from_patch(
     patch: &mut serde_yaml::Value,
     bundle_ids: &HashSet<&str>,
@@ -39,6 +53,7 @@ pub(super) fn remove_duplicate_bundle_entries_from_patch(
     modified
 }
 
+/// 递归清理 patch 中的 insert，兼容旧版本写入的 group 嵌套结构。
 fn remove_duplicate_inserted_entries(
     value: &mut serde_yaml::Value,
     bundle_ids: &HashSet<&str>,
@@ -71,6 +86,7 @@ fn remove_duplicate_inserted_entries(
     }
 }
 
+/// 从 profile 清单精准移除待重装 internal 包的依赖与 bundle 引用。
 pub(super) fn remove_internal_plugins_from_manifest(
     manifest: &mut serde_json::Value,
     names: &HashSet<&str>,
@@ -97,6 +113,7 @@ pub(super) fn remove_internal_plugins_from_manifest(
     modified
 }
 
+/// 经同目录临时文件原子替换 profile 清单，失败时保留原文件。
 pub(super) fn write_profile_manifest(
     path: &Path,
     manifest: &serde_json::Value,
@@ -130,7 +147,7 @@ fn replace_manifest_file(temp: &Path, path: &Path) -> std::io::Result<()> {
 fn replace_manifest_file(temp: &Path, path: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
-        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
 
     let temp_wide: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -148,6 +165,10 @@ fn replace_manifest_file(temp: &Path, path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// 删除失效的插件入口，但绝不跟随符号链接 / junction 删除捆绑资源。
+///
+/// 正常目录只可能是 pnpm 留下的损坏产物，可以递归清理；Unix 符号链接与 Windows
+/// junction 则只删除入口本身。入口不存在（包括已被并发清掉）视为幂等成功。
 pub(super) fn remove_stale_plugin_entry(entry: &Path) -> std::io::Result<()> {
     let metadata = match std::fs::symlink_metadata(entry) {
         Ok(metadata) => metadata,
@@ -168,10 +189,24 @@ pub(super) fn remove_stale_plugin_entry(entry: &Path) -> std::io::Result<()> {
     std::fs::remove_file(entry)
 }
 
+/// 判断某依赖值是否为「本地目录链接」形式（`link:` / `file:`）。
+///
+/// 内置插件统一以 `link:<捆绑目录绝对路径>` 安装；`file:` 是协议切换前的历史遗留
+/// 同义形式。用于启动自愈：当捆绑目录已不存在（如 debug 下切换 git 分支、某内置
+/// 插件源码目录消失）时，只有 `link:`/`file:` 依赖才意味着「这是我们装的本地链接」，
+/// 可以把悬空引用卸载；registry/git 引用（如 `dsh-tauri@0.2.0`、`github:x/y`）是用户
+/// 独立安装，绝不能误卸。路径值不做存在性判断，只判前缀。
 pub(super) fn is_local_link_dep(spec: &str) -> bool {
     spec.starts_with("link:") || spec.starts_with("file:")
 }
 
+/// 收集「本地链接目标已不存在、且不再是当前内置预设」的依赖名（排序后返回）。
+///
+/// 已删除的内置包不会出现在 `load_presets` 的预设清单里，孤儿分支永远碰不到它，
+/// 其 `link:` 悬空依赖与 `dsh.profile.bundles` 引用会永久留在 profile，令 dsh 每次
+/// 启动都报 `cannot resolve profile bundle <name>`。`keep`（当前预设的包名）必须
+/// 排除：预设的链接目标可能因应用升级/切分支而移动，那条路径要重装而不是卸载。
+/// 只认 `link:`/`file:` 本地链接；registry/git 引用缺产物属安装问题，绝不在此清理。
 pub(super) fn collect_dangling_local_link_deps(
     manifest: &serde_json::Value,
     keep: &HashSet<&str>,
@@ -197,6 +232,7 @@ pub(super) fn collect_dangling_local_link_deps(
     dangling
 }
 
+/// 本地链接依赖的目标目录是否存在（相对值按 profile 目录解析，容忍 verbatim 前缀）。
 fn local_link_target_exists(spec: &str, profile: &Path) -> bool {
     let Some(raw) = spec
         .strip_prefix("link:")
@@ -208,6 +244,8 @@ fn local_link_target_exists(spec: &str, profile: &Path) -> bool {
     if trimmed.is_empty() {
         return false;
     }
+    // pnpm 在 Windows 上可能写入 `\\?\` / `//?/` verbatim 前缀，先经 dunce 归一化，
+    // 否则对同一目录的判存会因前缀不同而假阴性。
     let normalized = trimmed.replace('/', std::path::MAIN_SEPARATOR_STR);
     let path = dunce::simplified(Path::new(&normalized)).to_path_buf();
     let resolved = if path.is_absolute() {
@@ -218,6 +256,10 @@ fn local_link_target_exists(spec: &str, profile: &Path) -> bool {
     resolved.is_dir()
 }
 
+/// 判断 pnpm 写入 profile 的依赖值与期望的 `link:` 捆绑路径是否一致。
+///
+/// 容忍：`link:`/`file:` 前缀缺失或两者混写（历史遗留 `file:` 安装值）；Windows
+/// 下路径大小写不敏感；尾部斜杠差异（pnpm 各版本落盘形式略有出入）。
 pub(super) fn dep_matches_spec(actual: &str, expected: &str) -> bool {
     let norm = |spec: &str| {
         let stripped = spec
@@ -342,11 +384,9 @@ mod tests {
             std::fs::read_to_string(path.join("sentinel")).unwrap(),
             "original"
         );
-        assert!(
-            !root
-                .join(format!("package.json.internal.{}.tmp", std::process::id()))
-                .exists()
-        );
+        assert!(!root
+            .join(format!("package.json.internal.{}.tmp", std::process::id()))
+            .exists());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -405,10 +445,10 @@ mod tests {
 
     #[test]
     fn local_link_dep_detects_only_directory_specs() {
-        assert!(is_local_link_dep(
-            "link:C:/Apps/dsh/resources/internal-plugins/dsh-tauri"
-        ));
+        // link:/file: 前缀 → 本地目录链接（含历史遗留 file: 形式）
+        assert!(is_local_link_dep("link:C:/Apps/dsh/resources/internal-plugins/dsh-tauri"));
         assert!(is_local_link_dep("file:/Applications/.../dsh-tauri-ui"));
+        // 无前缀的裸路径、registry 版本、git 引用都不是本地链接，绝不能误卸
         assert!(!is_local_link_dep("dsh-tauri@0.2.0"));
         assert!(!is_local_link_dep("github:dsh-market/dshmarket"));
         assert!(!is_local_link_dep("workspace:*"));
@@ -417,8 +457,10 @@ mod tests {
 
     #[test]
     fn dangling_local_link_deps_exclude_presets_and_registry_specs() {
-        let root =
-            std::env::temp_dir().join(format!("dsh-dangling-link-deps-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "dsh-dangling-link-deps-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let profile = root.join("profile");
         let alive = root.join("packages/dsh-tauri-ui");
@@ -458,19 +500,24 @@ mod tests {
     #[test]
     fn dep_spec_matches_itself() {
         let expected = "link:C:/Apps/dsh/resources/internal-plugins/dsh-tauri";
+        // 与自身一致
         assert!(dep_matches_spec(expected, expected));
+        // 无 link:/file: 前缀（pnpm 某些场景直接落路径）
         assert!(dep_matches_spec(
             "C:/Apps/dsh/resources/internal-plugins/dsh-tauri",
             expected
         ));
+        // 尾部斜杠差异
         assert!(dep_matches_spec(
             "link:C:/Apps/dsh/resources/internal-plugins/dsh-tauri/",
             expected
         ));
+        // 反斜杠（Windows 原生形式）
         assert!(dep_matches_spec(
             "link:C:\\Apps\\dsh\\resources\\internal-plugins\\dsh-tauri",
             expected
         ));
+        // 历史遗留 file: 形式（协议切换前已安装的值）
         assert!(dep_matches_spec(
             "file:C:/Apps/dsh/resources/internal-plugins/dsh-tauri",
             expected
@@ -505,12 +552,15 @@ mod tests {
     #[test]
     fn dep_spec_rejects_wrong_path_or_source() {
         let expected = "link:C:/Apps/dsh/resources/internal-plugins/dsh-tauri";
+        // 仍指向 npm 版本（用户手动从 npm 安装，非捆绑 link: 源）
         assert!(!dep_matches_spec("dsh-tauri@0.2.0", expected));
         assert!(!dep_matches_spec("^0.2.0", expected));
         let cwd_spec =
             crate::service::plugin::preset::bundled_dep_spec(&std::env::current_dir().unwrap());
         assert!(!dep_matches_spec(".", &cwd_spec));
+        // 指向其它位置（旧版本安装目录等）
         assert!(!dep_matches_spec("link:D:/elsewhere/dsh-tauri", expected));
+        // 同名不同宿主盘符
         assert!(!dep_matches_spec(
             "link:D:/Apps/dsh/resources/internal-plugins/dsh-tauri",
             expected
@@ -520,11 +570,14 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn dep_spec_case_insensitive_on_windows() {
+        // Windows 文件系统大小写不敏感，路径比较须忽略大小写
         let expected = "link:C:/Apps/dsh/resources/internal-plugins/dsh-tauri";
         assert!(dep_matches_spec(
             "link:c:/apps/DSH/resources/internal-plugins/Dsh-Tauri",
             expected
         ));
+        // 实值仍带 Windows 扩展长度前缀（`\\?\`，dunce::simplified 归一化）时，
+        // 与归一化掉前缀的期望值仍视为同一路径（幂等，避免不必要的重装）
         assert!(dep_matches_spec(
             "link://?/C:/Apps/dsh/resources/internal-plugins/dsh-tauri",
             expected

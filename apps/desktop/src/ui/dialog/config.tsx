@@ -18,15 +18,19 @@ import { ConfigDebug } from '@/ui/config/debug'
 import { ConfigPlugin } from '@/ui/config/plugin'
 import { ConfigProfile } from '@/ui/config/profile'
 
+/** 配置面板标识（左侧导航与顶部「配置」菜单共用同一组值） */
 export type ConfigTab = 'appearance' | 'application' | 'profiles' | 'plugins' | 'harness' | 'dataDir'
 
 export interface ConfigDialogProps extends PropsWithOverlays {
+  /** 打开时定位到的面板；缺省为「应用」 */
   tab?: ConfigTab
 }
 
 export function ConfigDialog(props: ConfigDialogProps) {
   const disclosure = useDisclosure({ props })
   const { t } = useTranslation()
+  // 异常插件数：在「插件」Tab 上给出红点/角标，方便用户直接感知出问题的插件。
+  // 与「插件」面板共用同一份查询缓存（根布局订阅后端事件写入）。
   const { data: plugins = [] } = useQuery({
     queryKey: queryKeys.plugins,
     queryFn: () => invoke<DshPlugin[]>('get_dsh_plugins'),
@@ -44,6 +48,7 @@ export function ConfigDialog(props: ConfigDialogProps) {
 
   const [activeTab, setActiveTab] = useState<ConfigTab>(props.tab ?? 'application')
 
+  // 服务重启/退出前由 store 触发，命令式收起本对话框（卸载时自动注销）
   useListener(hooks['config.dialog.hidden'].on, disclosure.cancel)
 
   return (

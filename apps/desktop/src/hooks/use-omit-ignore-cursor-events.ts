@@ -75,7 +75,9 @@ export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | nu
       const element = elementRef.current
       if (disposed || element === null)
         return
-
+      // 按 `devicePixelRatio` 换成设备像素再交给 Rust（Rust 再按 GTK 缩放系数换回 GTK 坐标）：
+      // KDE 分数缩放 + XWayland 下页面是 1.5、GTK 是 1，直接传 CSS 坐标会让输入形状
+      // 缩成 2/3 并偏向左上角，宠物中间点不到。
       const scale = globalThis.devicePixelRatio || 1
       const bounds = element.getBoundingClientRect()
       const x = bounds.x * scale
@@ -150,7 +152,7 @@ export function useOmitIgnoreCursorEvents(elementRef: RefObject<HTMLElement | nu
         setIgnoreCursorEvents(false)
         return
       }
-
+      // 等首个设备样本再切穿透，避免尚未 realize 的 GTK 窗口崩溃。
       if (lastCursor === undefined)
         return
       const inElement = isCursorInElement(lastCursor.x, lastCursor.y)

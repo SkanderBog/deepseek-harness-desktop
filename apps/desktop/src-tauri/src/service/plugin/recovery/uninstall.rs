@@ -1,3 +1,7 @@
+//! 离线卸载（直接改 profile 清单）：从 manifest 移除依赖与 bundle 引用、
+//! 删除 `node_modules/<id>` 入口（含 scoped 空目录清理与路径逃逸防护）、
+//! 剥离 `cordis.patch.yml` 中目标插件的 patch 条目。
+
 use std::fs;
 #[cfg(windows)]
 use std::os::windows::fs::FileTypeExt;
@@ -6,6 +10,7 @@ use std::path::Path;
 use crate::service::fs_guard;
 use crate::service::plugin::{parse_patch_layer, render_patch_layer};
 
+/// 从 manifest 中移除指定插件（`dependencies` + `dsh.profile.bundles`），返回是否有改动。
 pub(super) fn remove_plugin_from_manifest(manifest: &mut serde_json::Value, id: &str) -> bool {
     let mut modified = false;
     if let Some(deps) = manifest
@@ -33,6 +38,8 @@ pub(crate) fn remove_bundle(manifest: &mut serde_json::Value, id: &str) -> bool 
     bundles.len() != before
 }
 
+/// 删除插件入口：符号链接或 junction 只删除入口本身；普通目录递归删除，
+/// 普通文件用 `remove_file`（`remove_dir_all` 对文件会报 ENOTDIR）。
 fn remove_plugin_entry(entry: &Path) -> std::io::Result<()> {
     let file_type = fs::symlink_metadata(entry)?.file_type();
     #[cfg(windows)]
@@ -48,6 +55,12 @@ fn remove_plugin_entry(entry: &Path) -> std::io::Result<()> {
     fs::remove_file(entry)
 }
 
+/// 删除 `node_modules/<id>`；scoped 目录删除后若 scope 空则一并清理。
+///
+/// 链接入口（符号链接 / Windows junction）只校验父目录、只解链本身：内置插件以
+/// `link:` 指向应用资源目录（在 profile 之外），`canonicalize` 会解析到 profile
+/// 外并被误判为路径逃逸，导致入口永远删不掉（弃用/孤儿/失效链接卸载的残留根因）。
+/// 链接的删除动作不触碰目标，父目录校验已足以保证删除范围仍在 `node_modules` 内。
 pub(super) fn remove_plugin_dir(profile: &Path, id: &str) {
     let node_modules = profile.join("node_modules");
     let Ok(node_modules_root) = fs_guard::ensure_within(&node_modules, profile) else {
@@ -62,6 +75,8 @@ pub(super) fn remove_plugin_dir(profile: &Path, id: &str) {
         return;
     };
     let file_type = entry_metadata.file_type();
+    // junction 在 Rust 中同样满足 `is_symlink()`；两个判定都保留，避免行为差异
+    // 下把重解析点当成普通目录而递归删进应用资源目录。
     #[cfg(windows)]
     let entry_is_link = file_type.is_symlink() || file_type.is_symlink_dir();
     #[cfg(not(windows))]
@@ -108,6 +123,10 @@ pub(super) fn remove_plugin_dir(profile: &Path, id: &str) {
     }
 }
 
+/// 从 `cordis.patch.yml` 中剥离目标插件的 patch 条目（保留其它插件的 patch）。
+///
+/// 与 dsh-desktop「直接重置为 []」不同：这里只移除与目标插件相关的条目，不破坏
+/// 其它插件的配置层，符合「其它插件不会被删除」的承诺。解析失败则原样保留。
 pub(super) fn strip_cordis_patch_for(profile: &Path, id: &str) {
     let path = profile.join("cordis.patch.yml");
     let Ok(content) = fs::read_to_string(&path) else {
@@ -133,6 +152,7 @@ pub(super) fn strip_cordis_patch_for(profile: &Path, id: &str) {
     }
 }
 
+/// 一个 patch 条目是否「针对」目标插件：顶层 id 字段或任意字段值等于该包名。
 pub(crate) fn patch_entry_targets(entry: &serde_yaml::Value, id: &str) -> bool {
     match entry {
         serde_yaml::Value::Mapping(map) => map
@@ -296,6 +316,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn remove_plugin_dir_unlinks_junction_pointing_outside_profile() {
+        // 内置插件以 link: 指向应用资源目录（在 profile 之外，如 dsh-tauri-panel）：
+        // junction 的 canonicalize 落在 profile 外，仍必须只解链入口、绝不动目标。
         let root = std::env::temp_dir().join(format!(
             "dsh-plugin-recovery-junction-{}",
             std::process::id()

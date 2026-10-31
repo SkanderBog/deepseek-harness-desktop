@@ -19,9 +19,6 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) })
 vi.mock('@/store', () => ({ store: { harness: { restart: mocks.restart } } }))
 vi.mock('@/utils/toast', () => ({ toast: mocks.toast }))
 
-if (typeof CSS === 'undefined')
-  vi.stubGlobal('CSS', { escape: (value: string) => value })
-
 const localFixture: HarnessCore = {
   id: 'local',
   source: 'local',

@@ -1,5 +1,23 @@
+//! 路径安全守卫：对进入 `Path::join` / `remove_dir_all` 的用户可控 ID 做统一校验。
+//!
+//! 背景：profile id、core tag、插件 id 都可能来自 IPC 参数，若直接拼进
+//! `$DSH_HOME/.../<id>` 后删除，`".."`、绝对路径、`/`、`\`、`.` 等特殊值会把
+//! 目标解析到应用数据根目录甚至任意路径（`remove_profile("..")` 等穿越）。
+//!
+//! 本模块提供两层防线：
+//! 1. `validate_id`：字符集白名单，拒绝路径分隔符、`..`、绝对路径等；
+//! 2. `safe_remove_dir`：删除前 canonicalize 目标并校验其仍然位于固定根目录内，
+//!    同时拒绝根目录本身与符号链接跳出。
+//!
+//! 返回 `Result<_, String>`，错误一律带大写前缀（AGENTS.md 约定）。
+
 use std::path::{Path, PathBuf};
 
+/// ID 允许的字符集：字母数字、点、短横线、下划线（禁止空格、路径分隔符）。
+///
+/// 注意：`.` 单独出现（`.` / `..`）属于非法，但文件名内的点（如 `dsh-1.2.3`）
+/// 允许。检查顺序：先整体字符集（排除 `/`、`\`、空白），再排除 `.` `..` 与
+/// 以 `..` 开头/结尾的组件形态。
 pub fn validate_id(id: &str) -> Result<(), String> {
     let id = id.trim();
     if id.is_empty() {
@@ -19,9 +37,16 @@ pub fn validate_id(id: &str) -> Result<(), String> {
     if id == "." || id == ".." || id.starts_with("..") || id.ends_with("..") {
         return Err(format!("INVALID_ID: path traversal attempt: {id}"));
     }
+    // 顺带拒绝 Windows 保留名与分隔符的隐形变体（统一走字符集已挡掉）
     Ok(())
 }
 
+/// 校验 `child` canonicalize 后仍位于 `root` canonicalize 的目录内。
+///
+/// 使用 `dunce::canonicalize`（std `fs::canonicalize` 在 Windows 上返回 `\\?\`
+/// verbatim 前缀路径，dunce 把它归一化成常规形式）后再比较，避免字符串前缀误判
+/// （`/data/foobar` 不作为 `/data/foo` 的子路径）以及 `..`、符号链接改写。
+/// `root` 不存在时（尚未初始化）直接拒绝——删除操作的前提是父目录存在。
 pub fn ensure_within(child: &Path, root: &Path) -> Result<PathBuf, String> {
     let root_real = dunce::canonicalize(root).map_err(|e| format!("ROOT_RESOLVE_FAILED: {e}"))?;
     let child_real = dunce::canonicalize(child).map_err(|e| format!("PATH_RESOLVE_FAILED: {e}"))?;
@@ -35,6 +60,11 @@ pub fn ensure_within(child: &Path, root: &Path) -> Result<PathBuf, String> {
     Ok(child_real)
 }
 
+/// 删除目录前的最小安全前置：ID 合法 + canonicalize 目标在根目录内 + 拒绝根目录。
+///
+/// 返回规范化后的目标路径；调用方随后执行 `remove_dir_all`。此函数不删除任何
+/// 内容——调用方负责 `fs::remove_dir_all`（且用 `download::remove_dir_with_retry` 等
+/// 已有封装时可继续使用）。
 pub fn safe_remove_target(root: &Path, id: &str) -> Result<PathBuf, String> {
     validate_id(id)?;
     let dir = root.join(id);
@@ -50,6 +80,9 @@ pub fn safe_remove_target(root: &Path, id: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+/// 便捷封装：校验 ID 并组装根目录下的目标路径（不检查存在性）。
+///
+/// 用于创建/读取路径（非删除）场景，仅挡字符集穿越。
 pub fn join_safe(root: &Path, id: &str) -> Result<PathBuf, String> {
     validate_id(id)?;
     Ok(root.join(id))
@@ -78,8 +111,11 @@ mod tests {
         let root = dir.join("root");
         fs::create_dir_all(&root).unwrap();
         let guard = std::panic::catch_unwind(|| {
+            // `..` 在合法字符集之外，直接拒绝
             assert!(safe_remove_target(&root, "..").is_err());
+            // 不存在的目标直接拒
             assert!(safe_remove_target(&root, "nonexistent").is_err());
+            // 合法 id 但目录未创建也应拒绝（TARGET_NOT_FOUND）
             let res = safe_remove_target(&root, "web");
             assert!(res.is_err());
             assert!(res.unwrap_err().starts_with("TARGET_NOT_FOUND"));
@@ -93,6 +129,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dsh-fsguard3-{}", std::process::id()));
         let root = dir.join("profiles");
         fs::create_dir_all(&root).unwrap();
+        // 根目录外建一个真实目录，root 下放指向它的符号链接——删除目标会把
+        // canonicalize 解析到链接真实目标，若跳出 root 则应被拒绝。
         let outside = dir.join("outside-target");
         fs::create_dir_all(&outside).unwrap();
         #[cfg(unix)]
@@ -117,11 +155,7 @@ mod tests {
             use std::os::windows::process::CommandExt;
             let status = std::process::Command::new("cmd")
                 .arg("/C")
-                .raw_arg(format!(
-                    "mklink /J \"{}\" \"{}\"",
-                    link.display(),
-                    root.display()
-                ))
+                .raw_arg(format!("mklink /J \"{}\" \"{}\"", link.display(), root.display()))
                 .creation_flags(0x08000000)
                 .status()
                 .unwrap();

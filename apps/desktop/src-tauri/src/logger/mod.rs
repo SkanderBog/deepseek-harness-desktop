@@ -1,3 +1,12 @@
+//! 统一日志底座 — `log` 外观代理 `tracing` 栈
+//!
+//! 目标：
+//! - 后端：`log::*`（业务，`dsh` target 表示 Harness 输出）→ `tracing` 经 `tracing_log::LogTracer` → `tracing-subscriber` + `tracing-appender`（non-blocking）+ `EnvFilter`
+//! - 前端：`console.*` 劫持 → `log_frontend`（`target: "frontend"`）→ 独立 `desktop.frontdesk.log`（标识 `frontend`，同格式）；文件层对 `frontend` target 直接跳过，后端 `desktop.log` 不混入前端日志（前端日志仅终端 / `desktop.frontdesk.log` 可见）。同一文件也接收 dsh iframe 的帧内 console/未捕获异常（注入脚本转发，标识为 `[iframe]`，见 `desktop/frame_log.rs`）
+//! - 格式：`[YYYY-MM-DD HH:MM:SS.mmmZ] LEVEL target: message`（例 `INFO dsh:` / `INFO frontend:`）
+//! - 轮转：`desktop.log` + `desktop.frontdesk.log` 各 5MiB，保留 `.1 ~ .3`
+//! - 降噪：`reqwest`/`hyper` 默认 `warn`，可通过 `RUST_LOG=reqwest=debug` 覆盖
+
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -7,7 +16,7 @@ use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
 use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::fmt::time::OffsetTime;
 use tracing_subscriber::layer::{Layer, SubscriberExt};
-use tracing_subscriber::{EnvFilter, fmt, util::SubscriberInitExt};
+use tracing_subscriber::{fmt, util::SubscriberInitExt, EnvFilter};
 
 use crate::config::{APP_DATA_DEV_DIR_NAME, APP_IDENTIFIER};
 
@@ -19,6 +28,10 @@ const MAX_BACKUPS: usize = 3;
 static FILE_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 static FRONTDESK_WRITER: OnceLock<Arc<Mutex<SizeRotatingWriter>>> = OnceLock::new();
 
+/// 平台应用数据根目录下的本应用目录（`identifier` 一层；dev 与 release 相同）。
+///
+/// 仅用 `std::env` 解析，不依赖 `AppHandle`，因此也是启动前读取 store 的路径来源
+/// （`config::force_xwayland_setting`）。
 pub(crate) fn identifier_dir() -> Option<PathBuf> {
     match crate::config::e2e_app_data_dir() {
         Ok(Some(directory)) => return Some(directory),
@@ -57,6 +70,7 @@ pub(crate) fn identifier_dir() -> Option<PathBuf> {
     None
 }
 
+/// debug 构建在 `identifier` 目录下多一层 `dev/`，与 `config::get_base_dir` 同口径。
 fn apply_dev_segment(base: PathBuf) -> PathBuf {
     if cfg!(debug_assertions) {
         base.join(APP_DATA_DEV_DIR_NAME)
@@ -65,6 +79,12 @@ fn apply_dev_segment(base: PathBuf) -> PathBuf {
     }
 }
 
+/// 本进程写日志用的应用数据目录。
+///
+/// dev 与 release 共用同一个 `identifier`（`dsh-tauri`），不隔离就会让两个本可同时
+/// 运行的进程打开同一个 `desktop.log`：日志互相交错，5 MiB 轮转的归档 rename 还会
+/// 彼此抢（一方 rename 完，另一方仍按旧长度 append）。核心安装目录、运行时与 Store
+/// 都已按 `dev/` 隔离，日志必须同口径。
 fn app_data_dir() -> Option<PathBuf> {
     identifier_dir().map(apply_dev_segment)
 }
@@ -142,6 +162,7 @@ impl SizeRotatingWriter {
         }
     }
 
+    /// 供 `log_frontend` 以 `&self` 追加写入（带轮转），避免 `&mut` 约束
     fn append_bytes(&self, buf: &[u8]) -> io::Result<()> {
         let _ = self.ensure_file();
         {
@@ -231,6 +252,7 @@ pub fn init() {
         let rotating = SizeRotatingWriter::new(path, MAX_LOG_BYTES, MAX_BACKUPS);
         tracing_appender::non_blocking(rotating)
     });
+    // 前端独立文件：desktop.frontdesk.log（与 dsh 的 `target: "dsh"` 标识对称，`target: "frontend"`）
     if let Some(path) = frontdesk_log_file_path() {
         let w = Arc::new(Mutex::new(SizeRotatingWriter::new(
             path,
@@ -254,6 +276,9 @@ pub fn init() {
         .with_level(true);
     if let Some((nb, guard)) = file_writer {
         let _ = FILE_GUARD.set(guard);
+        // 文件层对前端 `target: "frontend"` 直接跳过：前端 `console.*` 只进
+        // `desktop.frontdesk.log`（log_frontend 直写），不混入后端 `desktop.log`，
+        // 避免前端日志及其多行堆栈把后端日志挤没（复制运行日志时更清晰）。
         let file_layer = fmt::layer()
             .with_writer(nb)
             .with_timer(timer)
@@ -297,12 +322,17 @@ impl FrontendLevel {
 }
 
 pub fn log_frontend(level: FrontendLevel, target: &str, message: &str) {
+    // 前端日志独立落盘到 `desktop.frontdesk.log`，与后端 `desktop.log`（含 `dsh` target）分离；
+    // 文件层已跳过 `frontend` target（见 init），此处经 `log` 代理仅为 `pnpm tauri dev` 终端可见
+    // 标识与 `dsh` 对称：`frontend` 作为 target 出现在 LEVEL 之后（`... INFO frontend: [tag] message`）
+    // 当 JS 劫持以 `target: "frontend"` 透传时，避免 `frontend: [frontend]` 重复，退化为 `frontend: message`
     let is_generic_frontend = target == "frontend";
     let prefixed = if is_generic_frontend {
         message.to_string()
     } else {
         format!("[{}] {}", target, message)
     };
+    // 1) 终端 stdout（tracing 层，带 ANSI、受 RUST_LOG 过滤）
     match level {
         FrontendLevel::Trace => log::trace!(target: "frontend", "{}", prefixed),
         FrontendLevel::Debug => log::debug!(target: "frontend", "{}", prefixed),
@@ -310,6 +340,7 @@ pub fn log_frontend(level: FrontendLevel, target: &str, message: &str) {
         FrontendLevel::Warn => log::warn!(target: "frontend", "{}", prefixed),
         FrontendLevel::Error => log::error!(target: "frontend", "{}", prefixed),
     }
+    // 2) 独立文件 desktop.frontdesk.log（自格式化，避免再经 EnvFilter 过滤丢失）
     let level_str = match level {
         FrontendLevel::Trace => "TRACE",
         FrontendLevel::Debug => "DEBUG",
@@ -461,6 +492,7 @@ mod tests {
     #[test]
     #[allow(clippy::assertions_on_constants)]
     fn debug_logs_are_separated_from_release() {
+        // dev 与 release 共用 identifier；不隔离会让两个进程写同一个 desktop.log。
         assert!(cfg!(debug_assertions), "cargo test 构建为 debug");
         let base = PathBuf::from("/tmp/dsh-tauri");
         assert_eq!(

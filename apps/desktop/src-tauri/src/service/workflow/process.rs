@@ -1,3 +1,8 @@
+//! Harness 进程生命周期：本应用持有的根进程登记（PID + Windows 句柄成对存储）、
+//! 启动守卫、进程树终止与退出状态回落，以及按 dsh 安装路径清扫历史残留的
+//! 孤儿服务实例（各平台都按入口路径清扫：Windows 需穿过垫片的 `cmd.exe /C node`
+//! 转发层判断持有者，Unix 的匹配与父进程状态无关，转发层自身也会被命中）。
+
 use crate::config;
 use std::fs;
 #[cfg(windows)]
@@ -8,14 +13,16 @@ use std::process::Command;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
+use tauri::AppHandle;
 
 use super::status;
 use super::sweep::harness_pid_path;
 use super::utils::wait_for_port_release;
-use crate::AppHandle;
 
+/// 当前持有的 Harness 根进程意外退出时通知前端的专用事件。
 pub(super) const HARNESS_PROCESS_EXITED_EVENT: &str = "harness-process-exited";
 
+/// Harness 根进程退出事件载荷。退出码在 Unix 被信号终止或系统查询失败时为空。
 #[derive(Clone, Debug, serde::Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct HarnessProcessExitedPayload {
@@ -23,12 +30,20 @@ pub(super) struct HarnessProcessExitedPayload {
     pub(super) exit_code: Option<i64>,
 }
 
+/// 结束进程后等待端口回落的上限（正常情况毫秒级返回，只有真占用才等到上限）。
 const PORT_RELEASE_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 
+/// 启动守卫：并发调用 `launch` 时只允许一个真正拉起 dsh 进程
 pub(crate) fn launch_guard() -> Arc<AtomicBool> {
     Arc::clone(&super::instances::instance().launching)
 }
 
+/// 当前进程内由桌面端创建的 Harness 根进程（PID + Windows 句柄）。
+///
+/// PID 与句柄装在同一把锁的可选值里：`take()` 一次性成对取出，保证
+/// 「PID 清空」与「句柄关闭」之间不存在跨原子竞态（WARN-6）。历史上 PID/句柄
+/// 分两个 `Atomic*` 存储，`stop` 读 PID 与监视线程清句柄之间有微窗口可能导致
+/// 漏杀或重复 close。
 #[derive(Clone)]
 pub(super) struct OwnedProcess {
     pub(super) pid: u32,
@@ -36,8 +51,16 @@ pub(super) struct OwnedProcess {
     pub(super) handle: Arc<OwnedHandle>,
 }
 
+/// 本次启动是否已按 dsh 入口路径清扫过历史残留。
+///
+/// 启动期的两处清扫（setup 的 sweep_orphan_harness 与 launch 前的那次）读的是同一份
+/// 进程快照：两次之间没有任何进程由本应用拉起，结论不会变化，而 Windows 上一次全量
+/// 枚举约 0.3–0.6s，重复执行纯属浪费启动时间。
 static STARTUP_SWEEP_DONE: AtomicBool = AtomicBool::new(false);
 
+/// 取用一次清扫机会：本次启动已清扫过时返回 false，调用方跳过重复清扫。
+///
+/// 先取后清，并发调用里只有一个真正执行。
 pub(super) fn take_startup_sweep() -> bool {
     !STARTUP_SWEEP_DONE.swap(true, Ordering::SeqCst)
 }
@@ -84,6 +107,7 @@ fn take_owned_process() -> Option<OwnedProcess> {
     guard.take()
 }
 
+/// 纯函数部分：便于单测，不触碰全局状态。
 fn take_owned_process_if_matching(
     owned: &mut Option<OwnedProcess>,
     pid: u32,
@@ -103,11 +127,22 @@ impl Drop for LaunchGuard {
     }
 }
 
+/// 核心目录操作互斥锁：统一串行化「切换目录」与「启动并登记进程」两个临界区。
+///
+/// 不能只用一个布尔守卫：两个并发切换可能互相覆盖/清除状态，且 launch 在检查
+/// 守卫与登记进程之间仍存在窗口。使用同一把 Tokio mutex 后，切换从停服到目录
+/// 互换完成、launch 从最终状态检查到进程登记均保持互斥，避免 Harness 进程在
+/// `dependencies/dsh` 目录交换期间加载 DLL 并产生 Windows os error 32。
 fn core_transition_lock() -> &'static Arc<tokio::sync::Mutex<()>> {
     static LOCK: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
     LOCK.get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
 }
 
+/// 获取核心目录操作互斥锁，最长等待 15 秒。
+///
+/// 调用方必须从获取锁开始，持续持有到目录切换完成或 Harness 进程登记完成；
+/// RAII guard 会在所有成功/失败路径自动释放。超时必须失败返回，避免切换或启动
+/// 卡死后永久阻塞后续所有核心操作。
 pub async fn acquire_core_transition() -> Result<tokio::sync::OwnedMutexGuard<()>, String> {
     const CORE_TRANSITION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
     tokio::time::timeout(
@@ -123,6 +158,8 @@ pub async fn acquire_core_transition() -> Result<tokio::sync::OwnedMutexGuard<()
     })
 }
 
+/// 是否持有 Harness 进程。与其它访问器一致：锁被毒化（panic 残留）时取回
+/// 毒化守卫继续读取，而不是把「已登记进程」误报为「无」。
 pub fn has_owned_process() -> bool {
     crate::service::workflow::instances::instance()
         .process
@@ -140,6 +177,15 @@ pub fn owned_process_pid() -> Option<u32> {
         .map(|process| process.pid)
 }
 
+/// 处理「持有的 dsh 进程退出」这一事实（由退出监视线程与健康检查 tick 共用）：
+///
+/// - 仅当退出的 PID 仍是当前登记的那个进程时才清空持有（按 pid 匹配），
+///   PID/句柄作为整体成对取出——杜绝「读 PID」与「清句柄」
+///   之间的跨原子竞态（WARN-6），也杜绝旧监视线程误清新启动进程的登记；
+/// - 匹配成功后无条件回落到 Stopped——进程可能在 Starting 或 Running 阶段
+///   退出，任何情况下都不能继续广播一个已经失效的运行状态（WARN-5）。
+///
+/// 幂等：多次调用只会生效一次，后续调用返回 None。
 #[cfg(test)]
 pub(super) fn on_owned_process_exit<R: tauri::Runtime>(
     app_handle: &AppHandle<R>,
@@ -178,6 +224,7 @@ pub(super) fn on_owned_process_exit_at(
             "Owned Harness process {} exited with code {code}; resetting status to Stopped",
             owned.pid
         );
+        // SIGABRT：V8 堆耗尽（`JavaScript heap out of memory`）是桌面端最常见的成因
         // （issue #699），补一条可检索的日志，便于在没有前端时定位。
         if code == 134 {
             log::warn!(
@@ -199,7 +246,12 @@ pub(super) fn on_owned_process_exit_at(
     Some(owned)
 }
 
+/// 只结束本应用当前进程创建并仍持有的 Harness 进程树。
+///
+/// 返回是否真的结束了一个进程：调用方据此决定要不要等端口释放。没有持有进程时
+/// 是纯 no-op，不该白等——退出与安装器路径都在用户可见的关键路径上。
 fn terminate_owned_process() -> Result<bool, ()> {
+    // 一次性取出 PID+句柄（成对），杜绝「PID 已清空/句柄未清」的漏杀窗口
     let Some(owned) = take_owned_process() else {
         return Ok(false);
     };
@@ -230,6 +282,8 @@ fn terminate_owned_process() -> Result<bool, ()> {
     Ok(true)
 }
 
+/// 结束进程树（Windows `taskkill /PID <pid> /T /F`；Unix 负 PID 进程组，与
+/// 启动时 `process_group(0)` 对应）。调用方需先确认 PID 确实指向目标进程。
 pub(super) fn kill_pid_tree(pid: u32) {
     #[cfg(windows)]
     {
@@ -251,6 +305,10 @@ pub(super) fn kill_pid_tree(pid: u32) {
 
     #[cfg(unix)]
     {
+        // Harness 根进程启动在独立进程组中，负 PID 只作用于该进程树；手动通过
+        // CLI 拉起的外围 dsh 进程未必有独立进程组（组信号报错），此时回退直接
+        // 杀 PID——PID 的归属已由调用方确认（路径匹配或 .harness.pid 双重确认），
+        // 绝不会误杀未知进程。
         let group = format!("-{pid}");
         let group_term_ok = Command::new("kill")
             .args(["-TERM", "--", &group])
@@ -276,6 +334,10 @@ pub(super) fn kill_pid_tree(pid: u32) {
     }
 }
 
+/// 解析 `ps -axo pid=,command=` 的一行：返回 `(PID, 命令行)`。
+///
+/// 输出形如 `   12345 node /path/to/bin.js --profile web ...`（PID 前可能有
+/// 前导空格、行尾有换行）。PID 缺失或不可解析的行返回 None（跳过该行）。
 #[cfg_attr(windows, allow(dead_code))] // 仅 Unix 清场分支与测试使用
 fn parse_ps_line(line: &str) -> Option<(u32, &str)> {
     let trimmed = line.trim_start();
@@ -284,6 +346,12 @@ fn parse_ps_line(line: &str) -> Option<(u32, &str)> {
     Some((pid, trimmed[split..].trim_start()))
 }
 
+/// 判断命令行中是否包含一个完整参数。
+///
+/// `ps` 会把 argv 用空格拼成命令行，但不会给本身含空格的参数补引号，因此不能
+/// 用 `split_whitespace` 还原参数。改为在原始命令行中匹配完整字符串，并校验
+/// 前后为空白或行边界；这样 macOS 的 `Library/Application Support` 路径也能
+/// 正确识别，同时不会把路径前缀相似的其他参数误判为目标。
 #[cfg_attr(windows, allow(dead_code))] // 仅 Unix 清场分支与测试使用
 fn command_line_has_argument(cmdline: &str, argument: &str) -> bool {
     if argument.is_empty() {
@@ -304,6 +372,7 @@ fn command_line_has_argument(cmdline: &str, argument: &str) -> bool {
     })
 }
 
+/// 判断一个参数是否紧跟在另一个完整参数之后。
 #[cfg_attr(windows, allow(dead_code))] // 仅 Unix 清场分支与测试使用
 fn command_line_has_argument_after(cmdline: &str, preceding: &str, argument: &str) -> bool {
     if preceding.is_empty() || argument.is_empty() {
@@ -535,6 +604,7 @@ fn windows_process_snapshot(
         )
     };
     let mut sampled: FILETIME = unsafe { std::mem::zeroed() };
+    // Toolhelp 不记录创建时间：快照开始后才创建的 PID 可能已复用旧父链。
     unsafe { GetSystemTimePreciseAsFileTime(&mut sampled) };
     let sampled = u64::from(sampled.dwHighDateTime) << 32 | u64::from(sampled.dwLowDateTime);
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
@@ -703,6 +773,9 @@ pub(super) fn terminate_stale_harness_processes_at(dsh_bin: &Path) -> Result<(),
         .unwrap_or_else(|error| error.into_inner())
         .as_ref()
         .map(|process| process.pid);
+    // 结束进程后不再固定补睡：端口释放实测是毫秒级（taskkill 返回后约 1ms），
+    // 而紧随其后的启动会以 `wait_for_port_release` 等到端口真正回落，固定睡眠
+    // 只是把这段滞后放大成白等。
     let targets = orphan_harness_pids(&output, dsh_bin, owned_pid);
     for &(pid, created) in &targets {
         terminate_confirmed_process(pid, created)?;
@@ -826,14 +899,13 @@ pub(super) fn terminate_windows_process(
     }
     // issue #1074：taskkill 失败后只升级已确认的句柄，不重新按裸 PID 打开进程。
     log::warn!("Harness process {pid} survived taskkill; terminating the retained handle");
-    if unsafe { TerminateProcess(handle, 1) } == 0 {
-        let error = std::io::Error::last_os_error();
-        if unsafe { WaitForSingleObject(handle, 45000) } != WAIT_OBJECT_0 {
-            return Err(format!(
-                "HARNESS_CLEANUP_FAILED: cannot terminate process {pid}: {error}"
-            ));
-        }
-        return Ok(());
+    if unsafe { TerminateProcess(handle, 1) } == 0
+        && unsafe { WaitForSingleObject(handle, 0) } != WAIT_OBJECT_0
+    {
+        return Err(format!(
+            "HARNESS_CLEANUP_FAILED: cannot terminate process {pid}: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     if unsafe { WaitForSingleObject(handle, 5000) } != WAIT_OBJECT_0 {
         return Err(format!(
@@ -1047,6 +1119,10 @@ fn orphan_harness_pids(output: &[u8], dsh_bin: &str, owned_pid: Option<u32>) -> 
     targets
 }
 
+/// 判断命令行是否为「从本应用 dsh 安装目录启动的 Harness 服务」。
+///
+/// 除入口路径外同时核对桌面端服务启动参数，避免清扫时误伤用户并行执行的
+/// `dsh plugin` 等短命令。
 #[cfg_attr(windows, allow(dead_code))] // 仅 Unix 清场分支与测试使用
 fn is_harness_command_line(cmdline: &str, dsh_bin: &str) -> bool {
     command_line_has_argument(cmdline, dsh_bin)
@@ -1055,7 +1131,20 @@ fn is_harness_command_line(cmdline: &str, dsh_bin: &str) -> bool {
         && command_line_has_argument(cmdline, "--port")
 }
 
-pub fn terminate_stale_harness_processes(app_handle: &AppHandle) -> Result<(), String> {
+/// 结束所有从本应用 dsh 安装目录启动的 Harness 服务进程（含历史崩溃残留的孤儿实例）。
+///
+/// 只停本应用当前持有的进程不够：`.harness.pid` 标记只记录最近一次会话的 PID，
+/// 应用多次崩溃/强杀（任务管理器结束等）会遗留多个孤儿 dsh 进程、端口一路漂移
+/// （3080→3081→…），`sweep_orphan_harness` 每次只能回收最近一个，更早的孤儿
+/// 会持续占用 `dependencies/dsh` 目录的文件句柄（node 以该目录为 cwd 且模块
+/// DLL 加载在内存），更新切换目录时触发 os error 32（INSTALL_BACKUP_FAILED）。
+///
+/// Windows 只结束同入口、同参数且穿过 cmd/node 转发链后已无真实宿主的服务。
+/// Unix 保持原有 release 路径匹配行为：枚举 `ps` 按入口路径与启动参数匹配命令行，
+/// 与父进程是否存活无关——垫片/shell 包装层的命令行同样带着入口路径与服务参数，
+/// 因此转发层与其下方的真身会被分别命中，不存在 Windows 的转发层漏杀问题
+/// （debug 构建跳过该分支，只按 `.harness.pid` 标记回收）。
+pub fn terminate_stale_harness_processes(app_handle: &tauri::AppHandle) -> Result<(), String> {
     if super::instances::profiles()
         .into_iter()
         .any(|profile| super::instances::scope_sync(profile, has_owned_process))
@@ -1071,7 +1160,12 @@ pub fn terminate_stale_harness_processes(app_handle: &AppHandle) -> Result<(), S
         if cfg!(debug_assertions) {
             return Ok(());
         }
+        // Unix 同样需要按路径清扫：打开中的文件允许重命名确实不阻塞更新切换，
+        // 但崩溃/强杀残留的孤儿 dsh 实例会持续监听端口，下一次启动只能一路
+        // 漂移端口（3080→3081→…）并被持久化，表现为「更新后端口递增」
         // （issue #91）。用 `ps -ww -axo pid=,command=` 枚举完整命令行（`-ww`
+        // 防止 macOS 按终端宽度截断长路径），按参数边界匹配本应用 dsh 入口与
+        // 服务参数，不会误杀用户其它 node/dsh 命令，因此可安全地全部结束。
         let dsh_bin = config::get_dsh_binary_path(app_handle);
         let Some(dsh_bin_str) = dsh_bin.to_str() else {
             return Err("HARNESS_SWEEP_FAILED: invalid entry path".to_string());
@@ -1111,11 +1205,15 @@ pub(super) fn warn_if_inotify_watch_limit_low() {
     }
 }
 
-pub async fn stop(app_handle: AppHandle) -> Result<(), String> {
+/// 停止 Harness 服务
+pub async fn stop(app_handle: tauri::AppHandle) -> Result<(), String> {
     let profile = super::instances::current_profile()
         .unwrap_or_else(|| crate::service::profile::active_profile(&app_handle));
     super::instances::scope(profile.clone(), async move {
         log::info!("Stopping Harness service...");
+        // 重置启动守卫，确保后续 launch 可以重新拉起；仅结束持有的根进程树。
+        // 进程终止涉及 WaitForSingleObject（至多 5s）与 taskkill/kill 等同步阻塞
+        // 调用，移出 Tokio 执行线程避免卡住其他并发任务（WARN-7/P2-#20）。
         launch_guard().store(false, Ordering::SeqCst);
         tauri::async_runtime::spawn_blocking(move || {
             super::instances::scope_sync(profile, terminate_owned_process)
@@ -1123,6 +1221,7 @@ pub async fn stop(app_handle: AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| format!("STOP_FAILED: {e}"))?
         .map_err(|()| "STOP_FAILED: Harness process did not stop".to_string())?;
+        // 清理孤儿清扫标记：正常停止的实例不应被下次启动当作残留
         let _ = fs::remove_file(harness_pid_path(&app_handle));
 
         let port = super::instances::port(&app_handle);
@@ -1150,7 +1249,18 @@ pub async fn stop(app_handle: AppHandle) -> Result<(), String> {
     .await
 }
 
-fn stop_instance_for_installer(app_handle: &AppHandle) -> Result<(), String> {
+/// 交付安装包前的同步停服：结束持有的 Harness 进程树 → 等端口释放 → 清清扫标记。
+///
+/// 安装器（Windows 的 `CheckIfAppIsRunning` → taskkill、macOS 安装脚本的
+/// `CheckIfAppIsRunning`）会强杀桌面端进程，让应用走不到正常退出路径；桌面端一旦
+/// 先消失，它持有的 Harness 子进程就变成孤儿继续占着配置端口，更新后新实例启动
+/// 撞上 EADDRINUSE（表现为「更新后进不去」）。因此**打开安装包之前**必须先停服，
+/// 这是平台无关的要求，不能只在某一条调用路径上做。
+///
+/// 同步、可在退出路径调用（无 async 运行时依赖）：进程从 SIGKILL 返回那一刻已死，
+/// 但内核回收监听套接字仍有短暂滞后，故结束过进程后补一次有界等待，让紧随其后的
+/// 安装器/新实例看到端口已释放。没持有进程时不等待，避免在用户可见路径上白耗。
+fn stop_instance_for_installer(app_handle: &tauri::AppHandle) -> Result<(), String> {
     stop_instance_at(
         &harness_pid_path(app_handle),
         super::instances::port(app_handle),
@@ -1183,7 +1293,11 @@ pub(super) fn stop_instance_at(
     Ok(())
 }
 
-pub fn stop_for_installer(app_handle: &AppHandle) -> Result<(), String> {
+/// 应用退出时同步回收 Harness 进程。
+///
+/// 退出路径上不更新状态，只结束当前应用持有的 Harness 进程树（与安装器交接共用
+/// [`stop_for_installer`]，保证两条路径行为一致）。
+pub fn stop_for_installer(app_handle: &tauri::AppHandle) -> Result<(), String> {
     let mut profiles = super::instances::profiles();
     if profiles.is_empty() {
         profiles.push(crate::service::profile::active_profile(app_handle));
@@ -1199,7 +1313,7 @@ pub fn stop_for_installer(app_handle: &AppHandle) -> Result<(), String> {
     result
 }
 
-pub fn stop_on_exit(app_handle: &AppHandle) {
+pub fn stop_on_exit(app_handle: &tauri::AppHandle) {
     super::instances::begin_shutdown();
     if let Err(error) = stop_for_installer(app_handle) {
         log::error!("Harness exit cleanup failed: {error}");
@@ -1217,7 +1331,7 @@ mod tests {
             .split("pub async fn stop(")
             .nth(1)
             .unwrap()
-            .split("fn stop_instance_for_installer")
+            .split("/// 交付安装包前")
             .next()
             .unwrap();
         let scope = stop
@@ -1314,6 +1428,7 @@ mod tests {
         );
     }
 
+    /// 构造一个测试用 `OwnedProcess`（跨平台处理 Windows 句柄字段）。
     #[cfg(windows)]
     fn test_owned(pid: u32) -> OwnedProcess {
         use std::os::windows::io::FromRawHandle;
@@ -1331,18 +1446,23 @@ mod tests {
         OwnedProcess { pid }
     }
 
+    /// 退出监视线程只能清掉「与自己 PID 匹配」的登记，不许误清刚启动的新进程，
+    /// 也不许重复取出（幂等）。回归 WARN-6 合并引入的回退。
     #[test]
     fn owned_process_take_if_only_matches_pid() {
+        // 匹配的 PID 才可取出，且取走后槽清空
         let mut slot = Some(test_owned(42));
         let taken = take_owned_process_if_matching(&mut slot, 42);
         assert_eq!(taken.map(|p| p.pid), Some(42));
         assert!(slot.is_none());
 
+        // PID 不匹配（旧进程 41 退出）时禁止取出/清空新进程（新进程 42）
         let mut slot = Some(test_owned(42));
         let taken = take_owned_process_if_matching(&mut slot, 41);
         assert!(taken.is_none());
         assert_eq!(slot.as_ref().map(|p| p.pid), Some(42));
 
+        // 幂等：已清空后再次取出返回 None
         let mut slot: Option<OwnedProcess> = None;
         assert!(take_owned_process_if_matching(&mut slot, 42).is_none());
     }
@@ -1599,6 +1719,7 @@ mod tests {
         });
     }
 
+    /// 退出载荷保留退出码（含 0），无法取得时显式序列化为 null。
     #[test]
     fn harness_process_exit_payload_serializes_exit_code() {
         let with_code = serde_json::to_value(HarnessProcessExitedPayload {
@@ -1619,6 +1740,7 @@ mod tests {
         );
     }
 
+    /// 核心转换锁可被多个异步操作按顺序获取，避免两个切换重叠。
     #[tokio::test]
     async fn core_transition_lock_serializes_operations() {
         let first = acquire_core_transition()
@@ -1642,6 +1764,7 @@ mod tests {
         );
     }
 
+    /// 两个切换请求不能重叠：第一个释放转换锁后，第二个才可进入。
     #[tokio::test]
     async fn overlapping_switches_are_serialized() {
         let first = acquire_core_transition()
@@ -1668,6 +1791,7 @@ mod tests {
             .expect("second switch task should complete");
     }
 
+    /// 启动请求不能在切换持锁期间进入：切换完成后启动才可进入并完成登记阶段。
     #[tokio::test]
     async fn launch_and_switch_overlap_is_serialized() {
         let switch_guard = acquire_core_transition()
@@ -1676,6 +1800,7 @@ mod tests {
         let (entered_tx, mut entered_rx) = tokio::sync::mpsc::channel(1);
         let launcher = tokio::spawn(async move {
             let _launch_guard = acquire_core_transition().await;
+            // 模拟启动完成进程登记后才释放转换锁。
             entered_tx
                 .send(())
                 .await
@@ -1694,12 +1819,15 @@ mod tests {
             .expect("launch task should complete");
     }
 
+    /// `ps -axo pid=,command=` 行解析：首列 PID，其余为命令行。
     #[test]
     fn parse_ps_line_extracts_pid_and_cmdline() {
+        // `.lines()` 迭代已去掉行尾换行
         let (pid, cmdline) =
             parse_ps_line("   12345 node /path/to/bin.js --profile web").expect("parse ps line");
         assert_eq!(pid, 12345);
         assert_eq!(cmdline, "node /path/to/bin.js --profile web");
+        // 多列空白（PID 与命令之间多个空格）+ 行首空白
         let (pid, cmdline) = parse_ps_line("  67890    sh  -c  sleep 1").expect("parse ps line");
         assert_eq!(pid, 67890);
         assert_eq!(cmdline, "sh  -c  sleep 1");
@@ -1707,11 +1835,15 @@ mod tests {
 
     #[test]
     fn parse_ps_line_skips_invalid_rows() {
+        // 无空白分隔（纯 PID）→ 无法取命令行，跳过
         assert!(parse_ps_line("12345").is_none());
+        // PID 不可解析（可能是表头残留）→ 跳过
         assert!(parse_ps_line("PID COMMAND").is_none());
+        // 空行 → 跳过
         assert!(parse_ps_line("").is_none());
     }
 
+    /// 命令行匹配：argv 整词精确等于 dsh 入口路径才算本应用服务实例。
     #[test]
     fn harness_cmdline_matches_service_arguments() {
         let bin = "/home/u/.dsh/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js";
@@ -1721,13 +1853,18 @@ mod tests {
         ));
     }
 
+    /// Unix 侧清扫只按入口路径与启动参数匹配命令行，与父进程是否存活无关：垫片/
+    /// shell 包装层的命令行里同样带着入口路径与服务参数，转发层与其下方的真身会
+    /// 被分别命中，因此 Windows 上「转发层活着导致真身漏杀」不会在 Unix 出现。
     #[test]
     fn harness_cmdline_matches_relay_wrapper_arguments() {
         let bin = "/home/u/.dsh/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js";
+        // 版本管理器垫片（asdf 等）：包装层自身的命令行同样带入口路径与服务参数
         assert!(is_harness_command_line(
             &format!("/home/u/.asdf/shims/node {bin} --profile web --port 3080 --no-open"),
             bin
         ));
+        // 真身独立命中：包装层与真身各自被枚举到，任一层被回收都会释放端口
         assert!(is_harness_command_line(
             &format!(
                 "/home/u/.asdf/installs/nodejs/22.22.0/bin/node {bin} --profile web --port 3080 --no-open"
@@ -2463,6 +2600,7 @@ setTimeout(() => process.exit(0), 60000);
         let entry = |pid: u32, ancestors: Vec<serde_json::Value>| serde_json::json!({ "pid": pid, "created": 1000 + u64::from(pid), "commandLine": service, "ancestors": ancestors });
         let ancestor = |created: u64, pid: u32, name: &str, command_line: &str| serde_json::json!({ "pid": pid, "created": created, "name": name, "commandLine": command_line });
         let output = [
+            // 垫片退出，只剩 `cmd.exe` 压着真身 → 须连转发层一起结束
             entry(201, vec![ancestor(1100, 301, "cmd.exe", &relay)]),
             entry(
                 202,
@@ -2479,10 +2617,12 @@ setTimeout(() => process.exit(0), 60000);
                     ancestor(1110, 511, "deepseek-harness-desktop.exe", ""),
                 ],
             ),
+            // 真身直接挂在桌面实例下（没有垫片）→ 实例仍持有，不能碰
             entry(
                 203,
                 vec![ancestor(1103, 403, "deepseek-harness-desktop.exe", "")],
             ),
+            // 命令行里出现 `--no-open` 但不是转发层（用户自己的 shell）→ 不能碰
             entry(
                 204,
                 vec![ancestor(
@@ -2492,7 +2632,9 @@ setTimeout(() => process.exit(0), 60000);
                     &format!("pwsh -Command \"{service}\""),
                 )],
             ),
+            // 祖先创建时间晚于后代：父子关系已失效（PID 复用），退回按子进程本身清扫
             entry(205, vec![ancestor(9999, 305, "cmd.exe", &relay)]),
+            // 用户自己开着 `cmd.exe /K` 交互 shell 跑同一个入口 → 那是服务的宿主，不能碰
             entry(
                 206,
                 vec![ancestor(
@@ -2505,6 +2647,7 @@ setTimeout(() => process.exit(0), 60000);
             entry(208, vec![ancestor(1108, 308, "cmd.exe", &format!("{relay} & echo retained"))]),
             entry(209, vec![ancestor(1109, 309, "cmd.exe", &relay.replace(bin, r"C:\foreign\bin.js"))]),
             entry(210, vec![ancestor(0, 310, "cmd.exe", &relay)]),
+            // 祖先链被层数上限截断：上方仍可能有持有者，不能清扫
             serde_json::json!({ "pid": 207, "created": 1207, "commandLine": service, "ancestors": [ancestor(1107, 307, "cmd.exe", &relay)], "ancestorsTruncated": true }),
         ]
         .iter()
@@ -2702,6 +2845,7 @@ setTimeout(() => process.exit(0), 60000);
                 bin
             ));
         }
+        // 入口前还夹着别的脚本参数时不得命中，避免误伤外来的 node 进程。
         assert!(!is_windows_harness_command_line(
             &format!(
                 r#"node.exe unrelated.js --max-old-space-size=8192 "{bin}" --profile web --port 3081 --no-open"#
@@ -2740,37 +2884,49 @@ setTimeout(() => process.exit(0), 60000);
     #[test]
     fn harness_cmdline_rejects_foreign_and_prefix_paths() {
         let bin = "/home/u/.dsh/dependencies/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js";
+        // 用户其它 node 程序
         assert!(!is_harness_command_line(
             "node /usr/bin/some-server.js",
             bin
         ));
+        // 路径前缀相似但不同（整词匹配，不做子串匹配）
         assert!(!is_harness_command_line(
             "node /home/u/.dsh/dependencies/dsh-extra/tool.js",
             bin
         ));
+        // 完整路径只是另一参数的前缀时不能命中
         assert!(!is_harness_command_line(
             &format!("node {bin}.backup --profile web --port 3083"),
             bin
         ));
+        // 同一 dsh 入口执行插件命令时不是 Harness 服务，不能清扫
         assert!(!is_harness_command_line(
             &format!("node {bin} plugin list"),
             bin
         ));
+        // 即使插件转发了服务参数，也不能被清扫
         assert!(!is_harness_command_line(
             &format!("node {bin} plugin --profile web add --port 3083"),
             bin
         ));
+        // 名为 plugin 的 profile 仍是合法的 Harness 服务
         assert!(is_harness_command_line(
             &format!("node {bin} --profile plugin --port 3083"),
             bin
         ));
+        // 路径作为另一个参数的后缀时不能命中
         assert!(!is_harness_command_line(
             &format!("node prefix{bin} --profile web --port 3083"),
             bin
         ));
+        // 空命令行
         assert!(!is_harness_command_line("", bin));
     }
 
+    /// 回归：nvmd 等 Node 版本管理器的垫片以 `cmd.exe /C node <entry>` 转交真身，
+    /// 垫片先退出后真身仍占着端口。旧谓词要求「父进程已退出」才清扫，此时真身的父
+    /// 进程 `cmd.exe` 还活着 → 漏杀，端口一直占着，下次启动 EADDRINUSE。
+    /// 新谓词按入口路径清扫，并连带结束上方的转发层。
     #[cfg(windows)]
     #[test]
     fn orphan_service_is_swept_through_live_relay_ancestors() {
@@ -2873,15 +3029,20 @@ setTimeout(() => process.exit(0), 60000);
     }
 
     /// 回归（issue #91）：Unix 上 `kill_pid_tree` 对「无独立进程组」的进程
+    /// 必须回退到直接杀 PID——否则手动 CLI 拉起的外围 dsh 永远杀不掉，
+    /// 残留进程持续占用端口导致端口一路递增。
     #[cfg(unix)]
     #[test]
     fn kill_pid_tree_falls_back_to_direct_pid_kill() {
+        // 子进程不设独立进程组（模拟手动拉起的外围 dsh）；2 秒后自然退出，
+        // 若 kill_pid_tree 未能杀死它，wait 会等到 2 秒后自然退出 → 超时断言失败
         let mut child = Command::new("sh")
             .arg("-c")
             .arg("sleep 2")
             .spawn()
             .expect("spawn sleep child");
         let pid = child.id();
+        // 给子进程一点时间进入 sleep，确保信号发到的是 sleep 而非刚 fork 的 sh
         std::thread::sleep(std::time::Duration::from_millis(200));
         let started = std::time::Instant::now();
         kill_pid_tree(pid);
@@ -2890,9 +3051,12 @@ setTimeout(() => process.exit(0), 60000);
             started.elapsed() < std::time::Duration::from_millis(1500),
             "child should have been killed by kill_pid_tree, not waited for natural exit"
         );
+        // 被信号杀死：success() 为 false（SIGTERM 143 / SIGKILL 137）
         assert!(!status.success());
     }
 
+    /// 正常路径：根进程在独立进程组中（与启动时 `process_group(0)` 对应），
+    /// 负 PID 组信号应能结束整个进程树。
     #[cfg(unix)]
     #[test]
     fn kill_pid_tree_kills_process_group() {

@@ -46,6 +46,8 @@ export function ConfigDebug() {
   const { serviceRunning, busyAction } = useStore(store.harness)
   const { updateInfo } = useStore(store.harnessUpdater)
 
+  // 端口编辑态：用户尚未输入时为 undefined，展示值始终以 store 中已保存的端口为准。
+  // 初值不写入 state（避免渲染期副作用），用户一旦输入即以输入值为准。
   const [portInput, setPortInput] = useState<number>()
   const [proxyInput, setProxyInput] = useState<string>()
   const [heapInput, setHeapInput] = useState<string>()
@@ -55,6 +57,7 @@ export function ConfigDebug() {
     queryFn: () => invoke<RuntimeInfo>('get_runtime_info'),
   })
 
+  // 设置变更（如端口避让后服务地址变化）会让运行时信息过期，重拉一次
   useListen('setting_updated', () => {
     void refreshInfo()
   })
@@ -63,6 +66,7 @@ export function ConfigDebug() {
   const port = portInput ?? savedPort
   const proxy = proxyInput ?? savedProxy
   const heapValue = heapInput ?? String(savedHeapMb ?? '')
+  /** 空输入代表自动值（null），其余按数字解析，非法值交给保存前的整数校验拦下 */
   const parsedHeap = heapValue.trim() === '' ? null : Number(heapValue)
 
   const { data: cliStatus, refetch: refreshCliStatus } = useQuery({
@@ -76,6 +80,7 @@ export function ConfigDebug() {
 
   const { mutate: onToggleCliLink } = useMutation({
     mutationFn: async (enabled: boolean) => {
+      // 命令会先建/删 shim 与 PATH 再落盘，前端只改 store 不会产生这些副作用
       await store.setting.update({ cliLinkEnabled: enabled })
       await refreshCliStatus()
     },
@@ -114,6 +119,7 @@ export function ConfigDebug() {
 
   const { mutate: onSavePort } = useMutation({
     mutationFn: async (port: number) => {
+      // 保存前校验：必须是 1–65535 的整数（输入框可能被清空成 0 / 浮点 / NaN）
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         throw new Error('PORT_INVALID')
       }
@@ -165,6 +171,8 @@ export function ConfigDebug() {
       return proxyUrl
     },
     onSuccess: (submitted) => {
+      // 保存期间用户可能又改了输入：只在输入仍等于本次提交值时才收拢编辑态，
+      // 否则会把在途的新输入抹掉。
       setProxyInput(current => (current !== undefined && current.trim() !== submitted ? current : undefined))
       toast(t('network.saved'))
     },
@@ -190,6 +198,7 @@ export function ConfigDebug() {
 
   const { mutate: onSaveHeap } = useMutation({
     mutationFn: async (mb: number | null) => {
+      // 空输入 = 交回自动值；Rust 侧把 0 归一化为 None（物理内存一半，见 workflow/heap.rs）
       if (mb !== null && (!Number.isInteger(mb) || mb < HARNESS_HEAP_MIN_MB || mb > HARNESS_HEAP_MAX_MB)) {
         throw new Error('HEAP_INVALID')
       }
@@ -384,6 +393,7 @@ export function ConfigDebug() {
                 variant="secondary"
                 className="h-8"
                 onPress={() => {
+                  // 测试只针对已保存的配置：输入框里有未保存的修改时先保存，避免测到旧值
                   if (proxy === savedProxy) {
                     runProxyTest()
                     return

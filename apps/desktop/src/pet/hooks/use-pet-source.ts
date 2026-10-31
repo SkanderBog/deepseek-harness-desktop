@@ -6,15 +6,27 @@ import { useListen } from '@/hooks/use-listen'
 import { PET_CODEX_ASPECT, PET_DSH_ASPECT } from '../constants'
 import { reportPetIssue } from '../utils/log'
 
+/**
+ * `resources/manifest.jsonc` 的 `pets.built-in`（Rust `list_preset_pets` 原样返回）。
+ *
+ * 条目字段即 `dsh-pet-component` 的 `<Pet>` props：预设宠物不再下载/安装到本地，
+ * 组件直连条目里的远端素材地址播放。
+ */
 interface PresetPetItem {
   id: string
   name: string
   desc?: string
+  /** 设置页卡片预览图。 */
   image?: string
+  /** 渲染器协议；缺省由组件按 config 形状自动判定。 */
   kind?: 'dsh' | 'codex'
+  /** 渲染宽度 px（100% 档位）。 */
   size?: number
+  /** 配置文件地址（dsh-pet `config.jsonc` / Codex `pet.json`）。 */
   config: string
+  /** 素材基地址；`mac` 为 Apple 平台覆盖（HEVC-alpha `.mov`）。 */
   uri: { default: string, mac?: string }
+  /** 素材后缀；缺省 `{ default: 'webm', mac: 'mov' }`。 */
   ext?: { default: string, mac?: string }
 }
 
@@ -35,17 +47,27 @@ type PetAsset = {
 }
 
 export interface PetSource {
+  /** 渲染器协议（显式指定，避免组件按 config 形状误判）。 */
   kind: 'dsh' | 'codex'
   config: string | PetConfig
   uri: string | { default: string, mac?: string }
   ext?: { default: string, mac?: string }
   cache: boolean
+  /** 画布比例（高 / 宽），窗口尺寸推导用。 */
   aspect: number
+  /** 100% 档位的渲染宽度 px。 */
   width: number
 }
 
+/**
+ * `usePetSource` 的结果：渲染参数 + 「选中的宠物解析不出来」的原因。
+ *
+ * `error` 非空时调用方必须给出可见提示：桌宠窗口是透明的，"什么都没有" 与
+ * "宠物正在加载" 在观感上完全一样，用户只会认为宠物坏了。
+ */
 export interface PetSourceState {
   source: PetSource | null
+  /** 解析失败的诊断串（id 不存在或命令报错）；`null` = 成功或仍在解析。 */
   error: string | null
 }
 
@@ -94,6 +116,17 @@ export function assetSource(asset: PetAsset): PetSource {
   }
 }
 
+/**
+ * 把当前激活宠物 id 解析成渲染参数。
+ *
+ * - 空 id（未选择宠物）→ `null`；
+ * - 来源限定 id（`chat:` / `codex:`，用户导入）→ `get_pet_asset`；
+ * - 未限定 id → `list_preset_pets` 里的条目（预设宠物直连远端，无安装态）。
+ *
+ * 切换宠物时仅接收当前请求的结果。解析失败（导入的宠物已被
+ * 删除、清单里没有这个 id、命令报错）不只记日志：把原因交给调用方渲染可见提示 ——
+ * 静默留一个空窗口时用户看到的是「宠物加载不出来」，无从判断该去设置页重选。
+ */
 export function usePetSource(activePet: string): PetSourceState {
   const [resolved, setResolved] = useState<{
     id: string
@@ -139,6 +172,7 @@ export function usePetSource(activePet: string): PetSourceState {
       })
   }, { immediate: true })
 
+  // 尚未拿到当前 id 的结果（加载中）时不报错：避免切换宠物瞬间闪一帧「不可用」。
   const current = resolved !== null && resolved.id === activePet ? resolved : null
   return {
     source: current?.value ?? null,

@@ -1,7 +1,8 @@
+//! 预装与已安装插件的增删改查、管理。
+
 use crate::config;
 use crate::service::{plugin, workflow::instances};
-
-use crate::{AppHandle, WebviewWindow};
+use tauri::{AppHandle, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 
 fn mark_preinstall_done(app_handle: &AppHandle) {

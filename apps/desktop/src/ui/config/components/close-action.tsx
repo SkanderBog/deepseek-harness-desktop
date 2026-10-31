@@ -11,11 +11,20 @@ const CLOSE_ACTION_LABEL_KEYS = {
   quit: 'ui.close_action_quit',
 }
 
+/**
+ * 关闭按钮行为（隐藏到托盘 / 退出）。
+ *
+ * 读：`setting` store（与 Rust 共享 `.store.dat`，后端改动经 `setting_updated` 回流）。
+ * 写：仍走 `update_app_config`，让后端统一归一化并在锁内落盘——前端直接改 store
+ * 会与 Rust 的整对象写入互相覆盖。
+ * 因此这里既不需要配置查询，也不需要写入后手动刷新。
+ */
 export function ConfigCloseAction() {
   const { t } = useTranslation()
   const { close_action: closeAction } = useStore(store.setting)
   const { mutate: setCloseAction, isPending } = useMutation({
     mutationFn: (next: string) =>
+      // `satisfies` 用共享类型守住 camelCase 契约：字段名写错时后端会静默忽略
       store.setting.update({ closeAction: normalizeCloseAction(next) }),
     onError: (error: unknown) => {
       console.error('[ConfigCloseAction] update failed:', error)

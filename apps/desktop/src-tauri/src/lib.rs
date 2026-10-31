@@ -8,10 +8,11 @@ mod utils;
 #[cfg(target_os = "macos")]
 use tauri::Manager;
 
-pub type AppHandle<R = tauri_runtime_electron::ElectronRuntime> = tauri::AppHandle<R>;
-pub type Webview<R = tauri_runtime_electron::ElectronRuntime> = tauri::Webview<R>;
-pub type WebviewWindow<R = tauri_runtime_electron::ElectronRuntime> = tauri::WebviewWindow<R>;
-
+/// 对显式给定的核心安装目录施加全套 dsh 补丁（`--patch-core <dir>` 的入口）。
+///
+/// E2E 的插件 L2 直接起 `dsh web`，不经过桌面端启动路径；没有这一步，被测核心就缺少
+/// 桌面端运行时会打上的补丁（鉴权、渲染器、会话、工作区等），断言的前提不成立。
+/// 因此把补丁集暴露成一个不带 GUI 的入口，让编排复用同一份 Rust 实现，而不是另抄一份。
 pub fn patch_core_dir(core_dir: &std::path::Path) -> Result<(), String> {
     service::patch::apply_all_at(core_dir)
 }
@@ -26,11 +27,81 @@ pub fn run() -> Result<(), String> {
         eprintln!("STARTUP_PATH_RESTORE_FAILED: {error}");
     }
     desktop::startup::verify()?;
+    #[cfg(target_os = "linux")]
+    config::proxy::prepare_inherited_proxy();
+    // Wayland EGL workaround：仅 AppImage 需要（见 `should_apply_wayland_egl_workaround`）。
+    if should_apply_wayland_egl_workaround(
+        &std::env::var("XDG_SESSION_TYPE").unwrap_or_default(),
+        std::env::var_os("APPIMAGE").is_some(),
+    ) {
+        // 与 README 文档一致地同时关闭 compositing 与 DMABUF renderer：只关前者在部分
+        // 发行版/驱动上仍会 SIGSEGV（issue #116 的 WebKitGTK 崩溃）。两个参数互相独立，
+        // 用户已手动设置其中一个时只补齐另一个。
+        let mut applied = Vec::new();
+        if std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+            applied.push("WEBKIT_DISABLE_COMPOSITING_MODE");
+        }
+        if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            applied.push("WEBKIT_DISABLE_DMABUF_RENDERER");
+        }
+        if !applied.is_empty() {
+            // 此处在 logger::init() 之前执行，log 宏尚无 subscriber，用 eprintln 输出
+            eprintln!("[wayland] set {} for WebKitGTK EGL", applied.join(" "));
+        }
+    }
+    // 强制 XWayland（默认关闭的设置项，见 `should_force_xwayland`）。必须在此处执行：
+    // GDK 只在初始化时读一次 GDK_BACKEND，建窗之后再改无效。
+    let force_xwayland =
+        config::force_xwayland_setting() || std::env::var_os("DSH_FORCE_XWAYLAND").is_some();
+    if should_force_xwayland(
+        force_xwayland,
+        &std::env::var("WAYLAND_DISPLAY").unwrap_or_default(),
+        &std::env::var("GDK_BACKEND").unwrap_or_default(),
+        &std::env::var("DISPLAY").unwrap_or_default(),
+    ) {
+        std::env::set_var("GDK_BACKEND", "x11");
+        // 同上，logger::init() 尚未执行，只能用 eprintln
+        eprintln!("[wayland] set GDK_BACKEND=x11 so the pet window can stay on top (issue #649)");
+    }
+    // 在强制 XWayland 之后判定，避免对已切到 x11 的用户应用 issue #1234 的规避。
+    if should_disable_dmabuf_renderer(
+        &std::env::var("WAYLAND_DISPLAY").unwrap_or_default(),
+        &std::env::var("WAYLAND_SOCKET").unwrap_or_default(),
+        &std::env::var("GDK_BACKEND").unwrap_or_default(),
+        nvidia_driver_loaded(),
+        std::env::var_os("WAYLAND_DISPLAY").is_none()
+            && std::env::var_os("XDG_RUNTIME_DIR")
+                .filter(|directory| !directory.is_empty())
+                .is_some_and(|directory| {
+                    std::path::Path::new(&directory).join("wayland-0").exists()
+                }),
+    ) && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
+    {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        // 同上，logger::init() 尚未执行，只能用 eprintln
+        eprintln!(
+            "[wayland] set WEBKIT_DISABLE_DMABUF_RENDERER for NVIDIA on Wayland (issue #1234)"
+        );
+    }
+    // 桌宠 VP9-alpha 视频改走软件解码（见 `vpx_va_rank_override`）。必须在任何 WebView
+    // 建出之前设置：WebKitWebProcess 启动时继承环境，GStreamer 初始化时读一次。
+    #[cfg(target_os = "linux")]
+    if let Some(ranks) =
+        vpx_va_rank_override(&std::env::var("GST_PLUGIN_FEATURE_RANK").unwrap_or_default())
+    {
+        std::env::set_var("GST_PLUGIN_FEATURE_RANK", ranks);
+        eprintln!("[gstreamer] disabled VA-API VP8/VP9 decoders for WebKitGTK video");
+    }
+    // 初始化日志系统
     logger::init();
     log::info!(
         "STARTUP_BOOT: name=logger_ready elapsed_ms={}",
         started.elapsed().as_millis()
     );
+    // 把持久化的 DSH_HOME 补回进程环境（issue #871、#1195）。必须在桌面端装配之前，
+    // 否则首次 get_dsh_data_path 会落到默认目录，日志、store 与 shim 全部写错位置。
     service::data_dir::restore_process_env();
 
     let mut context = tauri::generate_context!();
@@ -54,7 +125,6 @@ pub fn run() -> Result<(), String> {
         single_instance.clone(),
     );
     desktop::builder()
-        .plugin(tauri_runtime_electron::init())
         .invoke_handler(desktop::handler())
         .build(context)
         .map_err(|error| format!("STARTUP_FAILED: {error}"))?
@@ -77,23 +147,347 @@ pub fn run() -> Result<(), String> {
                     app_handle.webview_windows().into_values()
                 });
             }
+            // macOS：关闭按钮只是隐藏窗口（见 builder 的 on_window_event），
+            // 点击 Dock 图标时系统回调 applicationShouldHandleReopen 触发
+            // RunEvent::Reopen，这里重新显示主窗口，否则窗口会一直隐藏在托盘。
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => {
                 crate::utils::show_main_window(&app_handle);
             }
+            // 正常退出请求发生在窗口销毁之前；此时主动保存一次主窗口几何，
+            // 避免 Windows 最后一个移动/缩放事件尚未写入就退出而丢失尺寸。
             tauri::RunEvent::ExitRequested { .. } => {
                 config::save_main_window_geometry(app_handle);
             }
+            // 退出时回收 Harness 进程：不回收的话，node 进程会在应用退出后
+            // 残留并把原生模块 DLL（如 sharp 的 libvips-42.dll）锁在内存，
+            // 下次启动重新解压时会失败（Windows os error 32）
             tauri::RunEvent::Exit => {
                 startup.shutdown();
+                // 进行中的插件安装子进程是独立进程组，父进程退出不会连带回收；
+                // 不显式结束就会留下占着档案 / pnpm store 的孤儿，让下一次启动
+                // 永久卡在安装阶段（且日志无任何输出）。必须先于其它收尾动作。
                 service::plugin::terminate_active_installs_blocking();
                 let setting = config::get_store_dat_setting(app_handle);
                 if setting.installed {
                     service::workflow::stop_on_exit(app_handle);
                 }
+                // 已下载但用户没在应用内安装过更新 → 退出后自动打开安装器：
+                // 静默下载不打扰用户，代价是用户可能一直不主动升级，这里补上
+                // 「关闭应用即升级」这一步（安装器由系统默认处理器启动）。
+                // 必须在回收 Harness 之后：安装器交付前要先释放配置端口
+                //（见 workflow::stop_for_installer）。
                 service::update::launch_pending_installer(app_handle);
             }
             _ => {}
         });
     Ok(())
+}
+
+/// Wayland EGL workaround 是否生效：仅 AppImage 需要。
+///
+/// AppImage 自带旧 WebKitGTK，打包库与宿主 Wayland 合成器 EGL 不兼容
+/// （"Could not create default EGL display: EGL_BAD_PARAMETER"，PikaOS/GNOME
+/// Wayland、Ubuntu 22.04+），必须关闭合成与 DMABUF renderer 才能建窗。
+/// 宿主安装包（deb/rpm/…）用系统 WebKit，可正常创建 EGL 显示；且强制关闭合成
+/// 会破坏透明窗口（桌宠）与视频渲染，因此非 AppImage 运行时不再强制。
+/// AppImage 运行时必带 `APPIMAGE` 环境变量（runtime 规范），以此判定打包形态。
+fn should_apply_wayland_egl_workaround(session_type: &str, appimage_present: bool) -> bool {
+    session_type == "wayland" && appimage_present
+}
+
+/// issue #1234：只关 DMABUF、保留合成；后端列表可能回落到 Wayland，仅排除纯 x11。
+pub(crate) fn should_disable_dmabuf_renderer(
+    wayland_display: &str,
+    wayland_socket: &str,
+    gdk_backend: &str,
+    nvidia_driver: bool,
+    default_socket_present: bool,
+) -> bool {
+    nvidia_driver
+        && (!wayland_display.is_empty() || !wayland_socket.is_empty() || default_socket_present)
+        && gdk_backend != "x11"
+}
+
+pub(crate) fn should_opaque_shell_window(
+    opt_in: bool,
+    nvidia_driver: bool,
+    wayland_display: &str,
+    session_type: &str,
+    gdk_backend: &str,
+) -> bool {
+    opt_in
+        || (nvidia_driver
+            && gdk_backend.split(',').next() == Some("x11")
+            && (!wayland_display.is_empty() || session_type == "wayland"))
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn shell_window_opaque() -> bool {
+    should_opaque_shell_window(
+        std::env::var_os("DSH_OPAQUE_WINDOW").is_some(),
+        nvidia_driver_loaded(),
+        &std::env::var("WAYLAND_DISPLAY").unwrap_or_default(),
+        &std::env::var("XDG_SESSION_TYPE").unwrap_or_default(),
+        &std::env::var("GDK_BACKEND").unwrap_or_default(),
+    )
+}
+
+/// nvidia-open 与闭源内核模块共用用户态渲染栈，均需规避 issue #1234；nouveau 不匹配。
+fn nvidia_driver_loaded() -> bool {
+    cfg!(target_os = "linux") && std::path::Path::new("/proc/driver/nvidia/version").exists()
+}
+
+/// 桌宠窗口的置顶与绝对定位能力是否可用。
+///
+/// xdg-shell 不提供这两项能力。tao 的 Linux 后端基于 GTK3，`always_on_top` 与
+/// `set_position` 最终落到 `gtk_window_set_keep_above` 与 `gtk_window_move`，
+/// 二者在 GDK 的 Wayland 后端上是 no-op：不生效，也不返回错误。桌宠因此成为
+/// 层级由合成器决定的普通 toplevel，被主窗口覆盖。X11 / XWayland 下窗口管理器
+/// 识别 `_NET_WM_STATE_ABOVE` 并接受绝对放置，两项能力都可用。
+///
+/// 判定读 `WAYLAND_DISPLAY` 而非 `XDG_SESSION_TYPE`：后者由 pam_systemd 设置，
+/// 从 TTY 直接起的合成器（sway / weston / cage）下为空，而 GDK 照样连上 Wayland，
+/// 正是本提示要覆盖的场景。`WAYLAND_DISPLAY` 缺席时 `wl_display_connect` 失败，
+/// GDK 不会选中 Wayland 后端。macOS / Windows 上该变量为空，判定为可用。
+///
+/// `GDK_BACKEND` 是逗号分隔的优先级列表，首项为 `x11` 即强制走 XWayland。GDK 在
+/// 首项打开失败时会顺延到后续项，因此 `x11,wayland` 在没有 XWayland 的环境下会被
+/// 判为可用而实际不可用；该写法需显式配置，这里不为它牺牲判定的简单性。
+pub(crate) fn pet_overlay_supported(wayland_display: &str, gdk_backend: &str) -> bool {
+    wayland_display.is_empty() || gdk_backend.split(',').next() == Some("x11")
+}
+
+/// 本次启动是否应把应用拉到 XWayland 上（`force_xwayland` 设置项的判定）。
+///
+/// 值取 `x11` 而不是 `x11,wayland`：后者在 XWayland 缺席时会回落到 Wayland，看似
+/// 更安全，但 [`pet_overlay_supported`] 只看列表首项，回落之后提示反而消失，用户
+/// 拿到「桌宠仍被遮挡且没有解释」这个最差结果。GDK 是否发生了回落无法从环境变量
+/// 观测，判定侧补不回来。改为要求 `DISPLAY` 非空能买到同样的启动安全性——合成器
+/// 运行 XWayland 时才导出该变量——同时让判定保持诚实：`DISPLAY` 为空时什么都不设，
+/// 提示照常显示。
+///
+/// 已显式设过 `GDK_BACKEND` 的用户不被覆盖，与上方 EGL workaround 的约定一致：
+/// 启动脚本或 `.desktop` 里的 `Exec=env GDK_BACKEND=…` 保持权威，显式设了
+/// `wayland` 的用户是在主动接受该限制。
+///
+/// macOS / Windows 上 `WAYLAND_DISPLAY` 为空，[`pet_overlay_supported`] 返回 true，
+/// 判定短路为 false，变量不会被设置。因此不加 `#[cfg(target_os)]`，单测在三条 CI
+/// 腿上都跑得到。
+pub(crate) fn should_force_xwayland(
+    enabled: bool,
+    wayland_display: &str,
+    gdk_backend: &str,
+    display: &str,
+) -> bool {
+    enabled
+        && !pet_overlay_supported(wayland_display, gdk_backend)
+        && gdk_backend.is_empty()
+        && !display.is_empty()
+}
+
+/// 把 GStreamer VA-API 的 VP8/VP9 解码器（含 alpha 解码 bin）降为 NONE 后的
+/// `GST_PLUGIN_FEATURE_RANK`；无需改动时返回 `None`。
+///
+/// 桌宠素材是 VP9-alpha `.webm`。WebKitGTK 把解码交给系统 GStreamer，
+/// `vavp9alphadecodebin`（rank 267）压过软件 `vp9alphadecodebin`（266）抢到解码；
+/// Intel iHD 驱动在把 VA surface 映射给 GL 上传时（`gst_va_surface_copy` →
+/// `KernelDll_AllocateStates`）SIGSEGV，WebKitWebProcess 整个崩掉，桌宠随之消失。
+/// 只关 `vavp9dec` 不够：alpha bin 按名字直接建内部解码器，不看它的 rank。
+/// Windows（WebView2 自带 libvpx）与 macOS（HEVC-alpha 走 AVFoundation）不经过这条路径。
+///
+/// 只动 VP8/VP9：宠物视频很小，软件解码开销可以忽略；H.264 / AV1 等硬解不受影响。
+/// 非默认显卡的特性名带设备节点（`varenderD129vp9dec`），按常见节点范围一并列出，
+/// 不存在的特性名 GStreamer 直接忽略。用户在变量里已写过的特性保持权威，不覆盖。
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn vpx_va_rank_override(existing: &str) -> Option<String> {
+    let mut features = vec![
+        "vavp9dec".to_string(),
+        "vavp8dec".to_string(),
+        "vavp9alphadecodebin".to_string(),
+        "vavp8alphadecodebin".to_string(),
+        // 旧版 gstreamer-vaapi 插件
+        "vaapivp9dec".to_string(),
+        "vaapivp8dec".to_string(),
+    ];
+    for node in 128..136 {
+        features.push(format!("varenderD{node}vp9dec"));
+        features.push(format!("varenderD{node}vp8dec"));
+        features.push(format!("vavp9renderD{node}alphadecodebin"));
+        features.push(format!("vavp8renderD{node}alphadecodebin"));
+    }
+    let specified: Vec<&str> = existing
+        .split(',')
+        .filter_map(|entry| entry.split(':').next())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+    let additions: Vec<String> = features
+        .into_iter()
+        .filter(|name| !specified.contains(&name.as_str()))
+        .map(|name| format!("{name}:NONE"))
+        .collect();
+    if additions.is_empty() {
+        return None;
+    }
+    let existing = existing.trim().trim_end_matches(',');
+    Some(if existing.is_empty() {
+        additions.join(",")
+    } else {
+        format!("{existing},{}", additions.join(","))
+    })
+}
+
+/// [`pet_overlay_supported`] 的环境变量读取版本，供查询命令与建窗路径共用。
+pub(crate) fn pet_overlay_supported_env() -> bool {
+    pet_overlay_supported(
+        &std::env::var("WAYLAND_DISPLAY").unwrap_or_default(),
+        &std::env::var("GDK_BACKEND").unwrap_or_default(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wayland_workaround_only_inside_appimage() {
+        // AppImage + Wayland：保留旧行为，窗口能建起来。
+        assert!(should_apply_wayland_egl_workaround("wayland", true));
+        // 宿主安装包 + Wayland：系统 WebKit 可建 EGL 显示，不再强制关闭合成
+        //（否则透明桌宠窗口全黑、视频无法渲染）。
+        assert!(!should_apply_wayland_egl_workaround("wayland", false));
+        // 非 Wayland 会话：两种形态都不需要。
+        assert!(!should_apply_wayland_egl_workaround("x11", true));
+        assert!(!should_apply_wayland_egl_workaround("", true));
+        assert!(!should_apply_wayland_egl_workaround("", false));
+    }
+
+    #[test]
+    fn pet_overlay_unsupported_only_on_native_wayland() {
+        // 原生 Wayland：GTK 的置顶与定位调用是 no-op，桌宠被主窗口遮挡。
+        assert!(!pet_overlay_supported("wayland-0", ""));
+        assert!(!pet_overlay_supported("wayland-0", "wayland"));
+        // 首项决定 GDK 实际后端；wayland 排在前面时仍走 Wayland。
+        assert!(!pet_overlay_supported("wayland-0", "wayland,x11"));
+        // 强制 XWayland：窗口管理器接受 _NET_WM_STATE_ABOVE 与绝对放置。
+        assert!(pet_overlay_supported("wayland-0", "x11"));
+        assert!(pet_overlay_supported("wayland-0", "x11,wayland"));
+        // 冒号不是 GDK 的分隔符，整串匹配不上 `x11`，仍判为 Wayland。
+        assert!(!pet_overlay_supported("wayland-0", "x11:wayland"));
+        // X11 会话与 macOS / Windows：没有 Wayland 套接字。
+        assert!(pet_overlay_supported("", ""));
+        assert!(pet_overlay_supported("", "wayland"));
+    }
+
+    #[test]
+    fn force_xwayland_only_on_native_wayland_with_xserver() {
+        // 设置项默认关闭：其余条件全部满足也不改环境。
+        assert!(!should_force_xwayland(false, "wayland-0", "", ":0"));
+        // 开启 + 原生 Wayland + XWayland 在跑：唯一生效的组合。
+        assert!(should_force_xwayland(true, "wayland-0", "", ":0"));
+        // DISPLAY 为空说明合成器没起 XWayland，设了 x11 会让应用起不来。
+        assert!(!should_force_xwayland(true, "wayland-0", "", ""));
+        // 用户已显式指定后端，不覆盖（无论指定的是哪一个）。
+        assert!(!should_force_xwayland(true, "wayland-0", "wayland", ":0"));
+        assert!(!should_force_xwayland(true, "wayland-0", "x11", ":0"));
+        // X11 会话：置顶与定位本来就能用。
+        assert!(!should_force_xwayland(true, "", "", ":0"));
+        // macOS / Windows：三个变量都为空，GDK_BACKEND 在那里也无意义。
+        assert!(!should_force_xwayland(true, "", "", ""));
+    }
+
+    #[test]
+    fn dmabuf_disabled_only_for_nvidia_on_native_wayland() {
+        for (display, socket, backend, nvidia, expected) in [
+            ("wayland-0", "", "", true, true),
+            ("wayland-0", "", "wayland", true, true),
+            ("wayland-0", "", "wayland,x11", true, true),
+            ("wayland-0", "", "x11,wayland", true, true),
+            ("", "4", "", true, true),
+            ("wayland-0", "", "x11", true, false),
+            ("wayland-0", "", "", false, false),
+            ("wayland-0", "", "x11,wayland", false, false),
+            ("", "", "", true, false),
+            ("", "", "wayland", true, false),
+        ] {
+            assert_eq!(
+                should_disable_dmabuf_renderer(display, socket, backend, nvidia, false),
+                expected,
+                "display={display:?}, socket={socket:?}, backend={backend:?}, nvidia={nvidia}"
+            );
+        }
+    }
+
+    #[test]
+    fn dmabuf_detects_default_wayland_socket_without_environment_hints() {
+        assert!(should_disable_dmabuf_renderer("", "", "", true, true));
+        assert!(should_disable_dmabuf_renderer(
+            "",
+            "",
+            "x11,wayland",
+            true,
+            true
+        ));
+        assert!(!should_disable_dmabuf_renderer("", "", "x11", true, true));
+        assert!(!should_disable_dmabuf_renderer("", "", "", false, true));
+    }
+
+    #[test]
+    fn vpx_va_rank_override_disables_alpha_bins_and_keeps_user_entries() {
+        let ranks = vpx_va_rank_override("").unwrap();
+        let entries: Vec<&str> = ranks.split(',').collect();
+        // 只关 vavp9dec 不够：真正崩溃的路径是 alpha 解码 bin。
+        assert!(entries.contains(&"vavp9alphadecodebin:NONE"));
+        assert!(entries.contains(&"vavp9dec:NONE"));
+        // 第二块显卡的特性名带设备节点。
+        assert!(entries.contains(&"vavp9renderD129alphadecodebin:NONE"));
+        assert!(entries.contains(&"varenderD129vp9dec:NONE"));
+        // 其他编解码器不动。
+        assert!(!ranks.contains("h264"));
+
+        // 用户已有的条目原样保留在前面，且对同名特性保持权威。
+        let ranks = vpx_va_rank_override("vavp9dec:PRIMARY,foo:MAX").unwrap();
+        assert!(ranks.starts_with("vavp9dec:PRIMARY,foo:MAX,"));
+        assert!(!ranks.contains("vavp9dec:NONE"));
+        assert!(ranks.contains("vavp9alphadecodebin:NONE"));
+
+        // 已全部写过：不改环境。
+        let full = vpx_va_rank_override("").unwrap();
+        assert_eq!(vpx_va_rank_override(&full), None);
+    }
+
+    #[test]
+    fn opaque_shell_window_only_for_nvidia_xwayland_or_opt_in() {
+        assert!(should_opaque_shell_window(true, false, "", "", ""));
+        assert!(should_opaque_shell_window(
+            false,
+            true,
+            "wayland-0",
+            "wayland",
+            "x11"
+        ));
+        assert!(should_opaque_shell_window(
+            false,
+            true,
+            "",
+            "wayland",
+            "x11,wayland"
+        ));
+        assert!(!should_opaque_shell_window(
+            false,
+            true,
+            "wayland-0",
+            "wayland",
+            ""
+        ));
+        assert!(!should_opaque_shell_window(false, true, "", "x11", "x11"));
+        assert!(!should_opaque_shell_window(
+            false,
+            false,
+            "wayland-0",
+            "wayland",
+            "x11"
+        ));
+    }
 }

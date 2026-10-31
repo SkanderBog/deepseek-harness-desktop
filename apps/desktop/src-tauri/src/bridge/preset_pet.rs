@@ -1,12 +1,22 @@
-use crate::AppHandle;
+//! bridge/preset_pet.rs — 预设宠物清单（`resources/manifest.jsonc` 的 `pets.built-in`）。
+//!
+//! 预设宠物不再下载到本地：清单里的条目本身就是 `dsh-pet-component` 的
+//! `<Pet>` 渲染参数（`config` / `uri` / `ext` / `kind` / `size`），pet 窗口按
+//! 当前激活 id 取到条目后直连远端素材播放（macOS 用 `uri.mac` / `ext.mac`
+//! 指向 HEVC-with-Alpha 的 `.mov` 素材：WKWebView 不认 VP9-alpha WebM）。
+//!
+//! 内置清单与用户登记的远端条目合并返回；store 只持久化资源地址与元信息。
+
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
+use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
 const REMOTE_PET_CATALOG_KEY: &str = "remote_pet_catalog";
 
 use crate::config::manifest::{self, PresetPetSpec};
 
+/// 清单条目 + 是否由用户登记：只有登记来的条目能在设置页删除，内置条目不可删。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PresetPetEntry {
     #[serde(flatten)]
@@ -14,6 +24,7 @@ pub struct PresetPetEntry {
     pub remote: bool,
 }
 
+/// 预设 id 是否安全（直接进入设置持久化与命令参数，只允许 ASCII 字母数字与 `-`/`_`）。
 pub(crate) fn safe_preset_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
@@ -22,6 +33,7 @@ pub(crate) fn safe_preset_id(id: &str) -> bool {
             .all(|value| value.is_ascii_alphanumeric() || value == '-' || value == '_')
 }
 
+/// 读取并校验清单。任何形状问题都返回带 `PET_PRESET_CATALOG_*` 前缀的错误，不做静默兜底。
 pub fn read_preset_catalog(app: &AppHandle) -> Result<Vec<PresetPetSpec>, String> {
     Ok(read_preset_entries(app)?
         .into_iter()
@@ -29,6 +41,7 @@ pub fn read_preset_catalog(app: &AppHandle) -> Result<Vec<PresetPetSpec>, String
         .collect())
 }
 
+/// 读取清单并标出每个条目的来源；内置在前，登记的在后，与合并顺序一致。
 fn read_preset_entries(app: &AppHandle) -> Result<Vec<PresetPetEntry>, String> {
     let manifest = manifest::read(app)
         .ok_or_else(|| "PET_PRESET_CATALOG_MISSING: manifest.jsonc was not found".to_string())?;
@@ -41,6 +54,8 @@ fn read_preset_entries(app: &AppHandle) -> Result<Vec<PresetPetEntry>, String> {
     )
 }
 
+/// 内置优先：登记条目与内置 id 撞车时丢弃登记条目（宠物先进登记清单、后被收进内置清单
+/// 的机器会留下这种残余），其余仍按内置在前、登记在后的顺序校验。
 fn merge_entries(
     built_in: Vec<PresetPetSpec>,
     remote: Vec<PresetPetSpec>,
@@ -69,6 +84,7 @@ fn pet_catalog_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// 覆写登记清单；写盘失败时恢复写前的内存值（无此键则删除），避免内存与磁盘分叉。
 fn write_remote_catalog(app: &AppHandle, catalog: Vec<PresetPetSpec>) -> Result<(), String> {
     let store = app
         .store(crate::config::store_dat_file_name())
@@ -118,6 +134,7 @@ pub(super) fn register_remote_pet(
     Ok(spec)
 }
 
+/// 反注册用户登记的远端条目；内置条目不在登记清单里，删不到即报错。
 pub(super) fn unregister_remote_pet(app: &AppHandle, id: &str) -> Result<(), String> {
     let _guard = pet_catalog_lock()
         .lock()
@@ -234,6 +251,7 @@ fn validate_catalog(catalog: &[PresetPetSpec]) -> Result<(), String> {
     Ok(())
 }
 
+/// 列出预设宠物清单（前端按当前激活 id 自行取用；条目即 `<Pet>` 的渲染参数）。
 #[tauri::command]
 pub fn list_preset_pets(app: AppHandle) -> Result<Vec<PresetPetEntry>, String> {
     read_preset_entries(&app)
@@ -245,6 +263,8 @@ mod tests {
 
     #[test]
     fn entry_serialization_flattens_the_spec_and_marks_registered_pets() {
+        // 前端 PresetPetItem 直接展开这些字段；`remote` 决定卡片上有没有删除按钮，
+        // 嵌套成 spec 子对象就会静默丢掉这个判定。
         let spec: PresetPetSpec = serde_json::from_str(
             r#"{"id":"remote","name":"Remote","config":"https://e/c","uri":{"default":"https://e/w"}}"#,
         )
@@ -268,11 +288,9 @@ mod tests {
         assert_eq!(catalog[0].name, "Old");
         updated.name = "New".into();
         updated.id = "builtin".into();
-        assert!(
-            replace_registered(&mut catalog, &updated)
-                .unwrap_err()
-                .starts_with("PET_NOT_FOUND:")
-        );
+        assert!(replace_registered(&mut catalog, &updated)
+            .unwrap_err()
+            .starts_with("PET_NOT_FOUND:"));
         assert_eq!(catalog[0].name, "Old");
         updated.id = "remote".into();
         updated.config = "https://e/new".into();
@@ -324,16 +342,14 @@ mod tests {
             [("shared", false), ("registered", true)]
         );
         assert_eq!(entries[0].spec.config, "https://builtin/config.jsonc");
-        assert!(
-            merge_entries(
-                Vec::new(),
-                vec![
-                    spec("dup", "https://a/config.jsonc"),
-                    spec("dup", "https://b/config.jsonc"),
-                ],
-            )
-            .is_err()
-        );
+        assert!(merge_entries(
+            Vec::new(),
+            vec![
+                spec("dup", "https://a/config.jsonc"),
+                spec("dup", "https://b/config.jsonc"),
+            ],
+        )
+        .is_err());
     }
 
     #[test]
@@ -350,31 +366,23 @@ mod tests {
         let catalog = remote_catalog(Some(value.clone())).unwrap();
         assert_eq!(serde_json::to_value(&catalog).unwrap(), value);
         assert_eq!(remote_catalog(None).unwrap().len(), 0);
-        assert!(
-            ensure_new_pet(&catalog, &spec)
-                .unwrap_err()
-                .starts_with("PET_ALREADY_IMPORTED:")
-        );
+        assert!(ensure_new_pet(&catalog, &spec)
+            .unwrap_err()
+            .starts_with("PET_ALREADY_IMPORTED:"));
         let mut renamed = spec.clone();
         renamed.id = "renamed".into();
-        assert!(
-            ensure_new_pet(&catalog, &renamed)
-                .unwrap_err()
-                .starts_with("PET_ALREADY_IMPORTED:")
-        );
+        assert!(ensure_new_pet(&catalog, &renamed)
+            .unwrap_err()
+            .starts_with("PET_ALREADY_IMPORTED:"));
         renamed.config = "https://raw.githubusercontent.com/O/R/0123456789abcdef0123456789abcdef01234567/new/config.jsonc".into();
-        assert!(
-            ensure_new_pet(&catalog, &renamed)
-                .unwrap_err()
-                .starts_with("PET_ALREADY_IMPORTED:")
-        );
+        assert!(ensure_new_pet(&catalog, &renamed)
+            .unwrap_err()
+            .starts_with("PET_ALREADY_IMPORTED:"));
         renamed.config = "https://raw.githubusercontent.com/o/other/HEAD/config.jsonc".into();
         assert_eq!(ensure_new_pet(&catalog, &renamed), Ok(()));
-        assert!(
-            remote_catalog(Some(serde_json::json!({})))
-                .unwrap_err()
-                .starts_with("PET_REMOTE_CATALOG_INVALID:")
-        );
+        assert!(remote_catalog(Some(serde_json::json!({})))
+            .unwrap_err()
+            .starts_with("PET_REMOTE_CATALOG_INVALID:"));
     }
 
     #[test]
@@ -400,11 +408,9 @@ mod tests {
             remote_catalog(Some(persisted[REMOTE_PET_CATALOG_KEY].clone())).unwrap()[0].id,
             "remote"
         );
-        assert!(
-            persisted[REMOTE_PET_CATALOG_KEY][0]
-                .get("motions")
-                .is_none()
-        );
+        assert!(persisted[REMOTE_PET_CATALOG_KEY][0]
+            .get("motions")
+            .is_none());
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
     }
 
@@ -419,6 +425,8 @@ mod tests {
 
     #[test]
     fn shipped_catalog_is_valid_and_remote_only() {
+        // 随包分发的清单是唯一事实来源：字段名/形状写错必须在这里炸，
+        // 而不是等用户点「启用」才在运行时静默失败。
         let catalog = shipped_catalog();
         assert!(!catalog.is_empty(), "预设清单不应为空");
         for spec in catalog {
@@ -426,6 +434,7 @@ mod tests {
             assert!(!spec.name.trim().is_empty());
             assert!(!spec.config.trim().is_empty());
             assert!(!spec.uri.default.trim().is_empty());
+            // 不再有本地安装：素材与配置都必须是远端地址。
             assert!(
                 spec.config.starts_with("https://"),
                 "config 必须是 https 地址"
@@ -442,6 +451,7 @@ mod tests {
 
     #[test]
     fn shipped_catalog_provides_macos_mov_override() {
+        // macOS 的 WKWebView 不认 VP9-alpha：至少一个预设必须给出 .mov 覆盖块。
         let spec = shipped_catalog()
             .into_iter()
             .find(|spec| spec.uri.mac.is_some())
@@ -473,6 +483,7 @@ mod tests {
         assert_eq!(spec.ext, None);
         assert_eq!(spec.uri.mac, None);
 
+        // 字段名写错（如旧的 sizeMb）必须立刻报错，而不是被静默忽略。
         let error = serde_json::from_str::<PresetPetSpec>(
             r#"{
                 "id": "x",
@@ -491,6 +502,7 @@ mod tests {
 
     #[test]
     fn serialization_omits_absent_optional_fields() {
+        // 前端 props 里 optional 字段缺省即 undefined：null 会让 `mac?: string` 变成 null。
         let spec = PresetPetSpec {
             id: "p".to_string(),
             name: "P".to_string(),
@@ -578,11 +590,9 @@ mod tests {
         let bad_kind = r#"[{ "id": "x", "name": "X", "kind": "sprite", "config": "https://e.com/c.jsonc", "uri": { "default": "https://e.com/w" } }]"#;
         let catalog: Vec<PresetPetSpec> = serde_json::from_str(bad_kind).unwrap();
         assert_eq!(catalog[0].kind.as_deref(), Some("sprite"));
-        assert!(
-            catalog[0]
-                .kind
-                .as_deref()
-                .is_some_and(|kind| kind != "dsh" && kind != "codex")
-        );
+        assert!(catalog[0]
+            .kind
+            .as_deref()
+            .is_some_and(|kind| kind != "dsh" && kind != "codex"));
     }
 }

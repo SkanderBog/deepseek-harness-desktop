@@ -1,11 +1,19 @@
+//! 用户 pnpm 探测：在继承 PATH 与平台标准目录中查找用户 pnpm（排除应用注册的
+//! shim），并生成传给 shim 的精确 `DSH_PNPM` 值。
+
 use std::path::{Path, PathBuf};
+use tauri::AppHandle;
 #[cfg(unix)]
 use tauri::Manager;
 
 use super::super::shim::is_generated_shim;
 use super::get_bin_dir;
-use crate::AppHandle;
 
+/// 在继承 PATH 与平台标准目录中查找用户 pnpm（排除应用注册的 shim）。
+///
+/// "用户优先"策略：安装时（`Pnpm::check_installed`）用户已有 pnpm 则跳过
+/// 捆绑安装；Unix GUI 额外检查 mise 标准数据目录，生成的 `pnpm` shim 也会
+/// 优先转发到探测出的精确路径。
 pub fn find_user_pnpm(app_handle: &AppHandle) -> Option<PathBuf> {
     #[cfg(unix)]
     let home = app_handle.path().home_dir().ok();
@@ -18,6 +26,8 @@ pub(crate) fn find_user_pnpm_from(bin_dir: &Path, home_dir: Option<&Path>) -> Op
     find_pnpm_in_dirs(bin_dir, &user_pnpm_dirs(home_dir))
 }
 
+/// Windows 直接创建进程时不能执行 `.cmd`/`.bat`；为无需 shell 的修复流程单独
+/// 查找原生 `pnpm.exe`，不改变常规 shim 对 `.cmd` 的既有优先级。
 #[cfg(windows)]
 pub(crate) fn find_user_pnpm_executable(app_handle: &AppHandle) -> Option<PathBuf> {
     let dirs = user_pnpm_dirs(None);
@@ -43,6 +53,8 @@ fn user_pnpm_dirs(_home_dir: Option<&Path>) -> Vec<PathBuf> {
     dirs
 }
 
+/// Unix 图形进程不会读取交互式 shell 配置；在继承 PATH 之后补充 mise 的
+/// 官方数据目录，并保留先出现的字面路径，避免解析 `pnpm -> mise` 符号链接。
 #[cfg_attr(windows, allow(dead_code))]
 fn append_unix_mise_dirs(
     dirs: &mut Vec<PathBuf>,
@@ -66,6 +78,8 @@ fn append_unix_mise_dirs(
     }
 }
 
+/// 子进程环境中的 pnpm 必须是绝对路径。Unix 只做字面绝对化，不能解析 mise
+/// 依赖 argv[0] 的 shim 符号链接；Windows 继续去除 `\\?\` 并解析连接点。
 fn pnpm_env_path(path: &Path) -> PathBuf {
     #[cfg(windows)]
     {
@@ -77,12 +91,14 @@ fn pnpm_env_path(path: &Path) -> PathBuf {
     }
 }
 
+/// 生成传给 shim 的精确 `DSH_PNPM` 值，并拒绝桌面端自身的 pnpm shim。
 pub fn pnpm_env_value(pnpm: &Path, bin_dir: &Path) -> Option<String> {
     let pnpm = pnpm_env_path(pnpm);
     let bin_dir = pnpm_env_path(bin_dir);
     (pnpm.parent() != Some(bin_dir.as_path())).then(|| pnpm.to_string_lossy().into_owned())
 }
 
+/// 在给定目录中按顺序查找用户 pnpm，便于不依赖全局环境测试探测规则。
 fn find_pnpm_in_dirs(bin_dir: &Path, dirs: &[PathBuf]) -> Option<PathBuf> {
     let candidates: &[&str] = if cfg!(windows) {
         &["pnpm.cmd", "pnpm.exe", "pnpm.bat"]
@@ -121,6 +137,7 @@ fn find_pnpm_candidates_in_dirs(
     None
 }
 
+/// 只接受真实可执行文件，并拒绝复制或链接到其它目录的桌面端生成 shim。
 fn usable_pnpm_candidate(candidate: &Path) -> bool {
     if !candidate.is_file() || !pnpm_is_executable(candidate) {
         return false;
@@ -145,6 +162,7 @@ fn pnpm_is_executable(_path: &Path) -> bool {
     true
 }
 
+/// Windows GUI 进程的 PATH 可能早于 npm/pnpm 安装，补充这些工具的标准用户目录。
 #[cfg(windows)]
 fn append_windows_pnpm_dirs(dirs: &mut Vec<PathBuf>) {
     let mut append = |dir: PathBuf| {
@@ -157,7 +175,6 @@ fn append_windows_pnpm_dirs(dirs: &mut Vec<PathBuf>) {
     }
     for variable in ["PNPM_HOME", "NPM_CONFIG_PREFIX", "npm_config_prefix"] {
         if let Some(value) = std::env::var_os(variable) {
-            append(PathBuf::from(&value).join("bin"));
             append(PathBuf::from(value));
         }
     }
@@ -370,7 +387,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn discovery_preserves_argv0_style_mise_symlink() {
-        use std::os::unix::fs::{PermissionsExt, symlink};
+        use std::os::unix::fs::{symlink, PermissionsExt};
 
         let root = temp_dir("pnpm-mise-symlink");
         let desktop_bin = root.join("desktop-bin");

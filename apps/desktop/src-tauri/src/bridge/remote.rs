@@ -1,8 +1,7 @@
 use std::time::Duration;
 
-use crate::{AppHandle, WebviewWindow};
 use serde_json::Value;
-use tauri::Manager;
+use tauri::{AppHandle, Manager};
 
 fn remote_method(method: &str) -> Result<(reqwest::Method, &str), String> {
     if !matches!(
@@ -104,7 +103,7 @@ async fn remote_request(
 
 #[tauri::command]
 pub async fn remote(
-    window: WebviewWindow,
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     method: String,
     payload: Option<Value>,
@@ -117,8 +116,11 @@ pub async fn remote(
     remote_request(port, method, path, payload).await
 }
 
+/// 弹窗窗口 label 前缀（与 capability 的 `remote-*` glob 对应）。
 const REMOTE_WINDOW_LABEL_PREFIX: &str = "remote-";
 
+/// 窗口 label 里仅允许的字符（Tauri label 字符集：字母数字与 `- _ / :`），
+/// 其余字符一律折叠为 `-`，避免任意 machineId 注入非法 label。
 fn sanitize_label_part(raw: &str) -> String {
     raw.chars()
         .map(|c| {
@@ -131,6 +133,10 @@ fn sanitize_label_part(raw: &str) -> String {
         .collect()
 }
 
+/// 校验隧道 URL：仅接受 `127.0.0.1` host 的明文 http（隧道由引擎建在
+/// `127.0.0.1:<port>`，见插件 `RemoteLink`；与 capability `remote.urls`
+/// `http://127.0.0.1:*` 精确对齐——`localhost`/`[::1]` 过守卫却命不中
+/// capability，弹窗会静默退化为无 IPC 的纯 web，故在命令侧一并拒绝）。
 fn validate_loopback_http_url(raw: &str) -> Result<tauri::Url, String> {
     let url: tauri::Url = raw
         .parse()
@@ -150,11 +156,15 @@ fn validate_loopback_http_url(raw: &str) -> Result<tauri::Url, String> {
     Ok(url)
 }
 
+/// 桥探测命令：iframe 内插件据此判定处于桌面壳（无参、恒成功）。
 #[tauri::command]
 pub fn remote_bridge_ping() -> String {
     "ok".to_string()
 }
 
+/// 校验弹窗入参并生成 (label, url)；抽成纯函数便于单测。`url` 允许为空
+/// ——未连接机器也可先开窗（窗口内壳层会发起标准连接流程），仅在非空时
+/// 做回环校验。
 fn open_window_args(machine_id: &str, url: &str) -> Result<(String, Option<tauri::Url>), String> {
     if machine_id.trim().is_empty() {
         return Err("REMOTE_WINDOW_FAILED: machineId must not be empty".to_string());
@@ -184,9 +194,14 @@ fn profile_window_label(profile: &str, machine_id: &str) -> String {
     )
 }
 
+/// 打开（已开则聚焦）当前档案的远端窗口。
+///
+/// 壳不自存机器状态：前端按窗口 label 自解析目标机器并切换（机器状态经
+/// `/api/tauri/remote/machines` 轮询获取）；`url` 只做回环校验。重复调用聚焦已有窗口（不
+/// 重复建窗）；失败返回带前缀的可读错误，由调用方（S4 面板按钮）呈现。
 #[tauri::command]
 pub async fn remote_open_window(
-    window: WebviewWindow,
+    window: tauri::WebviewWindow,
     app_handle: AppHandle,
     machine_id: String,
     url: String,
@@ -195,10 +210,14 @@ pub async fn remote_open_window(
     let _transition = crate::service::workflow::acquire_core_transition().await?;
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     let label = profile_window_label(&profile, &machine_id);
+    // 已有窗口：聚焦即可（再次「打开」同一机器的语义）。
     if let Some(existing) = app_handle.get_webview_window(&label) {
         let _ = existing.set_focus();
         return Ok(());
     }
+    // 建窗 chrome 全部取壳层建窗真值（`build_shell_window`）：52px 导航栏交通灯、
+    // 桥脚本按窗口注入、（Windows）WebView2 共用数据目录等，远端窗口与本体
+    // 唯一区别是连接的后端。label 即机器寻址：前端 remote-<id> 自切换。
     let title = format!("DSH Remote · {machine_id}");
     crate::service::workflow::instances::bind_window(&label, &profile);
     let mut route = tauri::Url::parse("http://localhost/").expect("static URL");
@@ -223,7 +242,7 @@ pub async fn remote_open_window(
 #[cfg(test)]
 mod tests {
     use super::{remote_method, remote_request, sanitize_label_part, validate_loopback_http_url};
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -390,11 +409,9 @@ mod tests {
                 headers.lines().next().unwrap(),
                 format!("{method} HTTP/1.1")
             );
-            assert!(
-                headers
-                    .to_ascii_lowercase()
-                    .contains("content-type: application/json\r\n")
-            );
+            assert!(headers
+                .to_ascii_lowercase()
+                .contains("content-type: application/json\r\n"));
             assert_eq!(
                 serde_json::from_slice::<Value>(&body).unwrap(),
                 json!({"machineId": "m1"})
@@ -526,6 +543,7 @@ mod tests {
     fn label_part_keeps_tauri_charset_and_folds_the_rest() {
         assert_eq!(sanitize_label_part("abc-123"), "abc-123");
         assert_eq!(sanitize_label_part("a_b/c:d"), "a_b/c:d");
+        // 空格、点、@ 等非法字符折叠为 '-'，防止注入越权 label
         assert_eq!(sanitize_label_part("a b.c@d"), "a-b-c-d");
         assert_eq!(sanitize_label_part("机器"), "--");
     }
@@ -563,6 +581,7 @@ mod tests {
 
     #[test]
     fn empty_machine_id_is_rejected_before_url_validation() {
+        // 空白 machineId 直接拒绝（label 无法生成），错误前缀与窗口失败族一致
         let err = super::open_window_args("  ", "http://127.0.0.1:3080")
             .err()
             .expect("blank machineId should be rejected");

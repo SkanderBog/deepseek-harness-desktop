@@ -12,9 +12,13 @@ vi.mock('@/store', () => ({ store: { harness: { restart: vi.fn() } } }))
 vi.mock('@/utils/toast', () => ({ toast: mocks.toast }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 
+/** 当前数据目录（默认位置，用于断言「原地不动」的分支） */
 const DATA_DIR = 'C:\\DSHHome'
+/** 用户在主目录选择器里挑中的父目录 */
 const PICKED = 'D:\\NewHome'
+/** 迁移目标：父目录 + 目录名 */
 const TARGET = 'D:\\NewHome\\DSHHome'
+/** 迁移后旧目录被改名成的备份 */
 const BACKUP = 'C:\\Users\\me\\.dsh.moved-2026-10-02T21-33-14'
 
 const PLAN: MigrationPlan = {
@@ -85,9 +89,11 @@ afterEach(() => {
 
 async function mount() {
   render(<QueryClientProvider client={client}><ConfigDataDir /></QueryClientProvider>)
+  // data_dir.current 只在 status 查询落地后渲染，用它把首帧的 pending 状态等过去
   await screen.findByText('data_dir.current')
 }
 
+/** 走完「选父目录 → 预检」两步，返回已可点击的迁移按钮 */
 async function readyToMigrate() {
   await mount()
   fireEvent.click(screen.getByRole('button', { name: 'data_dir.pick' }))
@@ -228,6 +234,8 @@ describe('data directory panel', () => {
     backend.entries = [{ name: 'sessions', path: 'C:\\DSHHome\\sessions', files: 900, bytes: 4096 }]
     await mount()
     expect(await screen.findByText('sessions')).toBeTruthy()
+    // 体积走 formatBytes；文件数走 t(key, {count})，被 mock 的 t 只回显 key，
+    // 两者被 ' · ' 拼在同一个 <Description> 里，因此用函数匹配器断言整段文本
     expect(screen.getByText((_, element) => element?.tagName === 'SPAN' && element.textContent === '4.0 KB · data_dir.entry_files')).toBeTruthy()
     expect(screen.queryByText('data_dir.entries_empty')).toBeNull()
   })

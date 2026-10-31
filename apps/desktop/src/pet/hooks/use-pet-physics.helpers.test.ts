@@ -3,6 +3,7 @@ import type { DragSample } from './use-pet-physics.helpers'
 import { describe, expect, it } from 'vitest'
 import { bodyBounds, estimateReleaseVelocity, stepThrow } from './use-pet-physics.helpers'
 
+/** 组件默认参数（`dsh-pet-component` 的 `PhysicsParams` 默认值）。 */
 const PHYSICS: PhysicsParams = {
   gravity: 1400,
   restitution: 0.78,
@@ -12,10 +13,13 @@ const PHYSICS: PhysicsParams = {
   petCollision: false,
 }
 
+/** 无重力无摩擦的参数：把「位移/边界」与「重力/摩擦」分开验证。 */
 const FREE: PhysicsParams = { ...PHYSICS, gravity: 0, groundFriction: 0 }
 
+/** 足够大的舞台：不触发任何边界分支。 */
 const OPEN = { minX: -1e6, minY: -1e6, maxX: 1e6, maxY: 1e6 }
 
+/** 按端点均速/峰值各半后指数软限速算出的期望速度（与实现同式，用来锚定量级）。 */
 function softCapped(speed: number): number {
   return 3600 * (1 - Math.exp(-speed / 3600))
 }
@@ -31,6 +35,7 @@ describe('estimateReleaseVelocity', () => {
 
     const velocity = estimateReleaseVelocity(trail, 140, 1)
 
+    // 端点均速 5000 px/s，分段峰值同为 5000，软限速后约 2702 px/s（上限 3600）。
     expect(velocity?.vx).toBeCloseTo(softCapped(5000), 4)
     expect(velocity?.vy).toBe(0)
   })

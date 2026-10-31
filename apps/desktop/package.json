@@ -30,6 +30,7 @@
     "react-if-lite": "catalog:runtime",
     "semver": "catalog:runtime",
     "tailwind-variants": "catalog:runtime",
+    "tauri-runtime-electron": "catalog:",
     "unstorage": "catalog:utils",
     "valtio-define": "catalog:runtime"
   },

@@ -1,9 +1,15 @@
+//! DSH 核心 Peer 依赖兼容性判定：从插件清单提取 `@deepseek-ai/dsh` 家族的
+//! 依赖区间，用 semver 校验是否匹配当前运行时核心版本。任何解析异常一律
+//! Fail-Open（视作兼容），避免判定失败反过来阻断正常安装。
+
 use semver::{Comparator, Op, Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// DSH 核心包名；`@deepseek-ai/dsh-*` 子包同属一个运行时家族。
 pub const DSH_PACKAGE: &str = "@deepseek-ai/dsh";
 
+/// 只读检查结果：与前端 `PluginSearchResult` 同形（camelCase，可选字段省略）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginInspect {
@@ -23,6 +29,8 @@ pub fn is_dsh_package(name: &str) -> bool {
     name == DSH_PACKAGE || name.starts_with("@deepseek-ai/dsh-")
 }
 
+/// 剥离声明协议前缀：`workspace:` / `catalog:` 等区间写法不是合法 semver，
+/// 空值与 `*`/`^`/`~` 之类的无区间声明一律视为「无从判定」。
 fn protocol_value(raw: &str) -> Option<&str> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -40,6 +48,8 @@ fn protocol_value(raw: &str) -> Option<&str> {
     Some(trimmed)
 }
 
+/// 合并 `dependencies` 与 `peerDependencies` 中的 DSH 家族依赖；
+/// peer 声明后处理，同名时覆盖 dependencies 的写法。
 pub fn peers_from_manifest(manifest: &serde_json::Value) -> BTreeMap<String, String> {
     let mut peers = BTreeMap::new();
     for section in ["dependencies", "peerDependencies"] {
@@ -62,6 +72,11 @@ pub fn peers_from_manifest(manifest: &serde_json::Value) -> BTreeMap<String, Str
     peers
 }
 
+/// 区间是否命中给定版本——对齐内核安装校验的 `includePrerelease` 语义。
+///
+/// `semver` crate 对预发布版本另设门槛：必须存在比较符与本版本 major.minor.patch
+/// 相同且自带 pre。`^0.1.7-rc.1` 因此漏掉 `0.1.8-rc.1` 这类同代更高补丁号的
+/// 预发布核心，补一个对本版本恒真的精确比较符即可绕开门槛。
 fn matches_including_prerelease(req: &VersionReq, version: &Version) -> bool {
     let matched = req.matches(version);
     if matched || version.pre.is_empty() {
@@ -78,6 +93,8 @@ fn matches_including_prerelease(req: &VersionReq, version: &Version) -> bool {
     bridged.matches(version)
 }
 
+/// 把 npm 习惯的空格分隔比较符（`>=1.2.3 <2.0.0`）归一到 `semver` crate
+/// 接受的逗号分隔形式；无法归一或为空时返回 None。
 fn normalize_range(raw: &str) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     let mut pending: Option<String> = None;
@@ -104,6 +121,10 @@ fn normalize_range(raw: &str) -> Option<String> {
     Some(parts.join(","))
 }
 
+/// 单个区间声明是否命中运行时版本。
+///
+/// 返回 `None` 表示无从判定（区间或运行时版本无法解析），调用方按 Fail-Open 处理；
+/// `||` 分隔的备选区间任一命中即为兼容。
 pub fn range_matches(raw: &str, runtime: &str) -> Option<bool> {
     let range = protocol_value(raw)?;
     let version = Version::parse(runtime.trim()).ok()?;
@@ -120,9 +141,15 @@ pub fn range_matches(raw: &str, runtime: &str) -> Option<bool> {
             return Some(true);
         }
     }
-    if parsed_any { Some(false) } else { None }
+    if parsed_any {
+        Some(false)
+    } else {
+        None
+    }
 }
 
+/// 全量判定：无 DSH 家族依赖时返回 `None`（无从判定），否则任一声明明确不命中
+/// 即不兼容；无法解析的声明一律按兼容放行。
 pub fn evaluate(peers: &BTreeMap<String, String>, runtime: &str) -> Option<bool> {
     if peers.is_empty() {
         return None;

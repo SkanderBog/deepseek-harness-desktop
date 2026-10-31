@@ -1,16 +1,29 @@
+//! 纯提取函数：从启动日志按错误特征正则提取插件引用与失败原因判别键。
+
 use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use super::is_package_name;
 
+/// 插件引用提取模式（编译一次复用，避免每次 `detect` 都重新编译正则）。
 static PLUGIN_REF_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     [
+        // failed to apply/import loader entry <name> (<pkg>)
         r#"failed to (?:apply|import) loader entry[^\n]*\(([^)]+)\)"#,
+        // cannot resolve profile bundle "<pkg>"
         r#"cannot resolve profile bundle\s+["']?([^"'\n]+)["']?"#,
+        // profile bundle "<pkg>" declares no dsh.bundle
         r#"profile bundle\s+["']?([^"'\n]+)["']?\s+declares no dsh\.bundle"#,
+        // plugin(s) failed to load: <pkg>
         r#"plugins? failed to load:\s*([A-Za-z0-9@/_.\-]+)"#,
+        // 启动卡在等待服务：<pkg>: pending (waiting for service: <svc>)
+        // （对齐 dsh-desktop harness-runtime.ts 的 extractPluginReferences pending 行；
+        //  形如 `dsh-tauri-rightclick: pending (waiting for service: remote.session)`，
+        //  此前因含冒号括号不被 is_package_name 接受而漏检）
         r#"([A-Za-z0-9@/_.\-]+):\s*pending\s*\(waiting for service:[^)]*\)"#,
+        // 前端 boot 失败页的逐项状态行：<pkg>: failed / <pkg>: import failed (...)
+        // （apply 抛错或入口导入失败时条目停在非 active 状态，文本与 pending 行同形）
         r#"([A-Za-z0-9@/_.\-]+):\s*(?:failed|import failed)"#,
     ]
     .iter()
@@ -18,12 +31,15 @@ static PLUGIN_REF_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     .collect()
 });
 
+/// 「Failed to load plugins」错误卡片定位（紧随其后的若干行通常是包名）。
 static RE_FAILED_TO_LOAD_PLUGINS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^Failed to load plugins\s*$").expect("literal"));
 
+/// 重复前缀路由（classify_reason 用）。
 static RE_DUP_PREFIX_ROUTE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"duplicate prefix route\s+["']([^"']+)["']"#).expect("literal"));
 
+/// 从日志文本中提取插件引用（多个错误特征的正则，去重）。
 pub(super) fn extract_plugin_refs(text: &str) -> Vec<String> {
     let mut refs = HashSet::new();
     for re in PLUGIN_REF_PATTERNS.iter() {
@@ -36,6 +52,7 @@ pub(super) fn extract_plugin_refs(text: &str) -> Vec<String> {
             }
         }
     }
+    // 「Failed to load plugins」错误卡片：紧随其后的若干行通常是包名。
     for m in RE_FAILED_TO_LOAD_PLUGINS.find_iter(text) {
         let rest = &text[m.end()..];
         for line in rest.lines().take(12) {
@@ -48,6 +65,7 @@ pub(super) fn extract_plugin_refs(text: &str) -> Vec<String> {
     refs.into_iter().collect()
 }
 
+/// 抽取「重复 loader entry id」。
 pub(super) fn extract_duplicate_loader_entry(text: &str) -> Option<String> {
     let re = Regex::new(r#"duplicate loader entry id:\s*["']?([^"'\s]+)["']?"#).ok()?;
     re.captures(text)
@@ -55,6 +73,7 @@ pub(super) fn extract_duplicate_loader_entry(text: &str) -> Option<String> {
         .map(|m| m.as_str().trim().to_string())
 }
 
+/// 抽取「界面槽位冲突」的槽位名。
 pub(super) fn extract_slot_conflict(text: &str) -> Option<String> {
     let re = Regex::new(r#"single slot\s+["']([^"']+)["']\s+already has a registration"#).ok()?;
     if let Some(c) = re.captures(text) {
@@ -66,6 +85,7 @@ pub(super) fn extract_slot_conflict(text: &str) -> Option<String> {
         .map(|m| m.as_str().trim().to_string())
 }
 
+/// 对日志文本分类失败原因，返回（判别键, 动态详情）。
 pub(super) fn classify_reason(text: &str) -> (String, String) {
     if let Some(c) = RE_DUP_PREFIX_ROUTE.captures(text) {
         let route = c.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
@@ -188,11 +208,13 @@ foo bar
         let refs = extract_plugin_refs(log);
         assert!(refs.contains(&"dsh-better-sidebar".to_string()));
         assert!(refs.contains(&"@scope/another".to_string()));
+        // 非包名行不应被当作插件引用
         assert!(!refs.iter().any(|r| r.contains("unknown")));
     }
 
     #[test]
     fn extract_refs_from_pending_service_line() {
+        // 用户报告的真实失败行：含冒号括号，旧逻辑 is_package_name 无法接受
         let log = "Failed to load plugins\nweb boot: 1 entry did not activate\ndsh-tauri-rightclick: pending (waiting for service: remote.session)\n";
         let refs = extract_plugin_refs(log);
         assert_eq!(refs, vec!["dsh-tauri-rightclick"]);
@@ -207,6 +229,7 @@ foo bar
 
     #[test]
     fn extract_refs_rejects_malformed_pending_line() {
+        // 缺 waiting for service 结构 → 不命中（防普通文本误报）
         let log = "dsh-tauri-rightclick: pending (waiting for nothing)\n";
         assert!(extract_plugin_refs(log).is_empty());
         let log2 = "some package: pending without parentheses\n";
@@ -215,6 +238,8 @@ foo bar
 
     #[test]
     fn extract_refs_from_boot_entry_state_line() {
+        // 用户报告的真实失败文本：桌面端把 boot 失败页压成单行后上报，
+        // 卡片标题不再独占一行，逐项状态行仍保留 `<name>: failed`。
         let log = "Failed to load plugins dsh-office-kit web boot: 1 entry did not activate dsh-office-kit: failed";
         assert_eq!(extract_plugin_refs(log), vec!["dsh-office-kit"]);
         assert_eq!(classify_reason(log).0, "load_failed");
