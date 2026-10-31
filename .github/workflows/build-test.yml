@@ -136,6 +136,7 @@ jobs:
       - name: Fix AppImage host libraries and GTK backend
         shell: bash
         run: |
+          python3 -B scripts/test_fix_appimage_host_libs.py
           mapfile -d '' appimages < <(find apps/desktop/src-tauri/target/release/bundle/appimage -name '*.AppImage' -print0)
           [ "${#appimages[@]}" -gt 0 ] || { echo '::error::no AppImage was produced'; exit 1; }
           for appimage in "${appimages[@]}"; do

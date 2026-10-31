@@ -1,21 +1,4 @@
 #!/usr/bin/env bash
-#
-# 剔除 AppImage 内过度打包的「宿主接口」显示栈库（上游 tauri#15976，本仓 #620）。
-#
-# Tauri 固定使用的 linuxdeploy 会把构建镜像（ubuntu-22.04）的
-# libwayland-*、libxkbcommon、libxcb-{randr,render,shm}、libXau、libXdmcp
-# 一并塞进 usr/lib，而 AppRun.wrapped 又把 $APPDIR/usr/lib 放在 LD_LIBRARY_PATH
-# 首位。较新发行版（Arch/CachyOS、Fedora 44…）的宿主 Mesa 因此加载到这些旧库，
-# EGL 协商失败；WebKit 把 eglGetDisplay 失败当作致命错误直接 abort()，于是
-# WebKitWebProcess 以 SIGABRT 退出、主窗口从未出现，用户侧看不到任何运行日志。
-# 宿主安装包（.deb/.rpm）用系统 WebKit + 系统库，因此不受影响。
-#
-# 这 10 个库是「宿主 ↔ 驱动」的接口，必须用宿主版本（ABI 上向下兼容的落地替换，
-# tauri#15976 已用同一份最小集合复现修复）。libEGL/libGL/libgbm/libdrm 不在剔除
-# 之列：linuxdeploy 自带的 excludelist 本来就没有打包它们，误删反而会破坏渲染。
-#
-# 重打包复用原 AppImage 自带的 runtime 前缀（head -c <offset>），不调用
-# appimagetool：既不用额外下载，也不依赖上游 floating tag，结果可复现。
 set -euo pipefail
 
 readonly EXCLUDED_LIBS=(
@@ -284,13 +267,40 @@ if [ "$hook_changed" -eq 1 ] && [ ! -f "$verified/$GTK_HOOK" ]; then
   verdict=1
 fi
 for required in AppRun AppRun.wrapped; do
-  if [ ! -e "$verified/$required" ]; then
-    echo "fix-appimage-host-libs: verification failed, $required is missing" >&2
+  if [ ! -f "$verified/$required" ] || [ ! -x "$verified/$required" ]; then
+    echo "fix-appimage-host-libs: verification failed, $required is missing or not executable" >&2
     verdict=1
   fi
 done
-if [ ! -e "$verified/usr/lib/libwebkit2gtk-4.1.so.0" ]; then
-  echo "fix-appimage-host-libs: verification failed, bundled WebKit is missing" >&2
+if ! python3 - "$verified" <<'PY_ELECTRON'
+import json
+import os
+from pathlib import Path
+import struct
+import sys
+
+root = Path(sys.argv[1])
+markers = list((root / 'usr/lib').glob('*/runtime/linux-*/electron-rs.json'))
+if len(markers) != 1:
+    sys.exit('fix-appimage-host-libs: verification failed, expected one bundled Linux Electron runtime')
+dist = markers[0].parent
+metadata = json.loads(markers[0].read_text())
+arch = metadata.get('arch')
+if metadata.get('target') != 'linux' or arch not in ('x64', 'arm64') or dist.name != f'linux-{arch}':
+    sys.exit('fix-appimage-host-libs: verification failed, incompatible Electron runtime metadata')
+binary = dist / metadata['binary']
+if not binary.resolve().is_relative_to(dist.resolve()) or not binary.is_file() or not os.access(binary, os.X_OK):
+    sys.exit('fix-appimage-host-libs: verification failed, Electron executable is missing or not executable')
+with binary.open('rb') as handle:
+    header = handle.read(20)
+if len(header) < 20 or header[:6] != b'\x7fELF\x02\x01' or struct.unpack_from('<H', header, 18)[0] != {'x64': 62, 'arm64': 183}[arch]:
+    sys.exit('fix-appimage-host-libs: verification failed, incompatible Electron ELF executable')
+for required in ('main.cjs', 'preload.cjs', 'icudtl.dat', 'resources.pak', 'libEGL.so', 'libGLESv2.so', 'libffmpeg.so'):
+    path = dist / required
+    if not path.is_file() or path.stat().st_size == 0:
+        sys.exit(f'fix-appimage-host-libs: verification failed, Electron {required} is missing or empty')
+PY_ELECTRON
+then
   verdict=1
 fi
 if ! find "$verified/usr/bin" -type f -perm -u+x -print -quit | grep -q .; then

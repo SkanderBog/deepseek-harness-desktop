@@ -85,15 +85,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --bundles appimage,deb ${{ inputs.version != '' && '--config src-tauri/tauri.nightly.conf.json' || '' }}
 
-      # Tauri 固定的 linuxdeploy 会把构建镜像的 libwayland-*/libxkbcommon/libxcb/
-      # libXau/libXdmcp 一并打进 AppImage，AppRun 又把这些库置于 LD_LIBRARY_PATH 首位；
-      # 较新发行版（Arch/CachyOS、Fedora 44…）的宿主 Mesa 因而加载到旧库，EGL 协商失败，
-      # WebKit 在 eglGetDisplay 失败时直接 abort()——WebKitWebProcess SIGABRT、无窗口无日志
-      # （上游 tauri#15976，本仓 #620）。.deb 用系统库，不受影响。
-      # 必须在签名/上传之前完成：本步会重写 AppImage 字节。
       - name: Drop over-bundled host-interface libs from the AppImage
         shell: bash
         run: |
+          python3 -B scripts/test_fix_appimage_host_libs.py
           mapfile -d '' appimages < <(find apps/desktop/src-tauri/target/release/bundle/appimage -name '*.AppImage' -print0)
           [ "${#appimages[@]}" -gt 0 ] || { echo '::error::no AppImage was produced'; exit 1; }
           for appimage in "${appimages[@]}"; do
