@@ -215,7 +215,12 @@
         "repo": "https://github.com/hairyf/dsh-office-kit",
         "recommended": true,
         "checked": false,
-        "version": "latest"
+        "version": [
+          {
+            "version": "latest",
+            "dsh": "^0.2.1-rc.1"
+          }
+        ]
       },
       {
         "id": "dsh-ops",
