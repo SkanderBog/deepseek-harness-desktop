@@ -1,3 +1,5 @@
+> 该文档已被固定，禁止修改
+
 # 测试评审协议
 
 > **本文件是「测试写得对不对、可不可信」的唯一权威来源**。
@@ -7,16 +9,15 @@
 
 ## 1. 适用范围
 
-* **适用**：评审新增/修改/AI生成的测试、PR 门禁审查、排查 Flaky 测试、定位假绿覆盖缺口、开发自检。
-* **不适用**：评审业务代码本身（参见 `.spec.md`）；替代测试运行协议。
+- **适用**：评审新增/修改/AI生成的测试、PR 门禁审查、排查 Flaky 测试、定位假绿覆盖缺口、开发自检。
+- **不适用**：评审业务代码本身（参见 `.spec.md`）；替代测试运行协议。
 
-### 核心铁律
-
-1. **未实跑算事故**：禁止纯静态看代码断言通过。运行命令必须带 `run` 并设超时。
-2. **严禁迁就变绿**：测试与实现不符时，默认判定实现或测试有误，不得无故放松断言。
-3. **精确定位输出**：结论统一格式：`文件:行` + 原文片段 + 判定 + 依据。
-4. **人机分工明确**：机械规约交由扫描命令 (`rg`)，语义契约必须人工回读判断。
-5. **本仓规范优先**：仓内约定与官方推荐冲突时，按本仓现状执行，差异列为「可选演进」。
+### 核心铁律：拒绝垃圾测试，聚焦实质健壮性
+1. **测试价值基准**：测试必须守护**核心业务逻辑、状态流转与边界契约**。**严禁编写无意义的“形式主义”测试**（如：读取源码字符串判断有无某个词、对纯静态 constants/config 文件写单元测试、无逻辑的纯 Getter/Setter 测试）。
+2. **未实跑算事故**：禁止纯静态看代码断言通过。运行命令必须带 `run` 并设超时。
+3. **严禁迁就变绿**：测试与实现不符时，默认判定实现或测试有误，不得无故放松断言。
+4. **精确定位输出**：结论统一格式：`文件:行` + 原文片段 + 判定 + 依据。
+5. **人机分工明确**：机械规约交由扫描命令 (`rg`)，语义契约必须人工回读判断。
 
 ---
 
@@ -24,35 +25,37 @@
 
 
 ```
+
 [Step 0: 定范围] ➔ [Step 1: 建上下文] ➔ [Step 2: 机械扫描] ➔ [Step 3: 逐条过语义]
 │
 [Step 7: 最小化修复] ◀─ [Step 6: 出报告] ◀─ [Step 5: 缺陷定级] ◀─ [Step 4: 运行时实证]
+
 ```
 
-* **Step 0 定范围**：锁定 PR 改动/点名文件/新增 `**/*.{test,spec,e2e}.ts`。
-* **Step 1 建上下文**：阅读被测源码完整签名、同目录兄弟用例、`vitest*.config.ts` (确认 globals/include/setup)。
-* **Step 2 机械扫描**：执行 §6 扫描命令，**必须回读原文**确认（排除误报/漏报）。
-* **Step 3 逐条过语义**：重点对照 **D1 (真实契约)**、**D2 (是否执行)**、**D3 (假绿静默)**、**D5 (隔离确定性)**、**D7 (变异验证)**。
-* **Step 4 运行时实证**：
+- **Step 0 定范围**：锁定 PR 改动/点名文件/新增 `**/*.{test,spec,e2e}.ts`。
+- **Step 1 建上下文**：阅读被测源码完整签名、同目录兄弟用例、`vitest*.config.ts` (确认 globals/include/setup)。
+- **Step 2 机械扫描**：执行 §6 扫描命令，**必须回读原文**确认（排除误报/漏报）。
+- **Step 3 逐条过语义**：重点对照 **D1 (真实契约)**、**D2 (是否执行)**、**D3 (假绿静默)**、**D5 (隔离确定性)**、**D7 (变异验证)**。
+- **Step 4 运行时实证**：
   * 执行全量/单文件复测：`vitest run --project unit [file]`
   * 交叉验证：单跑绿但全量红 = 共享状态污染；变异测试 = **故意破坏实现**验证用例变红。
-* **Step 5 缺陷定级**：按 Blocker / Major / Minor / Nit 归类。给出 Blocker 时必须附带**修复方案与复跑命令**。
-* **Step 6 出报告**：按 §7 模板与四态（APPROVED / APPROVED_WITH_NOTES / CHANGES_REQUIRED / BLOCKED）输出。
-* **Step 7 最小化修复**：仅在明确要求修代码时动手；禁止改动无关逻辑或降低断言标准。
+- **Step 5 缺陷定级**：按 Blocker / Major / Minor / Nit 归类。给出 Blocker 时必须附带**修复方案与复跑命令**。
+- **Step 6 出报告**：按 §7 模板与四态（APPROVED / APPROVED_WITH_NOTES / CHANGES_REQUIRED / BLOCKED）输出。
+- **Step 7 最小化修复**：仅在明确要求修代码时动手；禁止改动无关逻辑或降低断言标准。
 
 ---
 
 ## 3. 评审维度 (D1–D8)
 
 ### D1 断言是否验到真实契约 (基线: Blocker)
-* **判据**：断言能否拦截错误返回值？期望值是否有**独立来源**（字面量/独立夹具），**严禁由被测实现现算**。
-* **反例**：`expect(res).toBeDefined()` (弱断言)；`expect(f(x)).toBe(f(x))` (自比/借用实现当 oracle)。
-* **正例**：`expect(user).toMatchObject({ name, email })` + `expect(user.id).toBeTypeOf('string')`。
-* **特例**：纯 `toBeDefined` 收尾且无其它真断言判定为 Blocker；与真断言并存降为 Nit。同义反复/蕴含冗余基线为 Major。
+- **判据**：断言能否拦截错误返回值？期望值是否有**独立来源**（字面量/独立夹具），**严禁由被测实现现算**。
+- **反例**：`expect(res).toBeDefined()` (弱断言)；`expect(f(x)).toBe(f(x))` (自比/借用实现当 oracle)。
+- **正例**：`expect(user).toMatchObject({ name, email })` + `expect(user.id).toBeTypeOf('string')`。
+- **特例**：纯 `toBeDefined` 收尾且无其它真断言判定为 Blocker；与真断言并存降为 Nit。同义反复/蕴含冗余基线为 Major。
 
 ### D2 用例是否真的会执行 (基线: Blocker)
-* **判据**：用例是否落入 `include` 配置？条件跳过是否导致**唯一门禁用例被静默忽略**？
-* **反例**：文件名后缀/归属不符导致不收集；`describe.skipIf(process.platform === 'darwin')` 导致某平台门禁永久静默变绿。
+- **判据**：用例是否落入 `include` 配置？条件跳过是否导致**唯一门禁用例被静默忽略**？
+- **反例**：文件名后缀/归属不符导致不收集；`describe.skipIf(process.platform === 'darwin')` 导致某平台门禁永久静默变绿。
 
 ### D3 假绿与静默失败 (基线: Blocker)
 | 形态 | 典型反例 | 风险分析与修复 |
@@ -61,34 +64,44 @@
 | **宽泛过滤** | `.filter(e => !e.message.includes('fetch'))` | 掩盖真实错误。过滤逻辑必须极窄并注明理由 |
 | **空值掩盖** | `res ?? []` 配合 `toHaveLength(0)` | 无法区分上游返回空还是未定义。应先断言来源契约 |
 | **中途 Return**| `if (!ok) return` | 未到达断言即结束。改为 `expect(ok).toBe(true)` |
-| **析取断言** | `expect(a \|\| b).toBe(true)` | 逻辑过于宽松。必须精确断言唯一契约值 |
+| **析取断言** | `expect(a || b).toBe(true)` | 逻辑过于宽松。必须精确断言唯一契约值 |
 | **可选链漏断**| `expect(await el?.getText()).toBe('x')` | 元素不存在返回 `undefined` 变相通过。先断言存在性 |
 | **空壳用例** | `it('should work', () => {})` | 毫无逻辑。补齐真实断言或删除 |
 
 ### D4 异步与 Mock / Snapshot 卫生 (基线: Blocker / Major)
-* **异步控制 (Blocker)**：`resolves/rejects` 必须加 `await` 或 `return`；禁止使用 `setTimeout` 盲等，单测用 `vi.useFakeTimers()`/`vi.waitFor()`，E2E 用 `expect.poll()`。
-* **Mock 边界 (Major)**：**严禁 Mock 被测对象本身**。纯函数/高效逻辑使用真实实现；网络拦截优先于 `fetch` 全局 Mock。E2E 中 Mock 后端命令定为 Blocker。
-* **还原纪律 (Major)**：本仓无全局 `restoreMocks`，文件须自管（在 `afterEach` 里清理）。
-* **Snapshot 规约 (Major)**：本仓现存零快照。不可盲目用快照替代结构断言（如 `toMatchObject`）。
+- **异步控制 (Blocker)**：`resolves/rejects` 必须加 `await` 或 `return`；禁止使用 `setTimeout` 盲等，单测用 `vi.useFakeTimers()`/`vi.waitFor()`，E2E 用 `expect.poll()`。
+- **Mock 边界 (Major)**：**严禁 Mock 被测对象本身**。纯函数/高效逻辑使用真实实现；网络拦截优先于 `fetch` 全局 Mock。E2E 中 Mock 后端命令定为 Blocker。
+- **还原纪律 (Major)**：本仓无全局 `restoreMocks`，文件须自管（在 `afterEach` 里清理）。
+- **Snapshot 规约 (Major)**：本仓现存零快照。不可盲目用快照替代结构断言（如 `toMatchObject`）。
 
 ### D5 隔离与确定性 (基线: Blocker)
-* **数据安全**：**绝对禁止**触碰真实用户目录 (`~/.dsh` 等)。强制使用 `DSH_E2E_HOME` 等隔离环境。
-* **副作用收敛**：不得拉起系统真实程序（文件管理器等），不得杀用户进程。
-* **状态隔离**：全局变量/缓存/环境变量须在 `beforeEach/afterEach` 重置。
-* **顺序无关**：必须在 `--sequence.shuffle` 随机乱序下可完全通过。
+- **数据安全**：**绝对禁止**触碰真实用户目录 (`~/.dsh` 等)。强制使用 `DSH_E2E_HOME` 等隔离环境。
+- **副作用收敛**：不得拉起系统真实程序（文件管理器等），不得杀用户进程。
+- **状态隔离**：全局变量/缓存/环境变量须在 `beforeEach/afterEach` 重置。
+- **顺序无关**：必须在 `--sequence.shuffle` 随机乱序下可完全通过。
 
 ### D6 边界与错误路径 (基线: Major)
-* **拒绝契约**：异常输入（缺参/越界/上游崩溃）必须断言抛出错误码或对应异常，而非静默改写或返回默认值。
-* **四必查**：空值/缺失值、边界极值（0/上限）、依赖失败路径、空集合处理。
+- **拒绝契约**：异常输入（缺参/越界/上游崩溃）必须断言抛出错误码或对应异常，而非静默改写或返回默认值。
+- **四必查**：空值/缺失值、边界极值（0/上限）、依赖失败路径、空集合处理。
 
 ### D7 变异验证 (基线: 核心判据)
-* **有效性验证**：核心用例必须进行变异抽查——**故意破坏实现逻辑，验证测试是否确实变红**。未变红说明断言无效。
-* **Bug 修复保护**：修复 Bug 必须先写会变红的回归用例，验证其有效性后再修代码。
+- **有效性验证**：核心用例必须进行变异抽查——**故意破坏实现逻辑，验证测试是否确实变红**。未变红说明断言无效。
+- **Bug 修复保护**：修复 Bug 必须先写会变红的回归用例，验证其有效性后再修代码。
 
 ### D8 命名、分层与结构 (基线: Major / Minor)
-* **契约命名 (Major)**：`it()` 标题即契约，须写清“对象+条件+预期结果”。严禁使用 `works`, `test1` 等无意义命名。
-* **分层归属 (Major)**：严格遵守 L1/L2/L3 归属，禁止在单测做 E2E 级 UI 校验。
-* **单一行为 (Minor)**：一个用例只验一个行为。标题出现 `and` / `并且` 的建议拆分。E2E 断言需带中文描述消息。
+- **契约命名 (Major)**：`it()` 标题即契约，须写清“对象+条件+预期结果”。严禁使用 `works`, `test1` 等无意义命名。
+- **分层归属 (Major)**：严格遵守 L1/L2/L3 归属，禁止在单测做 E2E 级 UI 校验。
+- **单一行为 (Minor)**：一个用例只验一个行为。标题出现 `and` / `并且` 的建议拆分。E2E 断言需带中文描述消息。
+
+---
+
+## 3.1 ❌ 明确禁止的“垃圾测试”反模式 (一票否决)
+
+在评审或生成测试时，如发现以下特征，**直接判定为 Blocker/无效测试并予以剔除**：
+  1. **源码反查型**：读取源码文件内容（如 `fs.readFileSync`）去判断里面有没有包含某个字符串、正则或关键字。这属于对实现细节的死板静态绑定，毫无健壮性。
+  2. **常量/配置单测**：对纯数据对象、枚举值（Enum）、常量定义文件（`constants.ts` / `config`）编写单元测试。静态配置应由 TypeScript 类型系统保证，不需要运行时测试。
+  3. **过度微小包装函数**：对纯转发、无任何逻辑分支的胶水函数或简单 Wrapper 进行单测。
+  4. **多平台不可移植测试**：在测试中写死绝对路径、硬编码特定操作系统的交互逻辑，导致跨平台（macOS / Windows / Linux）运行崩溃。
 
 ---
 
@@ -98,33 +111,35 @@
 
 | 级别 | 定义 | 处理要求 |
 | :--- | :--- | :--- |
-| **Blocker** | 恒过/不运行/无断言/污染真实环境/假绿静默失败/E2E Mock 后端 | 阻断，必须修复并复跑 |
+| **Blocker** | 垃圾测试(源码反查/常数单测)/恒过/不运行/无断言/污染真实环境/假绿静默失败/E2E Mock 后端 | 阻断，必须修复并复跑 |
 | **Major** | 弱断言/同义反复/过度 Mock/未做隔离/缺关键边界/分层错误 | 本 PR 内修复或记 Issue |
 | **Minor** | 可读性/命名规范/多行为未拆分/日志残留/硬编码等待 | 建议顺手修复，不阻断 |
 | **Nit** | 纯排版或风格偏好 | 可选处理 |
 
 ### 准入门禁（必须同时满足）
 1. 独立连续运行 **≥ 5 次无 Flake**；
-2. 失败信息可精确定位至“用例-步骤-期望与实际”；
-3. `it()` 标题即契约且与内部断言一致；
-4. 满足 `--sequence.shuffle` 乱序运行无报错；
-5. 环境完全隔离，无真实用户数据写入。
+2. 跨平台兼容性良好（在 Windows / Linux 门禁下均可稳定通过）；
+3. 失败信息可精确定位至“用例-步骤-期望与实际”；
+4. `it()` 标题即契约且与内部断言一致；
+5. 满足 `--sequence.shuffle` 乱序运行无报错；
+6. 环境完全隔离，无真实用户数据写入。
 
 ---
 
 ## 5. 本仓 Vitest 坑点与规范
 
 ### 配置事实
-* 根配置 `vitest.config.ts` 仅管理 Project，不直接收集用例；覆盖率仅在根配置生效。
-* **无全局 API**：配置未启 `globals: true`，必须显式导入：`import { describe, it, expect, vi } from 'vitest'`。
-* **无全局 Mock 还原**：需在测试文件内显式声明 `afterEach(() => vi.restoreAllMocks())`。
+- 根配置 `vitest.config.ts` 仅管理 Project，不直接收集用例；覆盖率仅在根配置生效。
+- **无全局 API**：配置未启 `globals: true`，必须显式导入：`import { describe, it, expect, vi } from 'vitest'`。
+- **无全局 Mock 还原**：需在测试文件内显式声明 `afterEach(() => vi.restoreAllMocks())`。
 
 ### 运行标准命令
 ```bash
 # 规范命令（禁止使用 pnpm run 脚本，显式带 run 参数）
-vitest run --project unit                            # 全量单测
+vitest run --project unit                 # 全量单测
 vitest run --project unit path/to/file.test.ts        # 单文件（位置参数）
 vitest run --project unit --sequence.shuffle          # 乱序排查
+
 ```
 
 ### 关键 API 陷阱
@@ -141,15 +156,15 @@ vitest run --project unit --sequence.shuffle          # 乱序排查
 
 | # | 检查项 | 命令 | 默认等级 |
 | --- | --- | --- | --- |
-| 1 | 聚焦标记残留 | `rg -n '\.only\s*\(|fdescribe\s*\(|\bfit\s*\(' packages test src -g '*.ts'` | Blocker |
+| 1 | 聚焦标记残留 | `rg -n '.only\s*( | fdescribe\s*( |
 | 2 | Jest API 混用 | `rg -n '\bjest\s*\.' packages test src -g '*.ts'` | Blocker |
-| 3 | 缺少 await 的 Promise 断言 | `rg -n '(resolves|rejects)\.' packages test src -g '*.ts' | rg -v '\bawait\b|\breturn\b'` | Blocker |
-| 4 | 跳过/待办标记 | `rg -n 'skipIf|it\.skip|test\.skip|describe\.skip|it\.todo|test\.todo' packages test src -g '*.ts'` | Major |
-| 5 | 弱断言收尾 | `rg -n '\.(toBeDefined|toBeTruthy|toBeFalsy)\(' packages test src -g '*.ts'` | Blocker ~ Nit |
-| 6 | 触碰真实用户数据 | `rg -n '\.dsh\.dev|\.store\.dev\.dat|[^-]\.store\.dat' test packages -g '*.test.ts' -g '*.e2e.ts'` | Blocker |
-| 7 | 硬编码 setTimeout | `rg -n 'await new Promise' packages test src -g '*.ts' | rg 'setTimeout|setInterval'` | Minor/Major |
-| 8 | 调试/残留注释 | `rg -n 'console\.(log|debug|info)\(' packages test src -g '*.ts'` | Minor |
-| 9 | 遗留 TODO/FIXME | `rg -n '(TODO|FIXME|XXX)' test packages -g '*.test.ts' -g '*.e2e.ts'` | Minor |
+| 3 | 缺少 await 的 Promise 断言 | `rg -n '(resolves | rejects).' packages test src -g '*.ts' |
+| 4 | 跳过/待办标记 | `rg -n 'skipIf | it.skip |
+| 5 | 弱断言收尾 | `rg -n '.(toBeDefined | toBeTruthy |
+| 6 | 触碰真实用户数据 | `rg -n '.dsh.dev | .store.dev.dat |
+| 7 | 硬编码 setTimeout | `rg -n 'await new Promise' packages test src -g '*.ts' | rg 'setTimeout |
+| 8 | 调试/残留注释 | `rg -n 'console.(log | debug |
+| 9 | 遗留 TODO/FIXME | `rg -n '(TODO | FIXME |
 | 10 | 误用 test() 代替 it() | `rg -n '^\s*test\(' packages test src -g '*.ts'` | Minor |
 
 ---

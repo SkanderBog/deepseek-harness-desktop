@@ -1,12 +1,9 @@
-import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 
-const nativeRoot = path.dirname(fileURLToPath(import.meta.url))
-
 export default defineConfig({
-  root: nativeRoot,
-  resolve: { alias: { '@': path.join(nativeRoot, 'src') } },
+  root: fileURLToPath(new URL('../apps/native', import.meta.url)),
+  resolve: { alias: { '@': fileURLToPath(new URL('../apps/native/src', import.meta.url)) } },
   test: {
     name: 'native',
     environment: 'node',

@@ -2,7 +2,7 @@
 
 ## 范围
 
-移动端是独立的 Expo / React Native 工程，继续使用 WebView 承载桌面服务页面；这是移动端应用的既有实现，不属于 Electron 桌面 WebView 配置。CI 与发布流水线未迁移。
+移动端是独立的 Expo / React Native 工程。
 
 - 源码根：`apps/native/src/`
 - Expo 项目根：`apps/native/`
@@ -30,7 +30,7 @@ Expo SDK 57、React Native 0.86.3、React 19、HeroUI Native、Uniwind、Expo Ro
 - `apps/native/app.config.js`：注入根目录 `THIRD_PARTY_NOTICES.md`，并维护 Android 大屏/折叠屏方向补丁。
 - `apps/native/metro.config.js`：Uniwind CSS、Expo Metro 与 `@/` 别名解析。
 - `apps/native/tsconfig.json`：Expo TypeScript 工程，`@/*` 指向 `src/*`。
-- `apps/native/vitest.config.ts`：单独的 native Vitest 工程，测试范围为 `src/**/*.test.{ts,tsx}`。
+- `config/vitest.native.config.ts`：单独的 native Vitest 工程，测试范围为 `src/**/*.test.{ts,tsx}`。
 - `apps/native/package.json`：独立依赖与 Expo 脚本，入口 `./src/entry.ts`。
 - `apps/native/assets/native/`：移动端图标、启动图及通知图标。
 

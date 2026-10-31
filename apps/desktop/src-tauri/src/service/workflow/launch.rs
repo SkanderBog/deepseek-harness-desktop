@@ -763,11 +763,7 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
         log::warn!("ensure profile .npmrc failed: {e}");
     }
     if let Err(e) = crate::service::plugin::ensure_internal_plugins(&app_handle).await {
-        if crate::service::plugin::is_process_cleanup_failure(&e)
-            || e.starts_with("INTERNAL_PLUGIN_SOURCE_MISSING:")
-            || e.starts_with("INTERNAL_PLUGIN_INSTALL_TIMEOUT:")
-            || e.starts_with("INTERNAL_PLUGIN_INSTALL_CANCELLED:")
-        {
+        if crate::service::plugin::is_internal_plugin_startup_failure(&e) {
             log::error!("ensure internal plugins blocked startup: {e}");
             return Err(e);
         }

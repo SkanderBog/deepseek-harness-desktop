@@ -19,7 +19,7 @@ export const inject = ['slots', 'locale', 'sessions', 'workspaces']
 
 /** 插件体：安装文案，注册设置分区、设置菜单项与草稿注入（组件样式直接写在组件 className 上）。 */
 export function apply(ctx: ClientContext): void {
-  if (typeof window === 'undefined' || typeof document === 'undefined' || window.parent === window)
+  if (typeof window === 'undefined' || typeof document === 'undefined')
     return
   ctx.effect(locale.registerLocale, PET_LOCALE_EFFECT)
   ctx.effect(petSectionFeature, PET_SECTION_EFFECT)

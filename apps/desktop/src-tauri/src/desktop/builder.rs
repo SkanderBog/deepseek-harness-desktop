@@ -1342,6 +1342,7 @@ fn guest_command_allowed(command: &str) -> bool {
             | "remote_open_window"
             | "create_app_window"
             | "read_clipboard_text"
+            | "write_clipboard_text"
             | "report_plugin_error"
     )
 }
@@ -1350,6 +1351,8 @@ fn guest_command_allowed(command: &str) -> bool {
 #[test]
 fn guest_command_scope_preserves_plugin_actions_and_blocks_shell_control() {
     assert!(guest_command_allowed("create_app_window"));
+    assert!(guest_command_allowed("read_clipboard_text"));
+    assert!(guest_command_allowed("write_clipboard_text"));
     assert!(guest_command_allowed("report_plugin_error"));
     for command in [
         "prepare_harness_webview",

@@ -287,18 +287,49 @@ pub(crate) fn process_cleanup_failure(owner: ProcessOwner) -> Option<String> {
 }
 
 pub(crate) fn is_process_cleanup_failure(error: &str) -> bool {
-    [
-        // 不能整段匹配 `PNPM_PROBE_`：锁被正常安装占住时的 `PNPM_PROBE_LOCK_TIMEOUT`
-        // 只是竞争，不代表上一次清理未确认。
-        "PNPM_PROBE_TREE_CLEANUP_FAILED:",
-        "PNPM_PROBE_CLEANUP_",
-        "PLUGIN_PROCESS_",
-        "PREINSTALL_WAIT:",
-        "INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT:",
-        "INTERNAL_PLUGIN_ENSURE_DROPPED:",
-    ]
-    .iter()
-    .any(|prefix| error.starts_with(prefix))
+    let mut error = error;
+    loop {
+        if [
+            // 不能整段匹配 `PNPM_PROBE_`：锁被正常安装占住时的 `PNPM_PROBE_LOCK_TIMEOUT`
+            // 只是竞争，不代表上一次清理未确认。
+            "PNPM_PROBE_TREE_CLEANUP_FAILED:",
+            "PNPM_PROBE_CLEANUP_",
+            "PLUGIN_PROCESS_",
+            "PREINSTALL_WAIT:",
+            "INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT:",
+            "INTERNAL_PLUGIN_ENSURE_DROPPED:",
+        ]
+        .iter()
+        .any(|prefix| error.starts_with(prefix))
+        {
+            return true;
+        }
+        let Some(inner) = error.strip_prefix("INTERNAL_PLUGIN_INSTALL_FAILED: ") else {
+            return false;
+        };
+        error = inner;
+    }
+}
+
+pub(crate) fn is_internal_plugin_startup_failure(error: &str) -> bool {
+    let mut error = error;
+    loop {
+        if is_process_cleanup_failure(error)
+            || [
+                "PLUGIN_POLICY_BLOCKED:",
+                "INTERNAL_PLUGIN_INSTALL_TIMEOUT:",
+                "INTERNAL_PLUGIN_INSTALL_CANCELLED:",
+            ]
+            .iter()
+            .any(|prefix| error.starts_with(prefix))
+        {
+            return true;
+        }
+        let Some(inner) = error.strip_prefix("INTERNAL_PLUGIN_INSTALL_FAILED: ") else {
+            return false;
+        };
+        error = inner;
+    }
 }
 
 pub(crate) fn mark_process_cleanup_failed(owner: ProcessOwner, reason: String) {
@@ -713,6 +744,8 @@ mod tests {
             "PLUGIN_PROCESS_COORDINATOR_DROPPED: cleanup coordinator ended unexpectedly",
             "PREINSTALL_WAIT: wait task failed",
             "INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT: owner remained active",
+            "INTERNAL_PLUGIN_INSTALL_FAILED: PLUGIN_PROCESS_CLEANUP_FAILED: active child",
+            "INTERNAL_PLUGIN_INSTALL_FAILED: INTERNAL_PLUGIN_INSTALL_FAILED: PREINSTALL_WAIT: no confirmation",
         ] {
             assert!(
                 is_process_cleanup_failure(blocked),
@@ -733,6 +766,27 @@ mod tests {
                 "{best_effort} must stay best-effort"
             );
         }
+    }
+
+    #[test]
+    fn internal_plugin_policy_blocks_remain_fatal_when_wrapped() {
+        for blocked in [
+            "PLUGIN_POLICY_BLOCKED: []",
+            "INTERNAL_PLUGIN_INSTALL_FAILED: PLUGIN_POLICY_BLOCKED: []",
+            "INTERNAL_PLUGIN_INSTALL_FAILED: INTERNAL_PLUGIN_INSTALL_FAILED: PLUGIN_POLICY_BLOCKED: []",
+            "INTERNAL_PLUGIN_INSTALL_TIMEOUT: plugin install exceeded 600 seconds",
+            "INTERNAL_PLUGIN_INSTALL_FAILED: INTERNAL_PLUGIN_INSTALL_TIMEOUT: plugin install exceeded 600 seconds",
+            "INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled",
+            "INTERNAL_PLUGIN_INSTALL_FAILED: INTERNAL_PLUGIN_INSTALL_FAILED: INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled",
+        ] {
+            assert!(is_internal_plugin_startup_failure(blocked));
+        }
+        assert!(!is_internal_plugin_startup_failure(
+            "INTERNAL_PLUGIN_INSTALL_FAILED: pnpm add failed"
+        ));
+        assert!(!is_internal_plugin_startup_failure(
+            "INTERNAL_PLUGIN_SOURCE_MISSING: optional bundle source missing"
+        ));
     }
 
     #[test]

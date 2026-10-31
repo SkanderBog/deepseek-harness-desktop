@@ -71,8 +71,9 @@ export const accountSignInFeature = defineRegister((controller, ctx) => {
         frame.accept?.()
         const url = attempt?.authorizeUrl
         if (attempt?.phase === 'waiting-browser' && isBrowserUrl(url) && url !== opened) {
-          opened = url
-          await invoke('open_external_url', { url }).catch((error: unknown) => {
+          await invoke('open_external_url', { url }).then(() => {
+            opened = url
+          }).catch((error: unknown) => {
             console.warn('[dsh-tauri] opening the account authorize url failed:', error)
           })
         }

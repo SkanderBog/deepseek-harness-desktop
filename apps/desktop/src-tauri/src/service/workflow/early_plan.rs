@@ -293,7 +293,7 @@ pub(super) fn prepare(
     ) {
         Ok(plugin::EarlyPluginState::Ready) => {}
         Ok(plugin::EarlyPluginState::Defer) => return Ok(None),
-        Err(error) if plugin::is_process_cleanup_failure(&error) => return Err(error),
+        Err(error) if plugin::is_internal_plugin_startup_failure(&error) => return Err(error),
         Err(error) => {
             log::warn!("ensure internal plugins failed: {error}");
             return Ok(None);

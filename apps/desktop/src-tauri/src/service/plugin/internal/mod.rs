@@ -14,10 +14,10 @@
 //! 模块划分：协调/飞行（本文件）、profile 清单/入口文件操作（[`manifest`]）与
 //! pnpm 失败后的离线自建链接兜底（[`materialize`]）。
 
+use crate::AppHandle;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use crate::AppHandle;
 
 use super::cancel::terminate_owned_install;
 use super::install::install_internal;
@@ -30,10 +30,11 @@ use super::process::{new_process_owner, PreinstallLogPayload, ProcessOwner, PREI
 use crate::config;
 
 use manifest::{
-    collect_dangling_local_link_deps, dedupe_profile_bundles, dep_matches_spec,
-    internal_plugin_entry_is_ready, is_local_link_dep, remove_duplicate_bundle_entries_from_patch,
-    remove_internal_plugins_from_manifest, remove_stale_plugin_entry, write_profile_manifest,
+    collect_dangling_local_link_deps, dedupe_profile_bundles, dep_matches_spec, is_local_link_dep,
+    remove_duplicate_bundle_entries_from_patch, remove_internal_plugins_from_manifest,
+    remove_stale_plugin_entry, write_profile_manifest,
 };
+pub(crate) use manifest::{internal_plugin_entry_is_ready, skip_unavailable_plugins};
 use materialize::{materialize_links, OfflineLink};
 
 mod manifest;
@@ -660,7 +661,7 @@ fn prepare_internal_plugins(
     if prepare {
         crate::service::perm::ensure_writable_path(profile, dsh_home, "PROFILE_NOT_WRITABLE")?;
     }
-    let migration_pending =
+    let mut migration_pending =
         repair_loader_state(profile, dsh_home, internal, &mut manifest, prepare)?;
     let empty_dependencies = HashMap::new();
     let dependencies = parsed
@@ -677,6 +678,7 @@ fn prepare_internal_plugins(
         .unwrap_or_default();
     let mut need = Vec::new();
     let mut sources_ready = true;
+    let mut skipped = HashSet::new();
     for preset in internal {
         let name = installed_name(preset);
         if super::disable::has_patch_disable(&profile, &preset.id)
@@ -684,51 +686,18 @@ fn prepare_internal_plugins(
         {
             continue;
         }
-        let Some(bundled) = resolve_bundle(&preset.id) else {
-            if !cfg!(debug_assertions) {
-                return Err(format!(
-                    "INTERNAL_PLUGIN_SOURCE_MISSING: 内置插件 {name} 的发布资源缺失；请重新安装应用或恢复应用资源目录后重试。"
-                ));
-            }
+        let entry = profile.join("node_modules").join(name);
+        let link_ok = internal_plugin_entry_is_ready(&entry);
+        let bundled = resolve_bundle(&preset.id);
+        let Some(bundled) = bundled.filter(|source| internal_plugin_entry_is_ready(source)) else {
+            log::warn!("INTERNAL_PLUGIN_SOURCE_MISSING: {name}: bundled manifest or host entry unavailable, skipping repair (installed_ready={link_ok})");
             sources_ready = false;
-            // 未找到内置插件目录：release 说明构建期 build:plugins 未打包（发布
-            // 缺陷，由 build:plugins 响亮失败）；debug 自动发现 packages/* 中非私有
-            // 且含 dsh 对象的包，未命中时跳过（「找不到则不装」）。
-            //
-            // debug 下这是「切换 git 分支导致某内置插件源码消失」的典型场景：上一
-            // 分支把它以 `link:<packages/<id>>` 装进 profile，当前分支不再有该目录，
-            // 悬空链接指向不存在的源。此时重装无从谈起（无源），且残留悬空链接会让
-            // loader 无法解析。因此只要它仍以本地链接（`link:`/`file:`）形式安装在
-            // profile 里，就直接卸载该插件；registry/git 等非本地依赖（用户独立安装
-            // 的同名包）绝不误卸。
-            let name = installed_name(preset).to_string();
-            let is_orphan = dependencies
-                .get(&name)
-                .is_some_and(|spec| is_local_link_dep(spec));
-            if is_orphan {
-                log::warn!(
-                    "INTERNAL_PLUGIN_BUNDLE_MISSING_UNINSTALLING: {name}（link 指向的捆绑目录已不存在，卸载悬空内置插件）"
-                );
-                orphans.push(name);
-            } else {
-                log::warn!(
-                    "INTERNAL_PLUGIN_BUNDLE_MISSING: {}（release 需构建期 build:plugins；debug 无匹配的 packages/* 包）",
-                    preset.id
-                );
+            if !link_ok {
+                skipped.insert(name);
             }
             continue;
         };
-        let name = installed_name(preset).to_string();
-        // 捆绑目录被解析到但源 package.json 不可读（悬空源/资源被清理）：pnpm 对指向
-        // 不存在目录的 `link:` 依赖会静默 exit 0（日志特征 `Installing a dependency
-        // from a non-existent directory`），重装必然再次假成功，形成启动死循环。这类
-        // 是「应用资源缺失」而非「路径变更」：直接给出精确错误，阻断本轮重装。
-        if !internal_plugin_entry_is_ready(&bundled) {
-            return Err(format!(
-                "INTERNAL_PLUGIN_SOURCE_MISSING: 内置插件 {name} 的捆绑源 {} 清单或声明的宿主入口缺失、无效或不可读。开发环境请运行 pnpm dev:plugins 并等待产物就绪；发布版请重新安装应用或恢复应用资源目录后重试。",
-                bundled.display()
-            ));
-        }
+        let name = name.to_string();
         let expected = bundled_dep_spec(&bundled);
         // ① 依赖声明：未声明，或声明的值不再指向当前捆绑目录（路径变更/被改
         // 写）→ 重装；② 依赖真实性：node_modules 链接/拷贝须真实存在（用户
@@ -736,8 +705,7 @@ fn prepare_internal_plugins(
         let dep_ok = dependencies
             .get(&name)
             .is_some_and(|actual| dep_matches_spec(actual, &expected));
-        let entry = profile.join("node_modules").join(&name);
-        let link_ok = internal_plugin_entry_is_ready(&entry);
+
         // ③ 挂载登记：`dsh.profile.bundles` 缺项时插件从不挂载——宿主插件的 apply
         // （含 dsh-tauri 的载体鉴权 gate）不运行，索引恒 401、健康检查永远
         // `boot page returned 401`。这种「依赖在、bundle 没登记」的半残状态必须判为
@@ -762,6 +730,20 @@ fn prepare_internal_plugins(
             need.push((preset.id.clone(), name, entry));
         }
     }
+    if let Some(value) = manifest.as_mut() {
+        if manifest::remove_internal_plugin_bundles(value, &skipped) {
+            if prepare {
+                write_profile_manifest(&manifest_path, value)?;
+            } else {
+                migration_pending = true;
+            }
+        }
+    }
+    let parsed = manifest
+        .as_ref()
+        .map(|value| serde_json::from_value::<ProfilePackageJson>(value.clone()))
+        .transpose()
+        .map_err(|error| format!("INTERNAL_PLUGIN_MANIFEST_SCHEMA_FAILED: {error}"))?;
     orphans.sort();
     orphans.dedup();
     Ok(InternalPluginCheck {
@@ -783,7 +765,6 @@ fn require_running_plugins_ready(
         .try_exists()
         .map_err(|error| format!("INTERNAL_PLUGIN_FALLBACK_READ_FAILED: {error}"))?;
     if check.manifest.is_none()
-        || !check.sources_ready
         || !check.need.is_empty()
         || !check.orphans.is_empty()
         || check.migration_pending
@@ -844,14 +825,7 @@ fn prepare_early_plugins_from(
         .iter()
         .filter(|preset| preset.internal && !preset.unsupported_on(core_version))
         .collect();
-    let check = match prepare_internal_plugins(profile, dsh_home, &internal, true, resolve_bundle) {
-        Ok(check) => check,
-        Err(error) if error.starts_with("INTERNAL_PLUGIN_SOURCE_MISSING:") => {
-            log::warn!("{error}");
-            return Ok(EarlyPluginState::Defer);
-        }
-        Err(error) => return Err(error),
-    };
+    let check = prepare_internal_plugins(profile, dsh_home, &internal, true, resolve_bundle)?;
     let Some(parsed) = check.parsed.as_ref() else {
         return Ok(EarlyPluginState::Defer);
     };
@@ -884,36 +858,6 @@ fn prepare_early_plugins_from(
     Ok(EarlyPluginState::Ready)
 }
 
-#[cfg(debug_assertions)]
-async fn wait_for_dev_plugin_sources(
-    sources: &[PathBuf],
-    mut cancel: tokio::sync::watch::Receiver<bool>,
-) -> Result<(), String> {
-    let mut waiting = false;
-    loop {
-        if *cancel.borrow() {
-            return Err("INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled".into());
-        }
-        let pending: Vec<_> = sources
-            .iter()
-            .filter(|source| !internal_plugin_entry_is_ready(source))
-            .collect();
-        if pending.is_empty() {
-            return Ok(());
-        }
-        if !waiting {
-            log::info!("INTERNAL_PLUGIN_DEV_WAIT: waiting for pnpm dev:plugins: {pending:?}");
-            waiting = true;
-        }
-        tokio::select! {
-            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
-            _ = cancel.changed() => {
-                return Err("INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled".into());
-            }
-        }
-    }
-}
-
 async fn ensure_inner(
     app_handle: &AppHandle,
     internal: &[&PreinstallPluginInfo],
@@ -921,23 +865,8 @@ async fn ensure_inner(
     owner: ProcessOwner,
 ) -> Result<(), String> {
     let profile = profile_dir(app_handle);
-    #[cfg(debug_assertions)]
-    {
-        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(3)
-            .expect("desktop workspace root")
-            .join("packages");
-        let sources: Vec<_> = internal
-            .iter()
-            .filter(|preset| {
-                !super::disable::has_patch_disable(&profile, &preset.id)
-                    && !super::disable::has_patch_disable(&profile, installed_name(preset))
-            })
-            .filter_map(|preset| bundled_plugin_dir(app_handle, &preset.id))
-            .filter(|source| source.starts_with(&workspace))
-            .collect();
-        wait_for_dev_plugin_sources(&sources, cancel.clone()).await?;
+    if *cancel.borrow() {
+        return Err("INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled".into());
     }
     let manifest_path = profile.join("package.json");
     let InternalPluginCheck {
@@ -1364,35 +1293,138 @@ fn is_legacy_profile_fallback_target(target: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(debug_assertions)]
-    #[tokio::test]
-    async fn dev_plugin_sources_resume_when_declared_host_entry_appears() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("package.json"), br#"{"main":"dist/index.js"}"#).unwrap();
-        let sources = vec![root.path().to_path_buf()];
-        let (_cancel, receiver) = tokio::sync::watch::channel(false);
-        let waiting = super::wait_for_dev_plugin_sources(&sources, receiver);
-        tokio::pin!(waiting);
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), &mut waiting).await.is_err());
-        std::fs::create_dir(root.path().join("dist")).unwrap();
-        std::fs::write(root.path().join("dist/index.js"), b"export function apply() {}").unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(1), waiting).await.unwrap().unwrap();
+    fn builtin(id: &str) -> PreinstallPluginInfo {
+        PreinstallPluginInfo {
+            id: id.into(),
+            spec: id.into(),
+            internal: true,
+            package: None,
+            version: None,
+            name: id.into(),
+            description: String::new(),
+            repo_url: String::new(),
+            recommended: false,
+            fix: false,
+            default_checked: false,
+            default_unchecked: false,
+            win_only: false,
+        }
     }
 
-    #[cfg(debug_assertions)]
-    #[tokio::test]
-    async fn dev_plugin_sources_wait_is_cancellable() {
+    #[test]
+    fn dev_plugin_sources_resume_when_declared_host_entry_appears() {
         let root = tempfile::tempdir().unwrap();
-        let sources = vec![root.path().to_path_buf()];
-        let (cancel, receiver) = tokio::sync::watch::channel(false);
-        let waiting = super::wait_for_dev_plugin_sources(&sources, receiver);
-        tokio::pin!(waiting);
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), &mut waiting).await.is_err());
-        cancel.send(true).unwrap();
+        let profile = root.path().join("profiles/test");
+        let source = root.path().join("source");
+        let installed = profile.join("node_modules/builtin");
+        let healthy = profile.join("node_modules/healthy");
+        for directory in [&source, &installed, &healthy] {
+            std::fs::create_dir_all(directory).unwrap();
+        }
+        for directory in [&source, &installed] {
+            std::fs::write(
+                directory.join("package.json"),
+                br#"{"name":"builtin","main":"dist/index.js"}"#,
+            )
+            .unwrap();
+        }
+        std::fs::write(healthy.join("package.json"), br#"{"name":"healthy"}"#).unwrap();
+        let manifest = serde_json::json!({
+            "dependencies": {"builtin": bundled_dep_spec(&source), "healthy": bundled_dep_spec(&healthy), "user": "1.0.0"},
+            "dsh": {"profile": {"bundles": ["builtin", "healthy", "user"]}},
+            "custom": {"keep": true}
+        });
+        let path = profile.join("package.json");
+        std::fs::write(&path, manifest.to_string()).unwrap();
+        let presets = [builtin("builtin"), builtin("healthy")];
+        let check = || {
+            prepare_internal_plugins(
+                &profile,
+                root.path(),
+                &[&presets[0], &presets[1]],
+                true,
+                |id| {
+                    Some(if id == "builtin" {
+                        source.clone()
+                    } else {
+                        healthy.clone()
+                    })
+                },
+            )
+        };
+        let skipped = check().unwrap();
+        assert!(skipped.need.is_empty());
+        let after = skipped.manifest.unwrap();
+        assert_eq!(after["dependencies"], manifest["dependencies"]);
         assert_eq!(
-            tokio::time::timeout(std::time::Duration::from_secs(1), waiting).await.unwrap().unwrap_err(),
-            "INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled"
+            after["dsh"]["profile"]["bundles"],
+            serde_json::json!(["healthy", "user"])
         );
+        assert_eq!(after["custom"], manifest["custom"]);
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted, after);
+        let settled = check().unwrap();
+        require_running_plugins_ready(&profile, &settled).unwrap();
+        std::fs::create_dir(source.join("dist")).unwrap();
+        std::fs::write(source.join("dist/index.js"), b"export function apply() {}").unwrap();
+        let ready = check().unwrap();
+        assert_eq!(
+            ready
+                .need
+                .iter()
+                .map(|(id, _, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["builtin"]
+        );
+    }
+
+    #[test]
+    fn dev_plugin_sources_missing_preserves_healthy_installed_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("profiles/test");
+        let installed = profile.join("node_modules/healthy");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(installed.join("package.json"), br#"{"main":"index.js"}"#).unwrap();
+        std::fs::write(installed.join("index.js"), b"export function apply() {}").unwrap();
+        let manifest = serde_json::json!({
+            "dependencies": {"missing": "link:missing", "healthy": "link:healthy", "user": "1.0.0"},
+            "dsh": {"profile": {"bundles": ["missing", "healthy", "user"]}}
+        });
+        let path = profile.join("package.json");
+        std::fs::write(&path, manifest.to_string()).unwrap();
+        let presets = [builtin("missing"), builtin("healthy")];
+        let inspect = prepare_internal_plugins(
+            &profile,
+            root.path(),
+            &[&presets[0], &presets[1]],
+            false,
+            |_| None,
+        )
+        .unwrap();
+        assert!(inspect.need.is_empty());
+        assert!(inspect.migration_pending);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            manifest.to_string()
+        );
+        let prepared = prepare_internal_plugins(
+            &profile,
+            root.path(),
+            &[&presets[0], &presets[1]],
+            true,
+            |_| None,
+        )
+        .unwrap();
+        assert!(prepared.need.is_empty());
+        assert!(prepared.orphans.is_empty());
+        let after = prepared.manifest.unwrap();
+        assert_eq!(
+            after["dsh"]["profile"]["bundles"],
+            serde_json::json!(["healthy", "user"])
+        );
+        assert_eq!(after["dependencies"], manifest["dependencies"]);
+        assert!(internal_plugin_entry_is_ready(&installed));
     }
 
     #[tokio::test]
@@ -1782,7 +1814,8 @@ mod tests {
     /// `cannot resolve profile bundle` 点名了本轮待装入口，同样必须走离线自建链接兜底。
     #[test]
     fn link_materialization_failure_detects_unresolved_internal_bundle() {
-        let error = "PREINSTALL_FAILED: dsh plugin exited with code 1: throw new Error(`${binName}: \
+        let error =
+            "PREINSTALL_FAILED: dsh plugin exited with code 1: throw new Error(`${binName}: \
                      cannot resolve profile bundle ${JSON.stringify(packageName)} ...`);\n\
                      Error: dsh: cannot resolve profile bundle \"dsh-tauri\" from the dsh \
                      installation or C:\\Users\\A1\\.dsh\\profiles\\web; run 'dsh plugin --profile \
@@ -1843,7 +1876,10 @@ mod tests {
         );
         std::fs::create_dir_all(profile.join("node_modules").join("dsh-tauri")).unwrap();
         std::fs::write(
-            profile.join("node_modules").join("dsh-tauri").join("package.json"),
+            profile
+                .join("node_modules")
+                .join("dsh-tauri")
+                .join("package.json"),
             r#"{"name":"dsh-tauri"}"#,
         )
         .unwrap();

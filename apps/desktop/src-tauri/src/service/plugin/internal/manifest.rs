@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::os::windows::fs::FileTypeExt;
 use std::path::Path;
 
-pub(super) fn internal_plugin_entry_is_ready(entry: &Path) -> bool {
+pub(crate) fn internal_plugin_entry_is_ready(entry: &Path) -> bool {
     let Ok(raw) = std::fs::read(entry.join("package.json")) else {
         return false;
     };
@@ -104,6 +104,14 @@ pub(super) fn remove_internal_plugins_from_manifest(
             modified |= dependencies.remove(*name).is_some();
         }
     }
+    modified | remove_internal_plugin_bundles(manifest, names)
+}
+
+pub(super) fn remove_internal_plugin_bundles(
+    manifest: &mut serde_json::Value,
+    names: &HashSet<&str>,
+) -> bool {
+    let mut modified = false;
     if let Some(bundles) = manifest
         .get_mut("dsh")
         .and_then(|dsh| dsh.get_mut("profile"))
@@ -115,6 +123,32 @@ pub(super) fn remove_internal_plugins_from_manifest(
         modified |= bundles.len() != before;
     }
     modified
+}
+
+pub(crate) fn skip_unavailable_plugins(
+    profile: &Path,
+    names: &HashSet<&str>,
+) -> Result<(), String> {
+    let names = names
+        .iter()
+        .copied()
+        .filter(|name| !internal_plugin_entry_is_ready(&profile.join("node_modules").join(name)))
+        .collect::<HashSet<_>>();
+    if names.is_empty() {
+        return Ok(());
+    }
+    let path = profile.join("package.json");
+    let raw = match std::fs::read(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("INTERNAL_PLUGIN_MANIFEST_READ_FAILED: {error}")),
+    };
+    let mut manifest: serde_json::Value = serde_json::from_slice(&raw)
+        .map_err(|error| format!("INTERNAL_PLUGIN_MANIFEST_PARSE_FAILED: {error}"))?;
+    if remove_internal_plugin_bundles(&mut manifest, &names) {
+        write_profile_manifest(&path, &manifest)?;
+    }
+    Ok(())
 }
 
 /// 经同目录临时文件原子替换 profile 清单，失败时保留原文件。
@@ -465,7 +499,9 @@ mod tests {
     #[test]
     fn local_link_dep_detects_only_directory_specs() {
         // link:/file: 前缀 → 本地目录链接（含历史遗留 file: 形式）
-        assert!(is_local_link_dep("link:C:/Apps/dsh/resources/internal-plugins/dsh-tauri"));
+        assert!(is_local_link_dep(
+            "link:C:/Apps/dsh/resources/internal-plugins/dsh-tauri"
+        ));
         assert!(is_local_link_dep("file:/Applications/.../dsh-tauri-ui"));
         // 无前缀的裸路径、registry 版本、git 引用都不是本地链接，绝不能误卸
         assert!(!is_local_link_dep("dsh-tauri@0.2.0"));
@@ -476,10 +512,8 @@ mod tests {
 
     #[test]
     fn dangling_local_link_deps_exclude_presets_and_registry_specs() {
-        let root = std::env::temp_dir().join(format!(
-            "dsh-dangling-link-deps-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("dsh-dangling-link-deps-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let profile = root.join("profile");
         let alive = root.join("packages/dsh-tauri-ui");

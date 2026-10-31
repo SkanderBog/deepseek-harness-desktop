@@ -28,14 +28,14 @@ import { preinstall } from '../preinstall'
 import { recovery } from '../recovery'
 import { setting } from '../setting'
 import {
-  WEBVIEW_FRAME_GRACE_TIMEOUT,
-  WEBVIEW_LOAD_TIMEOUT,
-  WEBVIEW_RECOVERY_ABSOLUTE_TIMEOUT,
-  WEBVIEW_RELOAD_MAX_ATTEMPTS,
   PLUGIN_ABSOLUTE_TIMEOUT,
   PLUGIN_ACTIVITY_CHECK_INTERVAL,
   PLUGIN_INACTIVITY_TIMEOUT,
   STARTUP_ABSOLUTE_TIMEOUT,
+  WEBVIEW_FRAME_GRACE_TIMEOUT,
+  WEBVIEW_LOAD_TIMEOUT,
+  WEBVIEW_RECOVERY_ABSOLUTE_TIMEOUT,
+  WEBVIEW_RELOAD_MAX_ATTEMPTS,
 } from './constants'
 import { BoundedReloadGate, SingleFlight, waitForActivityTask } from './readiness'
 import { runtimeExitMessageKey, shouldAcceptRuntimeExit } from './runtime'
@@ -642,15 +642,13 @@ export const harness = defineStore({
           }
           if (result.timeout) {
             try {
-              // 后端只在所属进程树已退出、共享 flight 已释放后返回；在此之前不
-              // 进入失败态，避免用户立即 Retry 订阅到上一轮 cancelled 结果。
               await invoke('cancel_internal_plugins')
             }
             catch (cancelError) {
               console.error('[Harness] failed to cancel timed-out internal plugin install:', cancelError)
               throw startupError('plugin-install', String(cancelError), 'failed')
             }
-            throw startupError('plugin-install', result.reason, result.timeout)
+            console.warn('[Harness] internal plugin install timed out; continuing startup:', result.reason)
           }
         }
         catch (err) {
@@ -660,20 +658,33 @@ export const harness = defineStore({
           if (token !== bootToken)
             return
           const message = err instanceof Error ? err.message : String(err)
-          const policyMessage = message.replace(/^INTERNAL_PLUGIN_INSTALL_FAILED: /, '')
-          const refusal = policyMessage.startsWith('PLUGIN_POLICY_BLOCKED:') && !policyMessage.includes('\n')
-            ? parseBlockedRefusal(policyMessage)
-            : null
-          if (refusal?.kind !== 'policy' || !Array.isArray(refusal.versions)
-            || !refusal.versions.every(item => item && typeof item.name === 'string' && item.name.trim() !== ''
-              && typeof item.version === 'string' && semver.valid(item.version))) {
+          if ([
+            'PNPM_PROBE_TREE_CLEANUP_FAILED:',
+            'PNPM_PROBE_CLEANUP_',
+            'PLUGIN_PROCESS_',
+            'PREINSTALL_WAIT:',
+            'INTERNAL_PLUGIN_PROCESS_REAP_TIMEOUT:',
+            'INTERNAL_PLUGIN_ENSURE_DROPPED:',
+          ].some(prefix => message.startsWith(prefix))) {
             throw startupError('plugin-install', message, 'failed')
           }
-          const profiles = await invoke<Profile[]>('get_profiles')
-          const profile = profiles.find(item => item.active)?.id
-          if (!installProfile || profile !== installProfile)
-            throw startupError('plugin-install', message, 'failed')
-          policyApproval = { versions: refusal.versions, profile }
+          const policyMessage = message.replace(/^INTERNAL_PLUGIN_INSTALL_FAILED: /, '')
+          if (policyMessage.startsWith('PLUGIN_POLICY_BLOCKED:')) {
+            const refusal = !policyMessage.includes('\n') ? parseBlockedRefusal(policyMessage) : null
+            if (refusal?.kind !== 'policy' || !Array.isArray(refusal.versions)
+              || !refusal.versions.every(item => item && typeof item.name === 'string' && item.name.trim() !== ''
+                && typeof item.version === 'string' && semver.valid(item.version))) {
+              throw startupError('plugin-install', message, 'failed')
+            }
+            const profiles = await invoke<Profile[]>('get_profiles')
+            const profile = profiles.find(item => item.active)?.id
+            if (!installProfile || profile !== installProfile)
+              throw startupError('plugin-install', message, 'failed')
+            policyApproval = { versions: refusal.versions, profile }
+          }
+          else {
+            console.warn('[Harness] internal plugin install failed; continuing startup:', err)
+          }
         }
         // 预装插件引导：首次安装、老版本升级（无指纹基线）或清单 plugins 节
         // 内容变更（社区新增推荐插件）时重新进入预设流程，装完/跳过后才拉起服务。

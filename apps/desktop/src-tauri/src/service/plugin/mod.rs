@@ -75,7 +75,10 @@ pub(crate) use installed::{
 pub use installed::{list, PreinstallPlugin};
 pub(crate) use internal::cancel as cancel_internal_plugins;
 pub(crate) use internal::ensure as ensure_internal_plugins;
-pub(crate) use internal::{prepare_early_plugins, EarlyPluginState};
+pub(crate) use internal::{
+    internal_plugin_entry_is_ready, prepare_early_plugins, skip_unavailable_plugins,
+    EarlyPluginState,
+};
 pub(crate) use patch_entries::{strip_active_unresolved_entries, PatchEntryStripReport};
 pub(crate) use patch_guard::preflight_at as preflight_patch_entries_at;
 pub(crate) use patch_guard::{
@@ -88,7 +91,9 @@ pub(crate) use preset::{
     bundled_plugin_dir, bundled_plugin_dir_from, current_preset_hash, load_presets,
     preinstall_pending, presets_from_manifest, remove_legacy_bundled_plugins,
 };
-pub(crate) use process::{acquire_operation_lock, is_process_cleanup_failure};
+pub(crate) use process::{
+    acquire_operation_lock, is_internal_plugin_startup_failure, is_process_cleanup_failure,
+};
 pub use recovery::{
     detect as detect_recovery, uninstall as uninstall_recovery, PluginRecoveryInfo,
 };

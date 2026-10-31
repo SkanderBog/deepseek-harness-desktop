@@ -99,5 +99,5 @@ const { mutate: handleMigrate, isPending: busy } = useMutation({
 * [ ] **派生**：渲染循环里是否还有 `Array.find`？索引表是否在第 4 区一次构造？
 * [ ] **提交**：是否走 `useMutation`？busy 是否直接用 `isPending`？toast 是否只发一次？
 * [ ] **注释**：JSDoc 是否只有一行？JSX 区块是否单行注释、块内无冗余注释？
-* [ ] **主题**：HeroUI 组件上是否没有再叠 `rounded*` 工具类？（圆角由主题负责，`test/shell-heroui-theme.test.ts` 会拦）
+* [ ] **主题**：HeroUI 组件上是否没有再叠 `rounded*` 工具类？
 * [ ] **工程校验**：`eslint` 零 error、`tsc -p tsconfig.typecheck.json` 零错误、相关 `vitest run --project unit` 通过。

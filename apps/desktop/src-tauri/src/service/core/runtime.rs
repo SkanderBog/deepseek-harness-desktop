@@ -638,8 +638,12 @@ fn link_required_plugins_at(paths: &RuntimePreparationPaths<'_>) -> Result<bool,
         .iter()
         .map(|plugin| plugin.name.to_string())
         .collect();
-    let mut ready = paths.required_plugins.is_some();
+    let ready = paths.required_plugins.is_some();
+    let mut skipped = HashSet::new();
     for plugin in internal {
+        if !is_safe_package_name(plugin.name) {
+            return Err(format!("CORE_PLUGIN_NAME_INVALID: {}", plugin.name));
+        }
         let source = plugin.source.as_deref().and_then(|source| {
             if source.is_absolute() {
                 Some(source.to_path_buf())
@@ -647,16 +651,46 @@ fn link_required_plugins_at(paths: &RuntimePreparationPaths<'_>) -> Result<bool,
                 paths.resources.map(|root| root.join(source))
             }
         });
-        let Some(source) = source else {
+        let Some(source) =
+            source.filter(|source| crate::service::plugin::internal_plugin_entry_is_ready(source))
+        else {
             log::warn!(
                 "CORE_PLUGIN_BUNDLE_MISSING: bundled source unavailable for {}, skipping core link",
                 plugin.name
             );
-            ready = false;
+            skipped.insert(plugin.name);
             continue;
         };
-        ready &= ensure_package_link(plugin.name, &source, &core_node_modules)?;
+        match ensure_package_link(plugin.name, &source, &core_node_modules) {
+            Ok(true) => {}
+            Ok(false) => {
+                log::warn!(
+                    "CORE_PLUGIN_LINK_SKIPPED: {}: core entry unavailable",
+                    plugin.name
+                );
+                skipped.insert(plugin.name);
+            }
+            Err(error)
+                if [
+                    "CORE_PLUGIN_SOURCE_INVALID:",
+                    "CORE_PLUGIN_PACKAGE_MANIFEST_READ_FAILED:",
+                    "CORE_PLUGIN_PACKAGE_MANIFEST_INVALID:",
+                    "CORE_PLUGIN_DESTINATION_STAT_FAILED:",
+                    "CORE_PLUGIN_DESTINATION_PARENT_CREATE_FAILED:",
+                    "CORE_PLUGIN_DESTINATION_PARENT_STAT_FAILED:",
+                    "CORE_PLUGIN_LINK_FAILED:",
+                    "CORE_PLUGIN_LINK_REMOVE_FAILED:",
+                ]
+                .iter()
+                .any(|prefix| error.starts_with(prefix)) =>
+            {
+                log::warn!("CORE_PLUGIN_LINK_SKIPPED: {}: {error}", plugin.name);
+                skipped.insert(plugin.name);
+            }
+            Err(error) => return Err(error),
+        }
     }
+    crate::service::plugin::skip_unavailable_plugins(paths.profile, &skipped)?;
 
     Ok(remove_profile_plugin_links(&core_node_modules, paths.profiles, &internal_ids)? && ready)
 }
@@ -1945,6 +1979,12 @@ mod tests {
         assert!(prepare_active_runtime_at(&paths)
             .unwrap_err()
             .starts_with("CORE_PLUGIN_NAME_INVALID:"));
+        paths.required_plugins = Some(&required);
+        std::fs::write(source.join("package.json"), r#"{"name":"other"}"#).unwrap();
+        assert!(prepare_active_runtime_at(&paths)
+            .unwrap_err()
+            .starts_with("CORE_PLUGIN_SOURCE_NAME_MISMATCH:"));
+        std::fs::write(source.join("package.json"), r#"{"name":"dsh-tauri"}"#).unwrap();
         remove_link_only(&destination).unwrap();
         assert!(source.is_dir());
 
@@ -1953,7 +1993,7 @@ mod tests {
         stamp(&paths);
         assert_eq!(
             prepare_active_runtime_at(&paths).unwrap(),
-            RuntimePreparation::Defer
+            RuntimePreparation::Ready
         );
         assert_eq!(
             std::fs::read_to_string(&destination).unwrap(),
@@ -1976,7 +2016,7 @@ mod tests {
             stamp(&paths);
             assert_eq!(
                 prepare_active_runtime_at(&paths).unwrap(),
-                RuntimePreparation::Defer
+                RuntimePreparation::Ready
             );
             assert_eq!(std::fs::read_to_string(&package).ok().as_deref(), manifest);
             assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep");
@@ -1999,6 +2039,93 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&package).unwrap(), manifest);
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep");
+    }
+
+    #[test]
+    fn unavailable_plugins_do_not_block_healthy_links_or_cached_core_preparation() {
+        let root = tempfile::tempdir().unwrap();
+        let core = root.path().join("core");
+        let node = root.path().join("node");
+        let profiles = root.path().join("profiles");
+        let profile = profiles.join("test");
+        let source = root.path().join("source");
+        for name in ["incomplete", "occupied", "healthy"] {
+            let package = source.join(name);
+            std::fs::create_dir_all(&package).unwrap();
+            let mut manifest = serde_json::json!({"name": name});
+            if name == "incomplete" {
+                manifest["main"] = serde_json::json!("dist/index.js");
+            }
+            std::fs::write(package.join("package.json"), manifest.to_string()).unwrap();
+        }
+        let copy = profile.join("node_modules/copy");
+        std::fs::create_dir_all(&copy).unwrap();
+        std::fs::write(copy.join("package.json"), br#"{"name":"copy"}"#).unwrap();
+        std::fs::create_dir_all(core.join("node_modules")).unwrap();
+        let occupied = core.join("node_modules/occupied");
+        std::fs::write(&occupied, "keep core file").unwrap();
+        std::fs::write(&node, "fake node").unwrap();
+        let manifest = serde_json::json!({
+            "dependencies": {"missing":"link:missing", "incomplete":"link:incomplete", "occupied":"link:occupied", "copy":"link:copy", "healthy":"link:healthy", "user":"1.0.0"},
+            "dsh": {"profile": {"bundles": ["missing", "incomplete", "occupied", "copy", "healthy", "user"]}}
+        });
+        std::fs::write(profile.join("package.json"), manifest.to_string()).unwrap();
+        let required = ["missing", "incomplete", "occupied", "copy", "healthy"].map(|name| {
+            RuntimeRequiredPlugin {
+                name,
+                source: (!matches!(name, "missing" | "copy")).then(|| source.join(name)),
+                version: None,
+            }
+        });
+        let paths = RuntimePreparationPaths {
+            source: CoreSource::App,
+            base: root.path(),
+            core_root: &core,
+            node: &node,
+            profile: &profile,
+            profiles: &profiles,
+            resources: None,
+            core_version: Some("2.0.0"),
+            required_plugins: Some(&required),
+        };
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Defer
+        );
+        assert_eq!(
+            core.join("node_modules/healthy").canonicalize().unwrap(),
+            source.join("healthy").canonicalize().unwrap()
+        );
+        assert!(!core.join("node_modules/incomplete").exists());
+        assert_eq!(
+            std::fs::read_to_string(&occupied).unwrap(),
+            "keep core file"
+        );
+        let after: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(profile.join("package.json")).unwrap()).unwrap();
+        assert_eq!(after["dependencies"], manifest["dependencies"]);
+        assert_eq!(
+            after["dsh"]["profile"]["bundles"],
+            serde_json::json!(["copy", "healthy", "user"])
+        );
+        let key =
+            native_probe_stamp_key_at(paths.node, paths.core_root, paths.core_version).unwrap();
+        write_native_probe_stamp_at(
+            paths.base,
+            &key,
+            &NodeTarget {
+                platform: "win32".into(),
+                arch: "x64".into(),
+            },
+        );
+        assert_eq!(
+            prepare_active_runtime_at(&paths).unwrap(),
+            RuntimePreparation::Ready
+        );
+        std::fs::remove_file(&node).unwrap();
+        assert!(prepare_active_runtime_at(&paths)
+            .unwrap_err()
+            .starts_with("CORE_RUNTIME_NODE_NOT_FOUND:"));
     }
 
     /// 以生产同款方式执行探测脚本（落盘成 `.mjs` 再交给 node），保证测试覆盖的
