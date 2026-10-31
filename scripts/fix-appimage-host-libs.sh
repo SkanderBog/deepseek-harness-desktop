@@ -295,7 +295,7 @@ with binary.open('rb') as handle:
     header = handle.read(20)
 if len(header) < 20 or header[:6] != b'\x7fELF\x02\x01' or struct.unpack_from('<H', header, 18)[0] != {'x64': 62, 'arm64': 183}[arch]:
     sys.exit('fix-appimage-host-libs: verification failed, incompatible Electron ELF executable')
-for required in ('main.cjs', 'preload.cjs', 'icudtl.dat', 'resources.pak', 'libEGL.so', 'libGLESv2.so', 'libffmpeg.so'):
+for required in ('main.cjs', 'preload.cjs', 'icudtl.dat', 'resources.pak', 'libffmpeg.so', 'libvulkan.so.1', 'libvk_swiftshader.so', 'vk_swiftshader_icd.json'):
     path = dist / required
     if not path.is_file() or path.stat().st_size == 0:
         sys.exit(f'fix-appimage-host-libs: verification failed, Electron {required} is missing or empty')

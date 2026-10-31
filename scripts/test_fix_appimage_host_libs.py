@@ -9,7 +9,7 @@ import unittest
 
 SCRIPT = Path(__file__).with_name('fix-appimage-host-libs.sh')
 VALIDATOR = SCRIPT.read_text(encoding='utf-8').split("<<'PY_ELECTRON'\n", 1)[1].split('\nPY_ELECTRON', 1)[0]
-REQUIRED = ('main.cjs', 'preload.cjs', 'icudtl.dat', 'resources.pak', 'libEGL.so', 'libGLESv2.so', 'libffmpeg.so')
+REQUIRED = ('main.cjs', 'preload.cjs', 'icudtl.dat', 'resources.pak', 'libffmpeg.so', 'libvulkan.so.1', 'libvk_swiftshader.so', 'vk_swiftshader_icd.json')
 
 
 class AppImageTest(unittest.TestCase):
@@ -48,8 +48,12 @@ class AppImageTest(unittest.TestCase):
                     path = dist / name
                     backup = path.read_bytes()
                     path.unlink()
+                    if name in REQUIRED:
+                        (root / 'usr/lib' / name).write_bytes(backup)
                     result = self.validate(root)
                     self.assertNotEqual(result.returncode, 0, name)
+                    path.write_bytes(b'')
+                    self.assertNotEqual(self.validate(root).returncode, 0, name)
                     path.write_bytes(backup)
                     if name == 'DeepSeek Harness':
                         path.chmod(0o755)
@@ -92,7 +96,7 @@ class AppImageTest(unittest.TestCase):
                 kept = extracted / dist.relative_to(root)
                 self.assertEqual({p.relative_to(kept): p.read_bytes() for p in kept.iterdir()}, original)
                 self.assertEqual(self.validate(extracted).returncode, 0)
-                for missing in ('usr/lib/DeepSeek Harness/runtime', f'usr/lib/DeepSeek Harness/runtime/linux-{arch}/libEGL.so', 'AppRun.wrapped'):
+                for missing in ('usr/lib/DeepSeek Harness/runtime', *(f'usr/lib/DeepSeek Harness/runtime/linux-{arch}/{name}' for name in ('libffmpeg.so', 'libvulkan.so.1', 'libvk_swiftshader.so', 'vk_swiftshader_icd.json')), 'AppRun.wrapped'):
                     path = root / missing
                     backup = root / 'saved'
                     path.rename(backup)
