@@ -125,9 +125,6 @@ fn arch_rank_for(name: &str, host_aarch64: bool) -> i8 {
 ///   或 `rpm`）
 /// - `"unknown"`：都无法判定（如 Arch/pacman）
 ///
-/// 通过文件存在性判断，不拉起子进程。本地包管理家族一旦判定（绝大多数发行版为
-/// deb 系），`linux_prefs` 就据此优先 `.deb`（Ubuntu 22.04+ 构建基准，.deb 使用宿主
-/// WebKitGTK，在 Wayland 下更稳，见 README）。
 #[cfg(target_os = "linux")]
 fn linux_package_family() -> &'static str {
     let debianish = std::path::Path::new("/etc/debian_version").exists()
@@ -166,9 +163,7 @@ fn linux_prefs(family: &str) -> &'static [&'static str] {
 /// - macOS 选 dmg，并按架构区分，避免 Intel 芯片 Mac 下载到 M 芯片
 ///   （aarch64）的安装包（issue #33）。
 /// - Linux 优先与发行版包管理一致的原生安装包（**deb 系优先 `.deb`、rpm 系优先
-///   `.rpm`**，issue #79），AppImage 作为便携兜底，同样按架构匹配。优先原生包
-///   而非 AppImage：.deb/.rpm 使用宿主 WebKitGTK，在 Wayland 下更稳定，且无需
-///   可执行位/缺 libfuse2 的额外问题。
+///   `.rpm`**，issue #79），AppImage 作为便携兜底，同样按架构匹配。
 pub(super) fn pick_asset(assets: &[String]) -> Option<String> {
     #[cfg(target_os = "windows")]
     let prefs: &[&str] = &[".exe", ".msi"];

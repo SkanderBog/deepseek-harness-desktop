@@ -1,7 +1,8 @@
+use crate::{AppHandle};
 use std::time::Duration;
 
 use serde_json::Value;
-use tauri::{AppHandle, Manager};
+use tauri::{ Manager};
 
 fn remote_method(method: &str) -> Result<(reqwest::Method, &str), String> {
     if !matches!(
@@ -103,7 +104,7 @@ async fn remote_request(
 
 #[tauri::command]
 pub async fn remote(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
     method: String,
     payload: Option<Value>,
@@ -156,7 +157,6 @@ fn validate_loopback_http_url(raw: &str) -> Result<tauri::Url, String> {
     Ok(url)
 }
 
-/// 桥探测命令：iframe 内插件据此判定处于桌面壳（无参、恒成功）。
 #[tauri::command]
 pub fn remote_bridge_ping() -> String {
     "ok".to_string()
@@ -201,7 +201,7 @@ fn profile_window_label(profile: &str, machine_id: &str) -> String {
 /// 重复建窗）；失败返回带前缀的可读错误，由调用方（S4 面板按钮）呈现。
 #[tauri::command]
 pub async fn remote_open_window(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
     machine_id: String,
     url: String,
@@ -211,13 +211,10 @@ pub async fn remote_open_window(
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     let label = profile_window_label(&profile, &machine_id);
     // 已有窗口：聚焦即可（再次「打开」同一机器的语义）。
-    if let Some(existing) = app_handle.get_webview_window(&label) {
+    if let Some(existing) = app_handle.get_window(&label) {
         let _ = existing.set_focus();
         return Ok(());
     }
-    // 建窗 chrome 全部取壳层建窗真值（`build_shell_window`）：52px 导航栏交通灯、
-    // 桥脚本按窗口注入、（Windows）WebView2 共用数据目录等，远端窗口与本体
-    // 唯一区别是连接的后端。label 即机器寻址：前端 remote-<id> 自切换。
     let title = format!("DSH Remote · {machine_id}");
     crate::service::workflow::instances::bind_window(&label, &profile);
     let mut route = tauri::Url::parse("http://localhost/").expect("static URL");

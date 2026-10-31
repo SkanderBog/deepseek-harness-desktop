@@ -1,27 +1,18 @@
-#[cfg(windows)]
-use std::sync::atomic::AtomicBool;
-#[cfg(windows)]
-use std::sync::Arc;
-
-#[cfg(windows)]
-use tauri::webview::{PageLoadEvent, PageLoadPayload};
-use tauri::{
-    webview::{DownloadEvent, NewWindowFeatures, NewWindowResponse},
-    AppHandle, Emitter, Runtime, Url, Webview, WebviewWindow, Wry,
-};
+use crate::{AppHandle, Webview, Window};
+use std::sync::atomic::{AtomicU64, Ordering};
+use tauri::Manager;
+use tauri::{Emitter, Runtime, Url, webview::DownloadEvent};
 use tauri_plugin_opener::OpenerExt;
+use tauri_runtime_electron::{NewWindowFeatures, NewWindowResponse};
 
 use crate::config;
 use crate::desktop::payload::DownloadFinishedPayload;
 
-/// 接管内嵌 iframe 的 `window.open()` / `target=_blank` 新窗口请求：
-/// WebView2 里这类请求走 NewWindowRequested，wry 在没有 handler 时直接吞掉。
-/// 这里把 http(s) 链接交给系统浏览器打开，其余协议一律拒绝。
-pub fn on_new_window<R: Runtime>(
-    app_handle: tauri::AppHandle<R>,
+pub fn on_new_window(
+    app_handle: crate::AppHandle<tauri_runtime_electron::ElectronRuntime>,
     url: Url,
     _features: NewWindowFeatures,
-) -> NewWindowResponse<R> {
+) -> NewWindowResponse {
     if matches!(url.scheme(), "http" | "https") {
         if let Err(e) = app_handle.opener().open_url(url.to_string(), None::<&str>) {
             log::warn!("[new-window] open in browser failed {e}");
@@ -62,64 +53,144 @@ pub fn on_download<R: Runtime>(webview: Webview<R>, event: DownloadEvent<'_>) ->
     }
 }
 
-/// 关掉 WebView2 的外部拖放（`AllowExternalDrop`）。
-///
-/// wry 只在它自己接管拖放时才关闭该开关（`drop_handler` 为空就跳过）；本项目用
-/// `disable_drag_drop_handler()` 关掉了那份接管以恢复 iframe 内的 HTML5 拖拽，
-/// 于是开关留在默认开启状态。而开启时，在页面内拖放文本会让 WebView2 卡在失效的
-/// 鼠标捕获上：选中无法取消、点击与输入失效、滚轮仍可用（WebView2Feedback #5141 /
-/// #5613）。这里补回这道防护——它只影响外部拖放，页面内 HTML5 拖拽不受影响。
-#[cfg(windows)]
-pub fn disable_external_drop(webview: &tauri::webview::PlatformWebview) {
-    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller4;
-    use windows_core::Interface;
-
-    unsafe {
-        match webview.controller().cast::<ICoreWebView2Controller4>() {
-            Ok(controller) => {
-                if let Err(e) = controller.SetAllowExternalDrop(false) {
-                    log::warn!("[webview] failed to disable external drop: {e}");
-                }
-            }
-            Err(e) => log::warn!("[webview] ICoreWebView2Controller4 unavailable: {e}"),
-        }
-    }
-}
-
-#[cfg(windows)]
-pub fn on_page_load(
-    webview_window: WebviewWindow<Wry>,
-    payload: PageLoadPayload<'_>,
-    notification_handlers_registered_for_page: Arc<AtomicBool>,
-) {
-    // Windows 依赖 WebView2 的 FramePermissionRequested / FrameCreated 机制，
-    // 需要在页面加载时注册；非 Windows 已在 build_main_window 里通过
-    // initialization_script_for_all_frames 注入，这里不需要再做处理。
-    if payload.event() != PageLoadEvent::Started {
-        return;
-    }
-    log::info!("[webview] on_page_load started");
-    if !notification_handlers_registered_for_page.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        log::info!("[notification] top-level page load started; scheduling handler registration");
-        let parent = webview_window.clone();
-        if let Err(e) = webview_window.with_webview(move |platform| {
-            disable_external_drop(&platform);
-            if let Err(error) = crate::desktop::frontend_preload::install(&platform, &parent) {
-                log::warn!("FRONTEND_PRELOAD_UNAVAILABLE: {error}");
-            }
-            if let Err(e) =
-                crate::desktop::notification::enable_notification_permissions(platform, parent)
-            {
-                log::warn!("[webview] failed to enable notification permission: {e}");
-            }
-        }) {
-            log::warn!("[webview] failed to schedule notification permission setup: {e}");
-        }
-    }
-}
-
 /// 跳转信息全局名（与 `packages/dsh-tauri/src/client/register/navigation.ts` 逐字一致）。
 const NAVIGATION_GLOBAL: &str = "__DSH_NAVIGATION__";
+
+fn harness_guest_url(value: &str) -> Result<Url, String> {
+    let url = Url::parse(value).map_err(|error| error.to_string())?;
+    if url.scheme() != "http"
+        || url.host_str() != Some("127.0.0.1")
+        || url.port().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err("HARNESS_WEBVIEW_INVALID_URL".into());
+    }
+    Ok(url)
+}
+
+pub(super) fn require_shell(webview: &Webview) -> Result<(), String> {
+    let url = webview.url().map_err(|error| error.to_string())?;
+    let packaged = (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
+        || (matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost"));
+    let dev = cfg!(debug_assertions)
+        && webview
+            .config()
+            .build
+            .dev_url
+            .as_ref()
+            .is_some_and(|dev| dev.origin() == url.origin());
+    if webview.label() != webview.window().label() || !(packaged || dev) {
+        return Err("HARNESS_WEBVIEW_SHELL_REQUIRED".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn prepare_harness_webview(
+    app: AppHandle,
+    webview: Webview,
+    url: String,
+    navigation: Option<serde_json::Value>,
+) -> Result<String, String> {
+    require_shell(&webview)?;
+    let url = harness_guest_url(&url)?;
+    if !webview.label().starts_with("remote-") {
+        let profile =
+            crate::service::workflow::instances::window_profile(&app, webview.window().label());
+        let port = crate::service::workflow::instances::scope_sync(profile, || {
+            crate::service::workflow::instances::port(&app)
+        });
+        let expected =
+            Url::parse(&config::get_dsh_service_url(port)).map_err(|error| error.to_string())?;
+        if url.origin() != expected.origin() {
+            return Err("HARNESS_WEBVIEW_ORIGIN_MISMATCH".into());
+        }
+    }
+    static NEXT_GUEST: AtomicU64 = AtomicU64::new(1);
+    let label = format!("harness-{}", NEXT_GUEST.fetch_add(1, Ordering::Relaxed));
+    let origin = url.origin();
+    let mut builder = tauri::WebviewBuilder::new(&label, tauri::WebviewUrl::External(url.clone()))
+        .on_navigation(move |next| next.origin() == origin)
+        .on_download(on_download)
+        .on_permission_request(|_, kind| match kind {
+            tauri::webview::PermissionKind::Microphone => tauri::webview::PermissionResponse::Allow,
+            _ => tauri::webview::PermissionResponse::Default,
+        });
+    if let Some(navigation) = navigation {
+        let session = navigation
+            .get("sessionId")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("WINDOW_CREATE_FAILED: invalid sessionId")?;
+        let presentation = navigation
+            .get("presentation")
+            .and_then(serde_json::Value::as_str);
+        builder = builder.initialization_script(session_navigation_script(session, presentation)?);
+    }
+    let guest = tauri_runtime_electron::with_guest(webview.label(), &label, || {
+        webview.window().add_child(
+            builder,
+            tauri::LogicalPosition::new(0., 0.),
+            tauri::LogicalSize::new(1., 1.),
+        )
+    })
+    .map_err(|error| error.to_string())?;
+    let app_handle = app.clone();
+    if let Err(error) = tauri_runtime_electron::on_new_window(&guest, move |url, features| {
+        on_new_window(app_handle.clone(), url, features)
+    }) {
+        let _ = guest.close();
+        return Err(error.to_string());
+    }
+    let mut capability: serde_json::Value =
+        serde_json::from_str(include_str!("../../capabilities/default.json"))
+            .map_err(|error| error.to_string())?;
+    capability["identifier"] = label.clone().into();
+    capability["local"] = false.into();
+    capability["windows"] = serde_json::json!([]);
+    capability["webviews"] = serde_json::json!([label]);
+    capability["remote"] =
+        serde_json::json!({"urls": [format!("{}/*", url.origin().ascii_serialization())]});
+    if let Err(error) = app.add_capability(capability.to_string()) {
+        let _ = guest.close();
+        return Err(error.to_string());
+    }
+    Ok(label)
+}
+
+#[tauri::command]
+pub async fn release_harness_webview(
+    app: AppHandle,
+    webview: Webview,
+    label: String,
+) -> Result<(), String> {
+    require_shell(&webview)?;
+    if !label.starts_with("harness-") {
+        return Err("HARNESS_WEBVIEW_INVALID_LABEL".into());
+    }
+    if let Some(guest) = app.get_webview(&label) {
+        if guest.window().label() != webview.window().label() {
+            return Err("HARNESS_WEBVIEW_WINDOW_MISMATCH".into());
+        }
+        guest.close().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn harness_guest_urls_require_an_explicit_loopback_port() {
+    assert!(harness_guest_url("http://127.0.0.1:3080/?token=x").is_ok());
+    for url in [
+        "https://example.com/",
+        "http://127.0.0.1/",
+        "http://localhost:3080/",
+        "http://user@127.0.0.1:3080/",
+        "file:///tmp/index.html",
+    ] {
+        assert!(harness_guest_url(url).is_err(), "{url}");
+    }
+}
 
 /// 「全屏右栏」窗口形态：壳层换用 `full-sidebar-navbar`，页面把右栏展开并切进全屏。
 /// 载荷值同样与插件 `sidebar-fullwindow.ts` 逐字一致。
@@ -137,8 +208,8 @@ const PRESENTATION_FULL_SIDEBAR: &str = "full-sidebar";
 /// 需要主线程事件循环回包，主线程调用会死锁（与 `pet::ensure_pet_window` 同约束）。
 #[tauri::command]
 pub async fn create_app_window(
-    app_handle: AppHandle<Wry>,
-    window: WebviewWindow<Wry>,
+    app_handle: AppHandle<tauri_runtime_electron::ElectronRuntime>,
+    window: Window<tauri_runtime_electron::ElectronRuntime>,
     session_id: Option<String>,
     presentation: Option<String>,
 ) -> Result<(), String> {
@@ -191,7 +262,7 @@ fn session_navigation_script(
 
 #[cfg(test)]
 mod session_navigation_tests {
-    use super::{session_navigation_script, NAVIGATION_GLOBAL, PRESENTATION_FULL_SIDEBAR};
+    use super::{NAVIGATION_GLOBAL, PRESENTATION_FULL_SIDEBAR, session_navigation_script};
 
     fn payload_of(script: &str) -> serde_json::Value {
         let assignment = format!("globalThis.{NAVIGATION_GLOBAL} = ");
@@ -250,17 +321,12 @@ mod session_navigation_tests {
 /// 壳层导航栏「文件 → 退出」：与托盘「退出」同语义，走 `exit(0)` 完整退出
 /// （触发 `RunEvent::ExitRequested` 的主窗口几何保存与 `RunEvent::Exit` 的进程回收）。
 #[tauri::command]
-pub fn quit_app(app_handle: AppHandle<Wry>) {
+pub fn quit_app(app_handle: AppHandle<tauri_runtime_electron::ElectronRuntime>) {
     app_handle.exit(0);
 }
 
-/// 壳层「帮助 → 切换开发者工具」：开/关调用方所在窗口的 WebView 检查器。
-///
-/// 「切换」只能做到近似：只有 macOS 的 wkwebview 如实回报检查器状态；
-/// Windows 侧（wry 0.57 + WebView2）`is_devtools_open()` 恒为 false 且
-/// `close_devtools()` 是空实现，重复调用等价于再次打开/聚焦，不会误关。
 #[tauri::command]
-pub fn toggle_devtools(window: WebviewWindow<Wry>) {
+pub fn toggle_devtools(window: Webview<tauri_runtime_electron::ElectronRuntime>) {
     if window.is_devtools_open() {
         window.close_devtools();
     } else {

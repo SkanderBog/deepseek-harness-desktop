@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 use semver::Version as Semver;
 use serde::Deserialize;
 use serde_json::Value;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::installed::profile_dir;
 use super::watch::DshPlugin;

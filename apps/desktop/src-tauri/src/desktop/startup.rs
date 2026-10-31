@@ -210,7 +210,6 @@ mod tests {
                 "STARTUP_E2E_HOME_INVALID: DSH_E2E_HOME must be a non-empty absolute path"
             );
             assert_eq!(crate::logger::identifier_dir(), None);
-            assert!(!crate::config::force_xwayland_setting());
             assert!(!expected.exists());
         } else {
             use tauri::Manager;
@@ -222,16 +221,15 @@ mod tests {
             assert_eq!(crate::logger::identifier_dir(), Some(expected.clone()));
             assert_eq!(crate::config::store_dat_file_name(), ".store.test.dat");
             std::fs::create_dir_all(&expected).unwrap();
-            let user_store = br#"{"setting":{"force_xwayland":false}}"#;
+            let user_store = br#"{"isolation_marker":"user"}"#;
             for name in [".store.dat", ".store.dev.dat"] {
                 std::fs::write(expected.join(name), user_store).unwrap();
             }
             std::fs::write(
                 expected.join(".store.test.dat"),
-                br#"{"setting":{"force_xwayland":true}}"#,
+                br#"{"isolation_marker":"test"}"#,
             )
             .unwrap();
-            assert!(crate::config::force_xwayland_setting());
             let mut context = mock_context(noop_assets());
             context.config_mut().app.app_directories_override = Some(
                 tauri::utils::config::AppDirectoriesOverride::Root(directory),
@@ -242,6 +240,7 @@ mod tests {
                 .unwrap();
             assert_eq!(app.path().app_data_dir().unwrap(), expected);
             let store = app.store(crate::config::store_dat_file_name()).unwrap();
+            assert_eq!(store.get("isolation_marker"), Some(serde_json::json!("test")));
             store.set("isolation_marker", serde_json::json!("e2e"));
             store.save().unwrap();
             let saved: serde_json::Value =
@@ -281,19 +280,21 @@ mod tests {
         };
 
         unsafe extern "system" fn dismiss_error(window: HWND, parameter: LPARAM) -> BOOL {
-            let probe = &mut *(parameter as *mut (u32, bool));
-            let mut process = 0;
-            GetWindowThreadProcessId(window, &mut process);
-            if process == probe.0 && IsWindowVisible(window) != 0 {
-                let mut title = [0u16; 256];
-                let length = GetWindowTextW(window, title.as_mut_ptr(), title.len() as i32);
-                let title = String::from_utf16_lossy(&title[..length as usize]);
-                if title.contains(env!("DSH_PRODUCT_NAME")) && title.contains("Startup failed") {
-                    probe.1 = PostMessageW(window, WM_CLOSE, 0, 0) != 0;
-                    return 0;
+            unsafe {
+                let probe = &mut *(parameter as *mut (u32, bool));
+                let mut process = 0;
+                GetWindowThreadProcessId(window, &mut process);
+                if process == probe.0 && IsWindowVisible(window) != 0 {
+                    let mut title = [0u16; 256];
+                    let length = GetWindowTextW(window, title.as_mut_ptr(), title.len() as i32);
+                    let title = String::from_utf16_lossy(&title[..length as usize]);
+                    if title.contains(env!("DSH_PRODUCT_NAME")) && title.contains("Startup failed") {
+                        probe.1 = PostMessageW(window, WM_CLOSE, 0, 0) != 0;
+                        return 0;
+                    }
                 }
+                1
             }
-            1
         }
 
         let home = tempfile::tempdir().unwrap();

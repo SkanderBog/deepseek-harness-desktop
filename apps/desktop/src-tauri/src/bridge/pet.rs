@@ -1,9 +1,5 @@
 //! bridge/pet.rs — 桌宠（外置透明宠物窗口）的 Tauri 命令出口。
 //!
-//! 这些命令被 dsh 容器（iframe 内的 dsh 界面 / dsh-tauri-pet 插件）经 invoke
-//! 桥调用（壳层桥监听模块 `src/hooks/use-invoke-iframe.ts` 把 iframe 的
-//! postMessage invoke 转发到 `@tauri-apps/api/core` 的 `invoke`）。所有状态
-//! 读写统一落在 `config::setting`（持久化）与 `desktop::pet`（窗口）。
 //! 错误遵循仓库约定：`Result<_, String>`，Err 以大写协议前缀开头（如
 //! `PET_SIZE_OUT_OF_RANGE:`）。
 //!
@@ -23,7 +19,8 @@ use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use crate::{AppHandle, Window};
+use tauri::{Emitter, Manager};
 use zip::ZipArchive;
 
 /// 宠物大小百分比合法区间（精灵图缩放 50%–200%，与插件设置页滑条一致）。
@@ -83,7 +80,6 @@ enum PetSource {
 }
 
 impl PetSource {
-    /// 来源字符串是跨 iframe 的安全边界，只接受两个精确值。
     fn parse(value: &str) -> Result<Self, String> {
         match value {
             "chat" => Ok(Self::Chat),
@@ -212,7 +208,7 @@ fn emit_pet_status(app: &AppHandle, status: &PetStatus) {
 }
 
 #[tauri::command]
-pub fn pet_show_main_window(window: WebviewWindow) -> Result<(), String> {
+pub fn pet_show_main_window(window: Window) -> Result<(), String> {
     if window.label() != pet_window::PET_WINDOW_LABEL {
         return Err(
             "PET_WINDOW_LABEL_MISMATCH: this command is restricted to the pet window".into(),
@@ -223,7 +219,7 @@ pub fn pet_show_main_window(window: WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn pet_show_context_menu(window: WebviewWindow) -> Result<(), String> {
+pub fn pet_show_context_menu(window: Window) -> Result<(), String> {
     use tauri::menu::{Menu, MenuItem};
 
     if window.label() != pet_window::PET_WINDOW_LABEL {
@@ -271,28 +267,6 @@ pub fn get_pet_status(app: AppHandle) -> PetStatus {
 #[tauri::command]
 pub fn get_pet_overlay_supported() -> bool {
     crate::pet_overlay_supported_env()
-}
-
-/// 读取「强制 XWayland」开关（issue #649 的方案 2，默认关闭）。
-///
-/// 该设置作用于整个应用而非只有桌宠，命令名因此不带 `pet_` 前缀；落在本模块只因
-/// 桌宠遮挡是它唯一的症状与唯一的消费方。同理不并入 [`PetStatus`]：后者经
-/// `pet://status` 广播给桌宠窗口与侧栏指示点，两者都不关心这个值。
-#[tauri::command]
-pub fn get_force_xwayland(app: AppHandle) -> bool {
-    config::get_store_dat_setting(&app).force_xwayland
-}
-
-/// 写入「强制 XWayland」开关，返回落盘后的值。
-///
-/// 不操作窗口、不广播 `pet://status`：`GDK_BACKEND` 只在 GTK 初始化时被读取一次，
-/// 本次进程里没有任何东西能因此改变，生效要等下次启动。
-#[tauri::command]
-pub fn set_force_xwayland(app: AppHandle, enabled: bool) -> Result<bool, String> {
-    let updated = config::update_store_dat_setting(&app, |setting| {
-        setting.force_xwayland = enabled;
-    });
-    Ok(updated.force_xwayland)
 }
 
 /// 启用/关闭桌宠（持久化）。侧栏入口、设置页与桌宠窗口自身的关闭请求都走这里。
@@ -486,9 +460,6 @@ fn emit_pet_session(app: &AppHandle, action: &str, payload: &Value) {
 /// 消费宿主会话增量 SSE 流：读取 `http://127.0.0.1:<port>/api/tauri/pet/session/stream`，
 /// 每个 `data:` 帧（`{"action":...,"payload":...}`）解析后经 emit_to 直达桌宠 WebView；
 /// `: state-lost` 注释帧翻译成一次整批作废（见 [`SSE_STATE_LOST_COMMENT`]）。
-///
-/// 方案 1（host → rust → pet）：Rust 不再依赖 iframe 的 invoke 桥转发（#396 根因），
-/// 而是作为宿主流的消费者。流中断（宿主未就绪/重启）时退避重连，幂等可恢复。
 async fn consume_pet_session_stream(app: &AppHandle, url: &str) -> Result<(), String> {
     consume_pet_session_stream_with(url, |action, payload| {
         emit_pet_session(app, action, payload);
@@ -748,7 +719,7 @@ fn defer_pet_window_op(app: &AppHandle, visible: bool) -> Result<(), String> {
 /// 的分支，始终安全转发。GTK 窗口 hide 只 unmap 不 unrealize，首次 show 之后
 /// GdkWindow 持续存在，故「可见 ⇒ 转发安全」。
 #[tauri::command]
-pub fn set_pet_ignore_cursor_events(window: WebviewWindow, ignore: bool) -> Result<bool, String> {
+pub fn set_pet_ignore_cursor_events(window: Window, ignore: bool) -> Result<bool, String> {
     if window.label() != pet_window::PET_WINDOW_LABEL {
         return Err(
             "PET_WINDOW_LABEL_MISMATCH: this command is restricted to the pet window".to_string(),
@@ -770,10 +741,7 @@ pub fn set_pet_ignore_cursor_events(window: WebviewWindow, ignore: bool) -> Resu
     Ok(ignore)
 }
 
-/// 桌宠可交互区域（窗口内**设备像素** = CSS px × `devicePixelRatio`）。
-///
-/// 不能直接用 CSS px：KDE 分数缩放 + XWayland 下 WebKitGTK 按 `Xft.dpi` 给页面 1.5 倍，
-/// GTK 缩放系数却是 1，两者不同口径。由 [`apply_pet_input_region`] 按 GTK 缩放系数换算。
+/// 桌宠可交互区域（窗口内设备像素）。
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct PetInputRect {
     pub x: f64,
@@ -784,14 +752,8 @@ pub struct PetInputRect {
 
 /// Linux 下把 pet 窗口的输入形状收缩到宠物本体，取代整窗穿透切换（issue #649）。
 ///
-/// 整窗穿透依赖全局鼠标流判定光标是否回到宠物上；Wayland 会话里 XWayland 只在光标
-/// 落在 X11 窗口上时才收到指针事件，窗口一旦穿透，XRecord 就再也拿不到坐标，桌宠永远
-/// 点不到。输入形状由 X server / 合成器直接命中测试，不需要任何鼠标流。tao 的
-/// `set_ignore_cursor_events` 本身也是改写同一份输入形状，因此两条路径不能混用。
-/// `gtk_widget_input_shape_combine_region` 在未 realize 的窗口上只暂存、realize 时生效，
-/// 不受 issue #437 的 unwrap 影响。
 #[tauri::command]
-pub fn set_pet_input_region(window: WebviewWindow, rect: PetInputRect) -> Result<(), String> {
+pub fn set_pet_input_region(window: Window, rect: PetInputRect) -> Result<(), String> {
     if window.label() != pet_window::PET_WINDOW_LABEL {
         return Err(
             "PET_WINDOW_LABEL_MISMATCH: this command is restricted to the pet window".to_string(),
@@ -804,40 +766,7 @@ pub fn set_pet_input_region(window: WebviewWindow, rect: PetInputRect) -> Result
     {
         return Err("PET_INPUT_REGION_INVALID: rect must be finite".to_string());
     }
-    #[cfg(target_os = "linux")]
-    {
-        let target = window.clone();
-        window
-            .run_on_main_thread(move || apply_pet_input_region(&target, rect))
-            .map_err(|error| format!("PET_INPUT_REGION_FAILED: {error}"))
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        Err("PET_INPUT_REGION_UNSUPPORTED: input region is only used on Linux".to_string())
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn apply_pet_input_region(window: &WebviewWindow, rect: PetInputRect) {
-    use gtk::prelude::WidgetExt;
-
-    let gtk_window = match window.gtk_window() {
-        Ok(gtk_window) => gtk_window,
-        Err(error) => {
-            log::warn!("PET_INPUT_REGION_FAILED: {error}");
-            return;
-        }
-    };
-    // 设备像素 → GTK 窗口坐标（输入形状用后者）。
-    let scale = f64::from(gtk_window.scale_factor().max(1));
-    let left = (rect.x / scale).floor() as i32;
-    let top = (rect.y / scale).floor() as i32;
-    let width = (((rect.x + rect.width) / scale).ceil() as i32 - left).max(0);
-    let height = (((rect.y + rect.height) / scale).ceil() as i32 - top).max(0);
-    let region = gtk::cairo::Region::create_rectangle(&gtk::cairo::RectangleInt::new(
-        left, top, width, height,
-    ));
-    gtk_window.input_shape_combine_region(Some(&region));
+    Err("PET_INPUT_REGION_UNSUPPORTED: native input regions are unavailable in Electron".to_string())
 }
 
 /// 返回来源对应的真实目录；chat 直接使用 `$DSH_HOME/pets`，codex 直接使用

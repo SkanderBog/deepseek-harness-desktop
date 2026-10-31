@@ -1,7 +1,7 @@
 use crate::config;
 use async_trait::async_trait;
 use std::path::PathBuf;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 /// 安装任务的类型标识：下载源选择、完整性校验与版本记录都按它分支，
 /// 而不是按任务在 `tasks` 向量里的位置索引（重排向量不应改变行为）。

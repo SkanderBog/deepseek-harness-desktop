@@ -69,6 +69,7 @@ export const dshExternal: Array<string | RegExp> = [
  * 消费者），只有真正直接 import 这两个包的 client bundle 才需要内联。
  */
 const dshClientInline: Array<string | RegExp> = [
+  /^@tauri-apps\/api(?:\/.*)?$/,
   /^(unstorage|hookable|ofetch|date-fns|lodash-es)([/-].*)?$/,
   /^@gravity-ui\/icons([/-].*)?$/,
   /^css-render([/-].*)?$/,

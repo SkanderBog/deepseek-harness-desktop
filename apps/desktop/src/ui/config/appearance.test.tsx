@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { defineStore } from 'valtio-define'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { APPEARANCE_DEFAULTS } from '../../../packages/dsh-tauri/src/shared/appearance'
+import { APPEARANCE_DEFAULTS } from '../../../../../packages/builtin-plugin-tauri/src/shared/appearance'
 import { ConfigAppearance } from './appearance'
 
 const mocks = vi.hoisted(() => ({ setting: {} as any, toast: vi.fn() }))

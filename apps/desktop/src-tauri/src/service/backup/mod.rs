@@ -9,7 +9,7 @@ pub mod retention;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use crate::config;
 

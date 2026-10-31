@@ -1,6 +1,7 @@
+use crate::{AppHandle, Window};
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
+use tauri::{ Manager, Runtime};
 
 use crate::service::core::active_core_dir;
 
@@ -26,7 +27,7 @@ pub enum PatchOutcome {
 /// 锚点变更均静默跳过并返回 Ok；只有真实读/写失败才返回 Err（不阻断启动的调用方
 /// 据此仅告警）。活动核心的判定与 [`active_core_dir`] 一致。
 pub fn patch_dsh(
-    app_handle: &tauri::AppHandle,
+    app_handle: &crate::AppHandle,
     rel_path: &str,
     patch: impl FnOnce(&str) -> PatchOutcome,
 ) -> Result<(), String> {
@@ -65,7 +66,7 @@ pub fn patch_core_file(
     Ok(())
 }
 
-pub fn show_window<R: Runtime>(window: &WebviewWindow<R>) {
+pub fn show_window<R: Runtime>(window: &Window<R>) {
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
@@ -74,21 +75,21 @@ pub fn show_window<R: Runtime>(window: &WebviewWindow<R>) {
 /// 显示主窗口：托盘「打开面板」、托盘左键点击、macOS Dock 图标点击共用。
 /// 主窗口关闭只隐藏到托盘（见 builder 的 on_window_event），所以这里取到即可 show；
 /// 若窗口确实不存在（非预期路径），仅记录日志，不重建。
-pub fn shell_window<R: Runtime>(app: &AppHandle<R>) -> Option<WebviewWindow<R>> {
-    app.get_webview_window("main").or_else(|| {
-        app.webview_windows().into_values().find(|window| {
+pub fn shell_window<R: Runtime>(app: &AppHandle<R>) -> Option<Window<R>> {
+    app.get_window("main").or_else(|| {
+        app.windows().into_values().find(|window| {
             window.label().starts_with("window-") || window.label().starts_with("remote-")
         })
     })
 }
 
-pub fn operation_window<R: Runtime>(app: &AppHandle<R>) -> Option<WebviewWindow<R>> {
+pub fn operation_window<R: Runtime>(app: &AppHandle<R>) -> Option<Window<R>> {
     use crate::service::workflow::instances;
     let profile = instances::current_profile()?;
-    app.get_webview_window("main")
+    app.get_window("main")
         .filter(|window| instances::window_uses_profile(window.label(), &profile))
         .or_else(|| {
-            app.webview_windows().into_values().find(|window| {
+            app.windows().into_values().find(|window| {
                 (window.label().starts_with("window-") || window.label().starts_with("remote-"))
                     && instances::window_uses_profile(window.label(), &profile)
             })
@@ -290,14 +291,30 @@ mod tests {
     #[tokio::test]
     async fn operation_window_never_falls_back_to_another_profile() {
         use crate::service::workflow::instances;
+        use tauri::Manager;
         let app = tauri::test::mock_builder()
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
         for label in ["main", "window-operation-test", "remote-operation-test"] {
-            tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::default())
-                .build()
+            let window =
+                tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::default())
+                    .build()
+                    .unwrap()
+                    .as_ref()
+                    .window();
+            window
+                .add_child(
+                    tauri::webview::WebviewBuilder::new(
+                        format!("guest-{label}"),
+                        tauri::WebviewUrl::default(),
+                    ),
+                    tauri::LogicalPosition::new(0.0, 0.0),
+                    tauri::LogicalSize::new(800.0, 600.0),
+                )
                 .unwrap();
+            assert!(app.get_webview_window(label).is_none());
         }
+        assert_eq!(super::shell_window(app.handle()).unwrap().label(), "main");
         instances::bind_window("main", "operation-main-profile");
         instances::bind_window("window-operation-test", "operation-extra-profile");
         instances::bind_window("remote-operation-test", "operation-remote-profile");

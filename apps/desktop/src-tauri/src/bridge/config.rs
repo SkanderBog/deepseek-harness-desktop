@@ -6,12 +6,12 @@
 use crate::config;
 use crate::service::cli;
 use crate::service::update;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 /// 当前桌面端配置
 #[tauri::command]
 pub async fn get_app_config(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<config::Setting, String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
@@ -58,7 +58,7 @@ pub fn is_dev_build() -> bool {
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn update_app_config(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
     proxy_url: Option<String>,
     appearance: Option<config::Appearance>,

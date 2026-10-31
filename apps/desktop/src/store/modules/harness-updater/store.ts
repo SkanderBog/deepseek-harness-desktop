@@ -47,7 +47,7 @@ export const harnessUpdater = defineStore({
         const changed = await invoke<boolean>('install_dependencies')
         installed = changed
         if (!changed) {
-          // 回到就绪态（若当前停在安装/更新界面，则恢复到原 iframe 视图）
+          // 回到就绪态（若当前停在安装/更新界面，则恢复到原 webview 视图）
           harness.status = 'ready'
           // 重新核对一次：若确有新版，恢复“存在新版本”的提示并明确告知无法校验，
           // 而非静默当作“已更新”成功。

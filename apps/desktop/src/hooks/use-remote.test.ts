@@ -83,9 +83,9 @@ afterEach(() => {
 })
 
 describe('useRemote 查询、降级与启动寻址', () => {
-  it('会话窗口不再把 hash 里的 iframeUrl 当作远端机器来源', async () => {
+  it('会话窗口不再把 hash 里的 webviewUrl 当作远端机器来源', async () => {
     windowInfo.label = 'window-2'
-    window.location.hash = new URLSearchParams({ sessionId: 'target', iframeUrl: 'http://127.0.0.1:4001/' }).toString()
+    window.location.hash = new URLSearchParams({ sessionId: 'target', webviewUrl: 'http://127.0.0.1:4001/' }).toString()
     rows = [machineOf({ state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001' })]
     const { result } = await ready()
     expect(result.current.activeId).toBeNull()

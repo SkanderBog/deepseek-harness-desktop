@@ -1,18 +1,8 @@
-//! bridge 层文件系统命令的参数白名单。
-//!
-//! `reveal_in_folder` / `open_dir` 接收来自前端（内嵌 iframe 的 Harness 页面，可
-//! 被第三方插件注入脚本操纵）的路径参数，直接交给系统 `open`/`explorer`/`reveal`，
-//! 若不加约束，任意 frame 都能驱动宿主打开任意目录/文件（例如把恶意网页路径
-//! 交给系统默认处理器）。本模块把这两条命令限制在**预期根目录集合**内：
-//! - 系统下载目录（Session 日志下载完成的「在文件夹中显示」）；
-//! - 应用数据目录（核心版本「打开目录」、历史核心槽位、updates 安装包）；
-//! - 官方 `$DSH_HOME`（用户数据目录，部分入口也指向它）。
-//!
-//! 实现用 canonicalize 后做前缀匹配，避免字符串前缀误判与符号链接跳出。
 
+use crate::{AppHandle};
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Manager};
+use tauri::{ Manager};
 
 /// 允许打开/定位的根目录集合。
 pub fn allowed_roots(app_handle: &AppHandle) -> Vec<PathBuf> {

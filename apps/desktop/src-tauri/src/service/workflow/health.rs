@@ -172,11 +172,6 @@ fn ownership_recheck_signal(owned: bool, launch_in_progress: bool) -> Result<(),
     Err(not_owned_probe_signal(false).to_string())
 }
 
-/// 复核本应用是否仍持有 Harness 进程（纯内存，不发 HTTP）。
-///
-/// 就绪轮询通过后、iframe 挂载前仍可能退出，因此提交前要复核一次 ownership。历史上
-/// 这里重跑完整健康探测，代价是重新拉取全部客户端 bundle（实测 93 个 / 18MB / 311ms），
-/// 而 ownership 只取决于进程槽位与启动守卫，故改用这条查询。
 pub fn recheck_ownership() -> Result<(), String> {
     ownership_recheck_signal(has_owned_process(), launch_guard().load(Ordering::SeqCst))
 }
@@ -299,7 +294,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let html = r#"<script>globalThis["__DSH_BOOT__"] = {"entries":[{"url":"plugins/fixture/client.js"}]};</script>"#;
-        for status in ["200 OK", "503 Service Unavailable"] {
+        for status in ["200 OK", "401 Unauthorized", "503 Service Unavailable"] {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let port = listener.local_addr().unwrap().port();
             let mut server = tokio::spawn(async move {
@@ -326,7 +321,7 @@ mod tests {
             } else {
                 assert_eq!(
                     result.unwrap_err(),
-                    "HARNESS_NOT_READY: boot page returned 503 Service Unavailable"
+                    format!("HARNESS_NOT_READY: boot page returned {status}")
                 );
             }
         }

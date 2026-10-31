@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::preset::{load_deprecated_ids, load_presets, PreinstallPluginInfo};
 

@@ -7,11 +7,11 @@
 use crate::config;
 use crate::service::profile;
 use crate::service::profile::migrate::{MigrateReport, MigrationAnalysis, MigrationDataKind};
-use tauri::AppHandle;
+use crate::AppHandle;
 
 /// 档案列表（$DSH_HOME/profiles 下的目录，含 active/default 标记）
 #[tauri::command]
-pub fn get_profiles(window: tauri::WebviewWindow, app_handle: AppHandle) -> Vec<profile::Profile> {
+pub fn get_profiles(window: crate::Window, app_handle: AppHandle) -> Vec<profile::Profile> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::service::workflow::instances::scope_sync(profile, || profile::list(&app_handle))
 }
@@ -27,7 +27,7 @@ pub fn create_profile(app_handle: AppHandle, name: String) -> Result<profile::Pr
 #[tauri::command]
 pub async fn set_active_profile(
     app_handle: AppHandle,
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     id: String,
 ) -> Result<profile::Profile, String> {
     let _transition = crate::service::workflow::acquire_core_transition().await?;
@@ -49,7 +49,7 @@ pub async fn set_active_profile(
 /// 删除档案（默认档案与使用中的档案不可删除）
 #[tauri::command]
 pub async fn remove_profile(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
     id: String,
 ) -> Result<(), String> {
@@ -73,7 +73,7 @@ pub async fn remove_profile(
 #[tauri::command]
 pub async fn reset_profile(
     app_handle: AppHandle,
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     id: String,
 ) -> Result<(), String> {
     crate::service::fs_guard::validate_id(&id)?;
@@ -110,7 +110,7 @@ pub async fn clone_profile(
 /// 分析源档案的可迁移插件与档案级数据（只读，判定基准 = 当前核心版本）
 #[tauri::command]
 pub async fn analyze_profile_migration(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
     source_id: String,
 ) -> Result<MigrationAnalysis, String> {
@@ -124,7 +124,7 @@ pub async fn analyze_profile_migration(
 /// 把源档案选中的数据并入当前档案（逐项独立，结果里逐项报告）
 #[tauri::command]
 pub async fn migrate_profile_data(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
     source_id: String,
     items: Vec<MigrationDataKind>,

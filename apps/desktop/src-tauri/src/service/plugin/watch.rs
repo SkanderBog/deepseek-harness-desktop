@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::errors::{self, PluginError};
 use super::installed::{installed_name, profile_dir, ProfilePackageJson};

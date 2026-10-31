@@ -8,12 +8,11 @@
 //! 落进 store 文件（.store.dat/.store.dev.dat）」的约定不一致。因此这里基于已有的
 //! `tauri-plugin-store` 手动读写，几何记录的时机与恢复流程完全可控。
 
+use crate::{AppHandle, WebviewWindow, Window};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
-use tauri::{
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, Position, Runtime, Size, WebviewWindow,
-    Window,
+use tauri::{ Manager, PhysicalPosition, PhysicalSize, Position, Runtime, Size,
 };
 use tauri_plugin_store::StoreExt;
 
@@ -152,8 +151,7 @@ pub fn save_geometry<R: Runtime>(window: &Window<R>) {
 
 /// 正常退出前主动采样主窗口，兜底最后一次移动/缩放事件尚未落盘的情况。
 pub fn save_main_window_geometry<R: Runtime>(app_handle: &AppHandle<R>) {
-    if let Some(webview_window) = app_handle.get_webview_window("main") {
-        let window = webview_window.as_ref().window();
+    if let Some(window) = app_handle.get_window("main") {
         save_geometry(&window);
     }
 }

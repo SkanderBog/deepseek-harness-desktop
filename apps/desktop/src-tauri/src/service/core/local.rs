@@ -3,11 +3,12 @@
 //! 只基于文件系统与 PATH 探测，不派生子进程。核心来源判定见
 //! [`crate::service::core`] 模块头的说明。
 
+use crate::{AppHandle};
 use crate::service::cli;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use tauri::Manager;
-use tauri::{AppHandle, Runtime};
+use tauri::{ Runtime};
 
 /// 解析出的本地核心信息
 pub(super) struct LocalCore {

@@ -111,7 +111,7 @@ pub fn apply_at(core_dir: &Path) -> Result<(), String> {
     patch_core_file(core_dir, CLIENT, patch_source)
 }
 
-pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
+pub fn apply(app_handle: &crate::AppHandle) -> Result<(), String> {
     patch_dsh(app_handle, CLIENT, patch_source)
 }
 

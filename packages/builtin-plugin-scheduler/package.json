@@ -63,7 +63,6 @@
     "dev": "tsdown --watch",
     "prepublishOnly": "nr build",
     "start": "tsx src/index.ts",
-    "test": "vitest run",
     "typecheck": "tsc"
   },
   "dependencies": {
@@ -79,7 +78,6 @@
   "devDependencies": {
     "@types/lodash-es": "catalog:types",
     "dsh-tauri-config": "workspace:*",
-    "tsdown": "catalog:cli",
-    "vitest": "catalog:testing"
+    "tsdown": "catalog:cli"
   }
 }

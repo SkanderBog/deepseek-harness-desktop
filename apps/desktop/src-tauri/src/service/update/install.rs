@@ -5,11 +5,12 @@
 //! 防止第三方镜像投毒未被察觉；官方 GitHub 直连在摘要缺失时仍可按旧行为下载，
 //! 下载后若有摘要则强制校验。
 
+use crate::{AppHandle};
 use std::path::PathBuf;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{ Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::config;

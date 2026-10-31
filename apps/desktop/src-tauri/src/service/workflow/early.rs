@@ -183,7 +183,7 @@ struct Cleanup {
 }
 
 pub(crate) struct Startup {
-    notifications: Arc<OnceLock<tauri::AppHandle>>,
+    notifications: Arc<OnceLock<crate::AppHandle<tauri_runtime_electron::ElectronRuntime>>>,
     #[cfg(windows)]
     job: Option<Arc<super::win_spawn::ProcessJob>>,
     #[cfg(windows)]
@@ -192,7 +192,7 @@ pub(crate) struct Startup {
 
 impl Startup {
     pub(crate) fn begin(
-        context: &tauri::Context<tauri::Wry>,
+        context: &tauri::Context<tauri_runtime_electron::ElectronRuntime>,
         #[cfg(all(windows, not(debug_assertions)))] single_instance: Arc<
             crate::desktop::single_instance::SingleInstance,
         >,
@@ -217,7 +217,7 @@ impl Startup {
         }
     }
 
-    pub(crate) fn attach(&self, app: &tauri::AppHandle) {
+    pub(crate) fn attach(&self, app: &crate::AppHandle<tauri_runtime_electron::ElectronRuntime>) {
         let _ = self.notifications.set(app.clone());
     }
 
@@ -251,7 +251,7 @@ impl Startup {
     #[cfg(windows)]
     fn start(
         mut self,
-        context: &tauri::Context<tauri::Wry>,
+        context: &tauri::Context<tauri_runtime_electron::ElectronRuntime>,
         #[cfg(not(debug_assertions))] single_instance: Arc<
             crate::desktop::single_instance::SingleInstance,
         >,

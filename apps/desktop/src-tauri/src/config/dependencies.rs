@@ -12,11 +12,12 @@
 //! 各有一处真值。将来做本地捆绑版只需把清单（或映射表）指向 `resources/*`，路径解析
 //! 逻辑无需改动。写入单点收口到 [`record`]，且内容不变时不落盘。
 
+use crate::{AppHandle};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::{AppHandle, Runtime};
+use tauri::{ Runtime};
 
 use super::manifest;
 

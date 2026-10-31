@@ -6,8 +6,9 @@
 //! - Windows：对创建时记录的精确 PID 执行 `taskkill /T /F`，不再按命令行模糊
 //!   枚举，避免误杀其它插件操作或用户进程。
 
+use crate::{AppHandle};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{ Emitter, Manager};
 
 use super::process::{ActivePluginProcess, ProcessOwner};
 
@@ -164,7 +165,7 @@ pub(crate) fn terminate_probe_tree(pid: u32) -> bool {
 pub async fn cancel(app_handle: &AppHandle) {
     terminate_active_install().await;
 
-    if let Some(window) = app_handle.get_webview_window("main") {
+    if let Some(window) = app_handle.get_window("main") {
         let _ = window.emit(PREINSTALL_CANCEL_EVENT, PreinstallCancelPayload {});
     }
 }

@@ -17,7 +17,7 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::cancel::terminate_owned_install;
 use super::install::install_internal;
@@ -685,6 +685,11 @@ fn prepare_internal_plugins(
             continue;
         }
         let Some(bundled) = resolve_bundle(&preset.id) else {
+            if !cfg!(debug_assertions) {
+                return Err(format!(
+                    "INTERNAL_PLUGIN_SOURCE_MISSING: 内置插件 {name} 的发布资源缺失；请重新安装应用或恢复应用资源目录后重试。"
+                ));
+            }
             sources_ready = false;
             // 未找到内置插件目录：release 说明构建期 build:plugins 未打包（发布
             // 缺陷，由 build:plugins 响亮失败）；debug 自动发现 packages/* 中非私有
@@ -720,7 +725,7 @@ fn prepare_internal_plugins(
         // 是「应用资源缺失」而非「路径变更」：直接给出精确错误，阻断本轮重装。
         if !internal_plugin_entry_is_ready(&bundled) {
             return Err(format!(
-                "INTERNAL_PLUGIN_SOURCE_MISSING: 内置插件 {name} 的捆绑源目录 {} 缺失或不可读（应用资源目录可能被移动/删除或盘符变更）。pnpm 会静默跳过安装（exit 0 无产物），导致服务启动时 loader 抛 ERR_MODULE_NOT_FOUND。请重新安装应用或恢复应用资源目录后重试。",
+                "INTERNAL_PLUGIN_SOURCE_MISSING: 内置插件 {name} 的捆绑源 {} 清单或声明的宿主入口缺失、无效或不可读。开发环境请运行 pnpm dev:plugins 并等待产物就绪；发布版请重新安装应用或恢复应用资源目录后重试。",
                 bundled.display()
             ));
         }
@@ -879,6 +884,36 @@ fn prepare_early_plugins_from(
     Ok(EarlyPluginState::Ready)
 }
 
+#[cfg(debug_assertions)]
+async fn wait_for_dev_plugin_sources(
+    sources: &[PathBuf],
+    mut cancel: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), String> {
+    let mut waiting = false;
+    loop {
+        if *cancel.borrow() {
+            return Err("INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled".into());
+        }
+        let pending: Vec<_> = sources
+            .iter()
+            .filter(|source| !internal_plugin_entry_is_ready(source))
+            .collect();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        if !waiting {
+            log::info!("INTERNAL_PLUGIN_DEV_WAIT: waiting for pnpm dev:plugins: {pending:?}");
+            waiting = true;
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
+            _ = cancel.changed() => {
+                return Err("INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled".into());
+            }
+        }
+    }
+}
+
 async fn ensure_inner(
     app_handle: &AppHandle,
     internal: &[&PreinstallPluginInfo],
@@ -886,6 +921,24 @@ async fn ensure_inner(
     owner: ProcessOwner,
 ) -> Result<(), String> {
     let profile = profile_dir(app_handle);
+    #[cfg(debug_assertions)]
+    {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .expect("desktop workspace root")
+            .join("packages");
+        let sources: Vec<_> = internal
+            .iter()
+            .filter(|preset| {
+                !super::disable::has_patch_disable(&profile, &preset.id)
+                    && !super::disable::has_patch_disable(&profile, installed_name(preset))
+            })
+            .filter_map(|preset| bundled_plugin_dir(app_handle, &preset.id))
+            .filter(|source| source.starts_with(&workspace))
+            .collect();
+        wait_for_dev_plugin_sources(&sources, cancel.clone()).await?;
+    }
     let manifest_path = profile.join("package.json");
     let InternalPluginCheck {
         mut manifest,
@@ -1311,6 +1364,37 @@ fn is_legacy_profile_fallback_target(target: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(debug_assertions)]
+    #[tokio::test]
+    async fn dev_plugin_sources_resume_when_declared_host_entry_appears() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("package.json"), br#"{"main":"dist/index.js"}"#).unwrap();
+        let sources = vec![root.path().to_path_buf()];
+        let (_cancel, receiver) = tokio::sync::watch::channel(false);
+        let waiting = super::wait_for_dev_plugin_sources(&sources, receiver);
+        tokio::pin!(waiting);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), &mut waiting).await.is_err());
+        std::fs::create_dir(root.path().join("dist")).unwrap();
+        std::fs::write(root.path().join("dist/index.js"), b"export function apply() {}").unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), waiting).await.unwrap().unwrap();
+    }
+
+    #[cfg(debug_assertions)]
+    #[tokio::test]
+    async fn dev_plugin_sources_wait_is_cancellable() {
+        let root = tempfile::tempdir().unwrap();
+        let sources = vec![root.path().to_path_buf()];
+        let (cancel, receiver) = tokio::sync::watch::channel(false);
+        let waiting = super::wait_for_dev_plugin_sources(&sources, receiver);
+        tokio::pin!(waiting);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), &mut waiting).await.is_err());
+        cancel.send(true).unwrap();
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), waiting).await.unwrap().unwrap_err(),
+            "INTERNAL_PLUGIN_INSTALL_CANCELLED: plugin install was cancelled"
+        );
+    }
+
     #[tokio::test]
     async fn unscoped_flight_cleanup_uses_the_acquired_coordinator() {
         use crate::service::workflow::instances;

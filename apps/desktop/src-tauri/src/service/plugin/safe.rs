@@ -18,7 +18,7 @@
 //! 目录才安全），故由 launch 在 spawn 前调用。普通档案一律不动：用户的插件是用户资产。
 
 use std::collections::HashSet;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::recovery::is_actionable_plugin_ref;
 use super::{installed_name, list_installed, load_presets, uninstall_recovery};

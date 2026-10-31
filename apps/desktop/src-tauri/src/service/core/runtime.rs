@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 #[cfg(windows)]
 use std::os::windows::fs::FileTypeExt;
 
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::source::CoreSource;
 

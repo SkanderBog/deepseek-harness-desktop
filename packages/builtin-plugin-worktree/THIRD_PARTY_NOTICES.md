@@ -15,7 +15,7 @@
 Integration points:
 
 - Official session title: `sessionTitle.refresh()` is the explicit entry point when the kernel's automatic title generation did not run, right after the first request header lands; its absence or failure never affects the task (`src/host/service/title.ts:21`, `src/host/events/session-event.ts:9`).
-- Official attachments service: attachment descriptors are handed back to the official collection, and a missing capability only falls back, never blocks (`src/client/service/attachments.ts:5`, `src/client/service/attachments.test.ts:115`).
+- Official attachments service: attachment descriptors are handed back to the official collection, and a missing capability only falls back, never blocks (`src/client/service/attachments.ts:5`).
 - Official composer DOM: send interception depends on the official composer's private DOM because no pre-submit hook exists (`src/client/components/mode-select.tsx:104`); file uploads wait for readiness exactly as the official composer disables send while it is not ready.
 - Ordinary session titles: refreshed once per session via the official entry, matching the kernel's own timing.
 

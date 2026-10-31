@@ -34,11 +34,6 @@ pub fn linux_inotify_max_user_watches() -> Option<u64> {
     content.trim().parse::<u64>().ok()
 }
 
-/// 生成不冲突的下载路径：目标已存在时按 `name (n).ext` 递增命名，
-/// 与浏览器下载管理器的重名行为保持一致。
-///
-/// `destination` 是 WebView2 给出的默认保存路径（系统下载目录 + 文件名），
-/// 父目录不存在时回退到 `%USERPROFILE%\Downloads`。
 pub fn unique_download_path(destination: &Path) -> PathBuf {
     use std::env;
 

@@ -8,7 +8,7 @@ use crate::config;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::local::{local_core, local_core_package_dir};
 use crate::service::download::parse_version_from_tag;

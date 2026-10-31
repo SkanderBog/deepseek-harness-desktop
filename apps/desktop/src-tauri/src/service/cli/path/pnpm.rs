@@ -2,7 +2,7 @@
 //! shim），并生成传给 shim 的精确 `DSH_PNPM` 值。
 
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use crate::AppHandle;
 #[cfg(unix)]
 use tauri::Manager;
 

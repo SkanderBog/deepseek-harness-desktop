@@ -1,9 +1,10 @@
+use crate::{AppHandle};
 use serde::Serialize;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{ Manager, Runtime};
 
 use super::constants::*;
 use super::dependencies;
@@ -281,7 +282,7 @@ pub fn set_prefer_bundled_node_runtime(prefer: bool) {
 }
 
 /// 已安装的捆绑运行时 node 二进制（未安装时返回 None）
-pub fn bundled_node_binary(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
+pub fn bundled_node_binary(app_handle: &crate::AppHandle) -> Option<PathBuf> {
     bundled_node_binary_from(
         &get_node_install_path(app_handle),
         &dependencies::entry_relative(app_handle, dependencies::DEP_NODE),
@@ -301,7 +302,7 @@ pub(crate) fn bundled_node_binary_from(runtime_dir: &Path, entry: &Path) -> Opti
 ///
 /// 优先级：ABI 探测要求捆绑运行时（原生模块不匹配时的兜底）> 映射表（`null` =
 /// 系统环境 / 路径 = 指定根）> 未记录时沿用「本地版本兼容优先」> 已安装的捆绑运行时。
-pub fn get_node_binary_path(app_handle: &tauri::AppHandle) -> PathBuf {
+pub fn get_node_binary_path(app_handle: &crate::AppHandle) -> PathBuf {
     node_binary_path_from(
         &get_node_install_path(app_handle),
         &dependencies::entry_relative(app_handle, dependencies::DEP_NODE),
@@ -348,7 +349,7 @@ pub(crate) fn node_binary_path_from(
     bundled.unwrap_or(target)
 }
 
-pub fn get_node_install_path(app_handle: &tauri::AppHandle) -> PathBuf {
+pub fn get_node_install_path(app_handle: &crate::AppHandle) -> PathBuf {
     dependencies::active_root(app_handle, dependencies::DEP_NODE)
 }
 
@@ -639,7 +640,7 @@ fn is_supported_node_version(version: &str) -> bool {
 }
 
 /// 运行 `node --version` 并判断运行时是否兼容
-pub fn is_runtime_compatible(app_handle: &tauri::AppHandle) -> bool {
+pub fn is_runtime_compatible(app_handle: &crate::AppHandle) -> bool {
     let node = get_node_binary_path(app_handle);
     if !node.exists() {
         return false;

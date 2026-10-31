@@ -25,7 +25,9 @@ tauri = { version = "2", default-features = false, features = [
   "tray-icon",
   "image-png",
   "devtools",
-  "protocol-asset"
+  "protocol-asset",
+  "unstable",
+  "dynamic-acl"
 ] }
 tauri-runtime-electron = { version = "0.1.0", path = "../../../crates/tauri-runtime-electron", features = [
   "tauri",

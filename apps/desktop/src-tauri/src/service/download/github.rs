@@ -31,7 +31,7 @@ pub struct LatestDshPkg {
 }
 
 /// 构造带 User-Agent 与超时的 GitHub 请求客户端。
-fn github_client(app_handle: &tauri::AppHandle) -> Result<reqwest::Client, String> {
+fn github_client(app_handle: &crate::AppHandle) -> Result<reqwest::Client, String> {
     config::proxy::http_client_builder(app_handle)?
         .user_agent("deepseek-harness-desktop")
         .timeout(std::time::Duration::from_secs(5))
@@ -160,7 +160,7 @@ fn first_non_preview_tag_from_atom(body: &str) -> Option<String> {
 /// atom 条目：预览版（Pre-release label 发布、tag 命名含预览标记）一律跳过，
 /// 只取最新一条非预览版——避免限流窗口内把预览版误当「最新 release」推给用户
 /// （见 [`is_preview_tag`]）。
-async fn fetch_latest_dsh_tag_from_atom(app_handle: &tauri::AppHandle) -> Result<String, String> {
+async fn fetch_latest_dsh_tag_from_atom(app_handle: &crate::AppHandle) -> Result<String, String> {
     let client = github_client(app_handle)?;
     let body = client
         .get(format!("{DSH_PKG_REPO}/releases.atom"))
@@ -243,7 +243,7 @@ async fn fetch_dsh_digest_from_expanded_assets(
 /// 旧实现直接回 Err，导致初始化流程报 `DSH_INTEGRITY_UNAVAILABLE` 卡死）。仅当所有
 /// release 都是预览版（找不到非预览版）时才返回 Err，由调用方保持本地安装、不提示。
 pub async fn fetch_latest_dsh_pkg_info(
-    app_handle: &tauri::AppHandle,
+    app_handle: &crate::AppHandle,
 ) -> Result<LatestDshPkg, String> {
     let client = github_client(app_handle)?;
     let expected_name = config::get_dsh_download_url()?
@@ -377,7 +377,7 @@ pub async fn fetch_latest_dsh_pkg_info(
 /// 排除标记为 pre-release 的发行版。先从完整 release 列表按解析后的 SemVer 精确匹配
 /// tag，再复用固定 tag 的资产与摘要查询，确保下载内容与校验摘要属于同一发布。
 pub async fn fetch_dsh_pkg_version(
-    app_handle: &tauri::AppHandle,
+    app_handle: &crate::AppHandle,
     version: &str,
 ) -> Result<LatestDshPkg, String> {
     let release = fetch_dsh_pkg_releases(app_handle)
@@ -395,7 +395,7 @@ pub async fn fetch_dsh_pkg_version(
 /// 见 [`is_preview_tag`]），再复用固定 tag 的资产/摘要查询，确保下载内容与校验摘要
 /// 属于同一发布。找不到非预览版（全部是预览版）时返回错误，调用方保持不更新——
 /// 不把预览版推给用户自动更新，也不再以「最新是预览版」整段卡死初始化流程。
-async fn fetch_latest_non_preview(app_handle: &tauri::AppHandle) -> Result<LatestDshPkg, String> {
+async fn fetch_latest_non_preview(app_handle: &crate::AppHandle) -> Result<LatestDshPkg, String> {
     let tag = fetch_dsh_pkg_releases(app_handle)
         .await?
         .into_iter()
@@ -412,7 +412,7 @@ async fn fetch_latest_non_preview(app_handle: &tauri::AppHandle) -> Result<Lates
 /// API 失败时资产 URL 按 tag 确定性构造，摘要从同一个 tag 的页面读取，避免
 /// latest 地址与固定 tag 的摘要发生错配。
 pub async fn fetch_dsh_pkg_asset(
-    app_handle: &tauri::AppHandle,
+    app_handle: &crate::AppHandle,
     tag: &str,
 ) -> Result<LatestDshPkg, String> {
     let client = github_client(app_handle)?;
@@ -706,7 +706,7 @@ async fn fetch_dsh_pkg_releases_from_html(
 /// 对匿名请求不可见）。API 失败时先读取 github.com Releases 页面，再失败时
 /// 由调用方回退 git tags，预览标记按 tag 命名（[`is_preview_tag`]）兜底。
 pub async fn fetch_dsh_pkg_releases(
-    app_handle: &tauri::AppHandle,
+    app_handle: &crate::AppHandle,
 ) -> Result<Vec<DshPkgReleaseMeta>, String> {
     let client = github_client(app_handle)?;
     let mut all_releases = Vec::new();
@@ -770,7 +770,7 @@ pub async fn fetch_dsh_pkg_releases(
 /// 仅在更新判定需要反查“无 tag 的老记录”时调用，失败时由调用方回退到
 /// “以实际文件为准”的保守分支。
 pub async fn fetch_dsh_pkg_tags(
-    app_handle: &tauri::AppHandle,
+    app_handle: &crate::AppHandle,
 ) -> Result<Vec<(String, String)>, String> {
     let client = github_client(app_handle)?;
     let tags: serde_json::Value = github_api_get(

@@ -3,7 +3,8 @@
 //! 跨平台注册交给 Tauri 官方插件；Windows 只补齐其底层库对缺失注册表键和
 //! 重复禁用不幂等的问题，并清理由任务管理器维护的残留状态。
 
-use tauri::{AppHandle, Runtime};
+use crate::{AppHandle};
+use tauri::{ Runtime};
 use tauri_plugin_autostart::ManagerExt;
 
 #[cfg(windows)]

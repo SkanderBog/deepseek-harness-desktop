@@ -1,5 +1,7 @@
 #![cfg(windows)]
 
+use crate::AppHandle;
+
 use std::{
     ffi::c_void,
     os::windows::io::{FromRawHandle, OwnedHandle},
@@ -8,7 +10,7 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Manager};
+use tauri::{ Manager};
 use tauri_plugin_deep_link::DeepLink;
 use windows_sys::Win32::{
     Foundation::{
@@ -46,7 +48,7 @@ struct WindowClass {
 }
 
 #[link(name = "user32")]
-extern "system" {
+unsafe extern "system" {
     fn RegisterClassW(class: *const WindowClass) -> u16;
 }
 
@@ -121,7 +123,7 @@ fn dispatch(inbox: &Arc<Mutex<Inbox>>, app: &AppHandle) -> Result<(), String> {
     app.run_on_main_thread(move || {
         let pending = std::mem::take(&mut inbox.lock().unwrap_or_else(|e| e.into_inner()).pending);
         for request in pending {
-            if let Some(deep_link) = handle.try_state::<DeepLink<tauri::Wry>>() {
+            if let Some(deep_link) = handle.try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>() {
                 deep_link.handle_cli_arguments(request.args.iter());
             }
             crate::utils::show_main_window(&handle);
@@ -214,59 +216,61 @@ unsafe extern "system" fn window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    match msg {
-        WM_NCCREATE => {
-            let create = &*(lparam as *const CREATESTRUCTW);
-            SetLastError(0);
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as _);
-            if GetLastError() != 0 {
-                return 0;
-            }
-            // 默认处理初始化窗口标题，旧协议依赖它按 class/title 查找。
-            DefWindowProcW(hwnd, msg, wparam, lparam)
-        }
-        WM_COPYDATA => {
-            if lparam == 0 {
-                return 0;
-            }
-            let copy = &*(lparam as *const CopyData);
-            let state = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Arc<Mutex<Inbox>>;
-            if state.is_null()
-                || copy.tag != MESSAGE_TAG
-                || copy.data.is_null()
-                || copy.length == 0
-                || copy.length as usize > MAX_MESSAGE_BYTES
-            {
-                return 0;
-            }
-            let bytes = std::slice::from_raw_parts(copy.data.cast(), copy.length as usize);
-            let Some(request) = Request::parse(bytes) else {
-                return 0;
-            };
-            let inbox = &*state;
-            let app = {
-                let mut state = inbox.lock().unwrap_or_else(|e| e.into_inner());
-                state.pending.push(request);
-                state.app.clone()
-            };
-            if let Some(app) = app {
-                if let Err(error) = dispatch(inbox, &app) {
-                    log::error!("{error}");
+    unsafe {
+        match msg {
+            WM_NCCREATE => {
+                let create = &*(lparam as *const CREATESTRUCTW);
+                SetLastError(0);
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as _);
+                if GetLastError() != 0 {
                     return 0;
                 }
+                // 默认处理初始化窗口标题，旧协议依赖它按 class/title 查找。
+                DefWindowProcW(hwnd, msg, wparam, lparam)
             }
-            1
+            WM_COPYDATA => {
+                if lparam == 0 {
+                    return 0;
+                }
+                let copy = &*(lparam as *const CopyData);
+                let state = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Arc<Mutex<Inbox>>;
+                if state.is_null()
+                    || copy.tag != MESSAGE_TAG
+                    || copy.data.is_null()
+                    || copy.length == 0
+                    || copy.length as usize > MAX_MESSAGE_BYTES
+                {
+                    return 0;
+                }
+                let bytes = std::slice::from_raw_parts(copy.data.cast(), copy.length as usize);
+                let Some(request) = Request::parse(bytes) else {
+                    return 0;
+                };
+                let inbox = &*state;
+                let app = {
+                    let mut state = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                    state.pending.push(request);
+                    state.app.clone()
+                };
+                if let Some(app) = app {
+                    if let Err(error) = dispatch(inbox, &app) {
+                        log::error!("{error}");
+                        return 0;
+                    }
+                }
+                1
+            }
+            STOP_TARGET => {
+                PostQuitMessage(0);
+                1
+            }
+            WM_CLOSE => 0,
+            WM_NCDESTROY => {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
-        STOP_TARGET => {
-            PostQuitMessage(0);
-            1
-        }
-        WM_CLOSE => 0,
-        WM_NCDESTROY => {
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-            DefWindowProcW(hwnd, msg, wparam, lparam)
-        }
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
 
@@ -355,7 +359,7 @@ pub struct SingleInstance {
 impl SingleInstance {
     pub fn attach(&self, app: &AppHandle) -> Result<(), String> {
         if crate::utils::shell_window(app).is_none()
-            || app.try_state::<DeepLink<tauri::Wry>>().is_none()
+            || app.try_state::<DeepLink<tauri_runtime_electron::ElectronRuntime>>().is_none()
         {
             return Err("SINGLE_INSTANCE_NOT_READY: attach after the main window and deep-link plugin are ready".into());
         }

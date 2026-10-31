@@ -63,7 +63,6 @@
     "dev": "tsdown --watch",
     "prepublishOnly": "nr build",
     "start": "tsx src/index.ts",
-    "test": "vitest run",
     "typecheck": "tsc"
   },
   "dependencies": {
@@ -79,8 +78,6 @@
     "yaml": "catalog:testing"
   },
   "devDependencies": {
-    "@testing-library/dom": "catalog:testing",
-    "@testing-library/react": "catalog:testing",
     "@types/node": "catalog:types",
     "@types/qrcode": "catalog:types",
     "@types/react": "catalog:types",
@@ -88,12 +85,10 @@
     "@types/semver": "catalog:types",
     "@types/ssh2": "catalog:types",
     "dsh-tauri-config": "workspace:*",
-    "jsdom": "catalog:testing",
     "qrcode": "catalog:utils",
     "react": "catalog:runtime",
     "react-dom": "catalog:runtime",
     "tsdown": "catalog:cli",
-    "typescript": "catalog:cli",
-    "vitest": "catalog:testing"
+    "typescript": "catalog:cli"
   }
 }

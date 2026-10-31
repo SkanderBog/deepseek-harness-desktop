@@ -1,8 +1,9 @@
 //! 预装与已安装插件的增删改查、管理。
 
+use crate::{AppHandle, Window};
 use crate::config;
 use crate::service::{plugin, workflow::instances};
-use tauri::{AppHandle, WebviewWindow};
+
 use tauri_plugin_opener::OpenerExt;
 
 fn mark_preinstall_done(app_handle: &AppHandle) {
@@ -17,7 +18,7 @@ fn mark_preinstall_done(app_handle: &AppHandle) {
 #[tauri::command]
 pub async fn get_preinstall_plugins(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
 ) -> Result<Vec<plugin::PreinstallPlugin>, String> {
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope(profile, async { Ok(plugin::list(&app_handle)) }).await
@@ -26,7 +27,7 @@ pub async fn get_preinstall_plugins(
 #[tauri::command]
 pub async fn install_preinstall_plugins(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     install_ids: Vec<String>,
     uninstall_ids: Vec<String>,
 ) -> Result<(), String> {
@@ -52,7 +53,7 @@ pub async fn cancel_plugin_processes(app_handle: AppHandle) {
 #[tauri::command]
 pub async fn install_plugin_specs(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     specs: Vec<String>,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -67,7 +68,7 @@ pub async fn install_plugin_specs(
 #[tauri::command]
 pub async fn get_local_plugin_hmr(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
 ) -> Result<plugin::LocalHmrStatus, String> {
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope(profile, async {
@@ -79,7 +80,7 @@ pub async fn get_local_plugin_hmr(
 #[tauri::command]
 pub async fn set_local_plugin_hmr(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     enabled: bool,
 ) -> Result<plugin::LocalHmrStatus, String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -100,7 +101,7 @@ pub async fn set_local_plugin_hmr(
 #[tauri::command]
 pub async fn inspect_plugin_specs(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     specs: Vec<String>,
     dsh: Option<String>,
 ) -> Result<Vec<plugin::compat::PluginInspect>, String> {
@@ -111,7 +112,7 @@ pub async fn inspect_plugin_specs(
 #[tauri::command]
 pub async fn allow_plugin_versions(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     versions: Vec<plugin::IncompatibleVersion>,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -125,7 +126,7 @@ pub async fn allow_plugin_versions(
 #[tauri::command]
 pub async fn allow_plugin_policy_versions(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     versions: Vec<plugin::PolicyBlockedVersion>,
     expected_profile: Option<String>,
 ) -> Result<(), String> {
@@ -139,7 +140,7 @@ pub async fn allow_plugin_policy_versions(
 #[tauri::command]
 pub async fn skip_preinstall_plugins(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope(profile, async {
@@ -152,7 +153,7 @@ pub async fn skip_preinstall_plugins(
 #[tauri::command]
 pub async fn ensure_internal_plugins(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope(profile, plugin::ensure_internal_plugins(&app_handle)).await
@@ -161,7 +162,7 @@ pub async fn ensure_internal_plugins(
 #[tauri::command]
 pub async fn cancel_internal_plugins(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope(profile, plugin::cancel_internal_plugins()).await
@@ -170,7 +171,7 @@ pub async fn cancel_internal_plugins(
 #[tauri::command]
 pub fn get_preinstall_pending(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
 ) -> Result<bool, String> {
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope_sync(profile, || Ok(plugin::preinstall_pending(&app_handle)))
@@ -187,7 +188,7 @@ pub async fn open_preinstall_repo(app_handle: AppHandle, id: String) -> Result<(
 }
 
 #[tauri::command]
-pub fn get_dsh_plugins(app_handle: AppHandle, window: WebviewWindow) -> Vec<plugin::DshPlugin> {
+pub fn get_dsh_plugins(app_handle: AppHandle, window: Window) -> Vec<plugin::DshPlugin> {
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope_sync(profile, || {
         let mut plugins = plugin::watch::list(&app_handle);
@@ -199,7 +200,7 @@ pub fn get_dsh_plugins(app_handle: AppHandle, window: WebviewWindow) -> Vec<plug
 #[tauri::command]
 pub async fn refresh_plugin_updates(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
 ) -> Result<Vec<plugin::DshPlugin>, String> {
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope(profile, plugin::update::refresh(&app_handle)).await
@@ -208,7 +209,7 @@ pub async fn refresh_plugin_updates(
 #[tauri::command]
 pub async fn update_dsh_plugins(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     ids: Vec<String>,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -223,7 +224,7 @@ pub async fn update_dsh_plugins(
 #[tauri::command]
 pub async fn remove_dsh_plugins(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     ids: Vec<String>,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -238,7 +239,7 @@ pub async fn remove_dsh_plugins(
 #[tauri::command]
 pub fn report_plugin_error(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     id: String,
     error: String,
     action: Option<String>,
@@ -270,7 +271,7 @@ pub fn report_plugin_error(
 #[tauri::command]
 pub fn detect_plugin_recovery(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     logs: Vec<String>,
 ) -> plugin::PluginRecoveryInfo {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -280,7 +281,7 @@ pub fn detect_plugin_recovery(
 #[tauri::command]
 pub fn recover_plugin(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     id: String,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -294,7 +295,7 @@ pub fn recover_plugin(
 #[tauri::command]
 pub fn disable_dsh_plugin(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     id: String,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -308,7 +309,7 @@ pub fn disable_dsh_plugin(
 #[tauri::command]
 pub fn enable_dsh_plugin(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     id: String,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -322,7 +323,7 @@ pub fn enable_dsh_plugin(
 #[tauri::command]
 pub fn snapshot_plugin(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     id: String,
 ) -> Result<plugin::snapshot::SnapshotInfo, String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -332,7 +333,7 @@ pub fn snapshot_plugin(
 #[tauri::command]
 pub fn snapshot_plugins(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     ids: Vec<String>,
 ) -> Result<Vec<plugin::snapshot::SnapshotResult>, String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -344,7 +345,7 @@ pub fn snapshot_plugins(
 #[tauri::command]
 pub fn get_plugin_backup(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     id: String,
 ) -> plugin::snapshot::PluginBackupInfo {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -354,7 +355,7 @@ pub fn get_plugin_backup(
 #[tauri::command]
 pub async fn restore_plugin(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     id: String,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -377,7 +378,7 @@ pub async fn pick_local_plugin_dir(app_handle: AppHandle) -> Result<Option<Strin
             .run_on_main_thread(move || {
                 let mut dialog = rfd::FileDialog::new().set_title("选择本地插件目录");
                 if let Some(window) =
-                    app.get_webview_window(crate::desktop::builder::MAIN_WINDOW_LABEL)
+                    app.get_window(crate::desktop::builder::MAIN_WINDOW_LABEL)
                 {
                     dialog = dialog.set_parent(&window);
                 }
@@ -405,7 +406,7 @@ pub async fn pick_local_plugin_dir(app_handle: AppHandle) -> Result<Option<Strin
 #[tauri::command]
 pub fn delete_plugin_backup(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     id: String,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());

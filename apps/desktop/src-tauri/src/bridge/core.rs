@@ -4,7 +4,7 @@
 //! 到槽位、卸载已下载的历史版本，以及通过用户包管理器 CLI 更新本地核心。
 
 use crate::service::core;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 /// 核心列表：本地 CLI 核心 + 预打包各版本（含 active 标记、cli path 与
 /// preview 预览版标记）。版本行数据源为 GitHub releases（含 Pre-release label），
@@ -18,7 +18,7 @@ pub async fn get_cores(app_handle: AppHandle) -> Vec<core::HarnessCore> {
 /// 互换；自动重启由前端负责）
 #[tauri::command]
 pub async fn set_active_core(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
     id: String,
 ) -> Result<core::HarnessCore, String> {
@@ -29,7 +29,7 @@ pub async fn set_active_core(
 /// 下载指定 tag 的预打包核心到历史槽位（不激活；切换由 `set_active_core` 完成）
 #[tauri::command]
 pub async fn download_core(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
     tag: String,
 ) -> Result<core::HarnessCore, String> {
@@ -46,7 +46,7 @@ pub async fn remove_core(app_handle: AppHandle, id: String) -> Result<(), String
 
 #[tauri::command]
 pub async fn update_local_core(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<String, String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());

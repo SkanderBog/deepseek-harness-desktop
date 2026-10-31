@@ -1017,6 +1017,9 @@ importers:
 
   packages/builtin-plugin-bundle:
     dependencies:
+      dsh-taiwind:
+        specifier: 'catalog:'
+        version: 0.3.0
       dsh-tauri:
         specifier: workspace:*
         version: link:../builtin-plugin-tauri
@@ -1188,9 +1191,6 @@ importers:
       valtio-define:
         specifier: catalog:runtime
         version: 1.4.1(@types/react@19.2.18)(react@19.2.8)
-      vitest:
-        specifier: catalog:testing
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(tsx@4.23.12)(yaml@2.9.0))
 
   packages/builtin-plugin-notification:
     dependencies:
@@ -1213,9 +1213,6 @@ importers:
       tsdown:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
-      vitest:
-        specifier: catalog:testing
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(tsx@4.23.12)(yaml@2.9.0))
 
   packages/builtin-plugin-pet:
     dependencies:
@@ -1278,12 +1275,6 @@ importers:
         specifier: catalog:testing
         version: 2.9.0
     devDependencies:
-      '@testing-library/dom':
-        specifier: catalog:testing
-        version: 10.4.2
-      '@testing-library/react':
-        specifier: catalog:testing
-        version: 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@types/node':
         specifier: catalog:types
         version: 22.20.1
@@ -1305,9 +1296,6 @@ importers:
       dsh-tauri-config:
         specifier: workspace:*
         version: link:../builtin-plugin-config
-      jsdom:
-        specifier: catalog:testing
-        version: 26.1.0
       qrcode:
         specifier: catalog:utils
         version: 1.5.4
@@ -1323,9 +1311,6 @@ importers:
       typescript:
         specifier: catalog:cli
         version: 5.8.3
-      vitest:
-        specifier: catalog:testing
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(tsx@4.23.12)(yaml@2.9.0))
 
   packages/builtin-plugin-rightclick:
     dependencies:
@@ -1391,9 +1376,6 @@ importers:
       tsdown:
         specifier: catalog:cli
         version: 0.17.4(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(oxc-resolver@11.24.2)(publint@0.3.24)(synckit@0.11.13)(typescript@5.8.3)
-      vitest:
-        specifier: catalog:testing
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(tsx@4.23.12)(yaml@2.9.0))
 
   packages/builtin-plugin-tauri:
     dependencies:

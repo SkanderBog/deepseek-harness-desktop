@@ -13,7 +13,7 @@ use super::process::{has_owned_process, stop, terminate_stale_harness_processes}
 /// 返回是否真正落盘更新了 Harness（dsh 任务实际下载并解压）；仅重装
 /// Node/pnpm/Git 或全部任务被跳过时返回 false，供调用方决定是否重启页面。
 pub async fn install(
-    app_handle: &tauri::AppHandle,
+    app_handle: &crate::AppHandle,
     mut dsh_latest: Option<download::LatestDshPkg>,
 ) -> Result<bool, String> {
     let _transition = super::process::acquire_core_transition().await?;

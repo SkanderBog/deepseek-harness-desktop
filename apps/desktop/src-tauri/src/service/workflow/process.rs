@@ -13,7 +13,8 @@ use std::process::Command;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use tauri::AppHandle;
+#[cfg(test)]
+use crate::AppHandle;
 
 use super::status;
 use super::sweep::harness_pid_path;
@@ -1144,7 +1145,7 @@ fn is_harness_command_line(cmdline: &str, dsh_bin: &str) -> bool {
 /// 与父进程是否存活无关——垫片/shell 包装层的命令行同样带着入口路径与服务参数，
 /// 因此转发层与其下方的真身会被分别命中，不存在 Windows 的转发层漏杀问题
 /// （debug 构建跳过该分支，只按 `.harness.pid` 标记回收）。
-pub fn terminate_stale_harness_processes(app_handle: &tauri::AppHandle) -> Result<(), String> {
+pub fn terminate_stale_harness_processes(app_handle: &crate::AppHandle) -> Result<(), String> {
     if super::instances::profiles()
         .into_iter()
         .any(|profile| super::instances::scope_sync(profile, has_owned_process))
@@ -1206,7 +1207,7 @@ pub(super) fn warn_if_inotify_watch_limit_low() {
 }
 
 /// 停止 Harness 服务
-pub async fn stop(app_handle: tauri::AppHandle) -> Result<(), String> {
+pub async fn stop(app_handle: crate::AppHandle) -> Result<(), String> {
     let profile = super::instances::current_profile()
         .unwrap_or_else(|| crate::service::profile::active_profile(&app_handle));
     super::instances::scope(profile.clone(), async move {
@@ -1260,7 +1261,7 @@ pub async fn stop(app_handle: tauri::AppHandle) -> Result<(), String> {
 /// 同步、可在退出路径调用（无 async 运行时依赖）：进程从 SIGKILL 返回那一刻已死，
 /// 但内核回收监听套接字仍有短暂滞后，故结束过进程后补一次有界等待，让紧随其后的
 /// 安装器/新实例看到端口已释放。没持有进程时不等待，避免在用户可见路径上白耗。
-fn stop_instance_for_installer(app_handle: &tauri::AppHandle) -> Result<(), String> {
+fn stop_instance_for_installer(app_handle: &crate::AppHandle) -> Result<(), String> {
     stop_instance_at(
         &harness_pid_path(app_handle),
         super::instances::port(app_handle),
@@ -1297,7 +1298,7 @@ pub(super) fn stop_instance_at(
 ///
 /// 退出路径上不更新状态，只结束当前应用持有的 Harness 进程树（与安装器交接共用
 /// [`stop_for_installer`]，保证两条路径行为一致）。
-pub fn stop_for_installer(app_handle: &tauri::AppHandle) -> Result<(), String> {
+pub fn stop_for_installer(app_handle: &crate::AppHandle) -> Result<(), String> {
     let mut profiles = super::instances::profiles();
     if profiles.is_empty() {
         profiles.push(crate::service::profile::active_profile(app_handle));
@@ -1313,7 +1314,7 @@ pub fn stop_for_installer(app_handle: &tauri::AppHandle) -> Result<(), String> {
     result
 }
 
-pub fn stop_on_exit(app_handle: &tauri::AppHandle) {
+pub fn stop_on_exit(app_handle: &crate::AppHandle) {
     super::instances::begin_shutdown();
     if let Err(error) = stop_for_installer(app_handle) {
         log::error!("Harness exit cleanup failed: {error}");

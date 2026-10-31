@@ -1,11 +1,11 @@
 import { defineWebServer } from 'dsh-h3'
 import { guard } from 'dsh-tauri'
-import bindings from './routes/bindings/get'
-import attach from './routes/bindings/post'
-import checkout from './routes/checkouts/post'
-import deleteWorktree from './routes/delete'
-import postWorktree from './routes/post'
-import status from './routes/status/get'
+import bindings from './routes/bindings.get'
+import attach from './routes/bindings.post'
+import checkout from './routes/checkouts.post'
+import status from './routes/status.get'
+import deleteWorktree from './routes/worktree.delete'
+import postWorktree from './routes/worktree.post'
 
 export const server = defineWebServer((app) => {
   app.use(guard)

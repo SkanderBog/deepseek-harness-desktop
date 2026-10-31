@@ -18,7 +18,7 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandl
 use std::os::windows::process::ExitStatusExt;
 use std::path::Path;
 use std::process::{ExitStatus, Output};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
@@ -117,7 +117,12 @@ pub fn spawn_with_hidden_console_owned(
     current_dir: Option<&Path>,
     envs: &HashMap<String, String>,
 ) -> io::Result<(File, File, u32, HANDLE)> {
-    spawn_with_hidden_console_inner(program, args, current_dir, envs, None, None, &[])
+    static LIFETIME_JOB: OnceLock<io::Result<ProcessJob>> = OnceLock::new();
+    let job = LIFETIME_JOB
+        .get_or_init(ProcessJob::new)
+        .as_ref()
+        .map_err(|error| io::Error::new(error.kind(), error.to_string()))?;
+    spawn_with_hidden_console_inner(program, args, current_dir, envs, Some(job), None, &[])
 }
 
 pub(crate) fn spawn_with_hidden_console_in_job(
@@ -293,7 +298,7 @@ pub fn spawn_with_hidden_console_tracked(
     envs: &HashMap<String, String>,
 ) -> io::Result<(File, File, HANDLE)> {
     let (stdout, stderr, _, handle) =
-        spawn_with_hidden_console_inner(program, args, current_dir, envs, None, None, &[])?;
+        spawn_with_hidden_console_owned(program, args, current_dir, envs)?;
     Ok((stdout, stderr, handle))
 }
 
@@ -688,6 +693,117 @@ mod tests {
         reader.read_to_string(&mut output).unwrap();
 
         assert_eq!(output, format!("[\"{spec}\"]"));
+    }
+
+    #[test]
+    fn parent_exit_reaps_owned_node_tree_and_releases_port() {
+        use std::net::TcpListener;
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+
+        if let Some(root) = std::env::var_os("DSH_TEST_WIN_SPAWN_PARENT") {
+            let root = std::path::PathBuf::from(root);
+            let node = find_node_on_path().expect("node.exe required for parent exit test");
+            let descendant = "const server=require('net').createServer();server.listen(0,'127.0.0.1',()=>require('fs').writeFileSync(process.argv[1],JSON.stringify([process.ppid,process.pid,server.address().port])));setTimeout(()=>process.exit(0),60000)";
+            let script = format!(
+                "const child=require('child_process').spawn(process.execPath,['-e',{},process.argv[1]],{{stdio:'ignore',windowsHide:true}});child.once('error',error=>{{throw error}});setTimeout(()=>process.exit(0),60000)",
+                serde_json::to_string(descendant).unwrap()
+            );
+            let (_stdout, _stderr, _, handle) = spawn_with_hidden_console_owned(
+                &node,
+                &[
+                    "-e".into(),
+                    script.into(),
+                    root.join("ready.json").into_os_string(),
+                ],
+                Some(&root),
+                &isolated_node_env(&root),
+            )
+            .unwrap();
+            let process = unsafe { OwnedHandle::from_raw_handle(handle) };
+            unsafe { WaitForSingleObject(process.as_raw_handle(), 60000) };
+            panic!("parent exit fixture was not terminated within 60s");
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let mut envs = isolated_node_env(root.path());
+        envs.insert(
+            "DSH_TEST_WIN_SPAWN_PARENT".into(),
+            root.path().to_string_lossy().into_owned(),
+        );
+        let cleanup = ProcessJob::new().unwrap();
+        let (_stdout, _stderr, _, handle) = spawn_with_hidden_console_in_job(
+            &std::env::current_exe().unwrap(),
+            &[
+                "--exact".into(),
+                "service::workflow::win_spawn::tests::parent_exit_reaps_owned_node_tree_and_releases_port".into(),
+                "--nocapture".into(),
+                "--test-threads=1".into(),
+            ],
+            Some(root.path()),
+            &envs,
+            &cleanup,
+        )
+        .unwrap();
+        let parent = unsafe { OwnedHandle::from_raw_handle(handle) };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (node_pid, descendant_pid, port): (u32, u32, u16) = loop {
+            if let Ok(text) = std::fs::read_to_string(root.path().join("ready.json")) {
+                if let Ok(ready) = serde_json::from_str(&text) {
+                    break ready;
+                }
+            }
+            assert_eq!(
+                unsafe { WaitForSingleObject(parent.as_raw_handle(), 0) },
+                WAIT_TIMEOUT,
+                "Rust parent fixture exited before Node listened"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "Node descendant did not listen within 10s"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let nodes = [node_pid, descendant_pid].map(|pid| {
+            let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+            assert!(
+                !handle.is_null(),
+                "retain Node fixture {pid}: {}",
+                io::Error::last_os_error()
+            );
+            unsafe { OwnedHandle::from_raw_handle(handle) }
+        });
+        for node in &nodes {
+            assert_eq!(
+                unsafe { WaitForSingleObject(node.as_raw_handle(), 0) },
+                WAIT_TIMEOUT
+            );
+        }
+        assert!(
+            TcpListener::bind(("127.0.0.1", port)).is_err(),
+            "fixture port must be occupied before parent exit"
+        );
+        terminate_and_wait(parent.as_raw_handle())
+            .expect("force terminate only the Rust parent fixture");
+        for node in &nodes {
+            assert_eq!(
+                unsafe { WaitForSingleObject(node.as_raw_handle(), 5000) },
+                WAIT_OBJECT_0,
+                "Rust parent exit must terminate both Node generations"
+            );
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match TcpListener::bind(("127.0.0.1", port)) {
+                Ok(_) => break,
+                Err(error) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "Node port {port} was not released after parent exit: {error}"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
     }
 
     #[test]

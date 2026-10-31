@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use crate::service::plugin::installed::profile_dir;
 use crate::service::plugin::recovery::{is_core_package, is_package_name, patch_entry_targets};

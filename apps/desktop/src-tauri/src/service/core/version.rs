@@ -12,7 +12,7 @@ use crate::config;
 use crate::service::{download, fs_guard, workflow};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::local::{find_user_dsh_bin, local_core};
 use super::source::{

@@ -1,6 +1,8 @@
 import type { DshShortcutRow, DshViewCommand } from '@/hooks/use-dsh-shortcuts'
+import { useOverlay } from '@overlastic/react'
 import { useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
+import { emitTo } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { type } from '@tauri-apps/plugin-os'
 import { useEffect, useRef, useState } from 'react'
@@ -9,57 +11,70 @@ import { useStore } from 'valtio-define'
 import { useAppearance } from '@/hooks/use-appearance'
 import { DSH_VIEW_COMMANDS, shortcutHint, useDshShortcuts } from '@/hooks/use-dsh-shortcuts'
 import { useDshStyle } from '@/hooks/use-dsh-style'
-import { useIframeMessage } from '@/hooks/use-iframe-message'
-import { useIframePost } from '@/hooks/use-iframe-post'
 import { useListen } from '@/hooks/use-listen'
+import { useNotificationAction } from '@/hooks/use-notification-action'
+import type { NotificationActionEvent } from '@/hooks/use-notification-action'
+import { useNotificationClicked } from '@/hooks/use-notification-clicked'
+import type { NotificationClickEvent } from '@/hooks/use-notification-clicked'
 import { store } from '@/store'
 import { Recovery } from '@/ui/plugin/recovery'
+import { ConfigDialog } from '@/ui/dialog/config'
 import { FullSidebarNavbar } from './full-sidebar-navbar'
-import { Iframe } from './iframe'
-import { REMOTE_SECTION, REMOTE_TAB_ACCESS, REMOTE_TAB_MACHINES } from './nav-bridge'
+import { HarnessWebview } from './harness-webview'
 import { Navbar } from './navbar'
 import { Setup } from './setup'
 import { PreinstallSetup } from './setup-preinstall'
 import { isFullSidebarWindow } from './window-presentation'
 
-interface NavBridgeMessage {
-  type?: string
-  collapsed?: boolean
-  rows?: unknown
-}
+const REMOTE_SECTION = 'dsh-tauri-remote'
+const REMOTE_TAB_MACHINES = 'machines'
+const REMOTE_TAB_ACCESS = 'access'
+const REMOTE_TAB_SYNC = 'sync'
 
 const FULL_SIDEBAR_REVEAL_MS = 15_000
 
 export function Webview() {
   const [fullSidebarRevealed, setFullSidebarRevealed] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const iframeRef = useRef<HTMLIFrameElement>(null)
   const pendingSettingsTabRef = useRef<string | null>(null)
-  const appearanceCss = useAppearance(iframeRef)
-  const post = useIframePost(iframeRef)
+  const pendingActionsRef = useRef(new Map<string, { payload: { tag?: string, action?: string, inputValue?: string }, timer: ReturnType<typeof setTimeout> }>())
 
-  const [dshStyle] = useDshStyle()
+  const [dshStyle, setDshStyle] = useDshStyle()
+  const openConfigDialog = useOverlay(ConfigDialog)
+  useListen<Parameters<typeof setDshStyle>[0]>('dsh://style', ({ payload }) => setDshStyle(payload))
+  useListen('dsh://desktop-settings:open', () => { void openConfigDialog() })
   const [{ rows: shortcutRows }, setDshShortcuts] = useDshShortcuts()
 
-  const { status, serviceHealthy, serviceRunning, iframeKey, iframeLoaded, iframeAlive, iframeError, startupPhase, busyAction } = useStore(store.harness)
+  const { status, serviceHealthy, serviceRunning, webviewKey, webviewLoaded, webviewAlive, webviewError, startupPhase, busyAction } = useStore(store.harness)
   const { recovery } = useStore(store.recovery)
   const [remoteView, setRemoteView] = useState({ url: '', tint: null as string | null })
   const activeTunnelUrl = remoteView.url
   const borderTint = remoteView.tint
   const remoteMode = activeTunnelUrl !== ''
   const live = status === 'ready' && (remoteMode || serviceHealthy)
-  const branch = status === 'ready' ? 'iframe' : status === 'preinstall' ? 'preinstall' : status === 'error' && recovery.required ? 'recovery' : 'setup'
-  useWatch([branch, status, remoteMode, serviceHealthy, serviceRunning, iframeKey, iframeLoaded, iframeAlive, iframeError, startupPhase, busyAction], () => {
+  const appearanceCss = useAppearance()
+
+  useEffect(() => {
+    const pending = pendingActionsRef.current
+    return () => {
+      pending.forEach(({ timer }) => clearTimeout(timer))
+      pending.clear()
+    }
+  }, [])
+  useNotificationAction(handleNotificationAction)
+  useNotificationClicked(handleNotificationClick)
+  const branch = status === 'ready' ? 'webview' : status === 'preinstall' ? 'preinstall' : status === 'error' && recovery.required ? 'recovery' : 'setup'
+  useWatch([branch, status, remoteMode, serviceHealthy, serviceRunning, webviewKey, webviewLoaded, webviewAlive, webviewError, startupPhase, busyAction], () => {
     console.warn('[Webview] shell view', {
       branch,
       status,
       remoteMode,
       serviceHealthy,
       serviceRunning,
-      iframeKey,
-      iframeLoaded,
-      iframeAlive,
-      iframeError,
+      webviewKey,
+      webviewLoaded,
+      webviewAlive,
+      webviewError,
       startupPhase,
       busyAction,
     })
@@ -90,12 +105,49 @@ export function Webview() {
     setRemoteView({ url, tint })
   }
 
-  function openSettingsTab(tab: string) {
-    post({ type: 'dsh://settings:open', section: REMOTE_SECTION, tab })
+  function deliverNotificationResult(payload: { tag?: string, action?: string, inputValue?: string }) {
+    void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://notification-clicked', payload)
   }
 
-  // 远端视图下 iframe 里是远端页面，设置分区在它那边不存在：先切回本机，
-  // 等本机插件重新 boot 就绪（`dsh://plugin-boot:ready`）再定位，避免发出无人接收的消息。
+  function handleNotificationAction({ actionId, inputValue, notification, extra }: NotificationActionEvent) {
+    if (typeof actionId !== 'string' || actionId === '' || actionId === 'tap')
+      return
+    const metadata = extra ?? notification?.extra
+    const payload = { tag: metadata?.tag, action: actionId, inputValue: typeof inputValue === 'string' ? inputValue : undefined }
+    const key = `${payload.tag ?? ''}|${actionId}`
+    const queued = pendingActionsRef.current.get(key)
+    if (queued) {
+      clearTimeout(queued.timer)
+      pendingActionsRef.current.delete(key)
+      deliverNotificationResult({ ...queued.payload, ...payload, inputValue: payload.inputValue || queued.payload.inputValue })
+      return
+    }
+    const timer = setTimeout(() => {
+      pendingActionsRef.current.delete(key)
+      deliverNotificationResult(payload)
+    }, 250)
+    pendingActionsRef.current.set(key, { payload, timer })
+  }
+
+  async function handleNotificationClick({ data }: NotificationClickEvent) {
+    try {
+      const appWindow = getCurrentWindow()
+      if (await appWindow.isMinimized())
+        await appWindow.unminimize()
+      await appWindow.show()
+      await appWindow.setFocus()
+    }
+    catch (error) {
+      console.error('[notification] focus window failed:', error)
+    }
+    deliverNotificationResult({ tag: data?.tag })
+  }
+
+  function openSettingsTab(tab: string) {
+    void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://settings:open', { section: REMOTE_SECTION, tab })
+  }
+
+  // 远端视图下设置分区需先切回本机，等待插件就绪后再定位。
   function openLocalSettingsTab(tab: string) {
     if (remoteMode) {
       pendingSettingsTabRef.current = tab
@@ -105,25 +157,19 @@ export function Webview() {
     openSettingsTab(tab)
   }
 
-  useIframeMessage<NavBridgeMessage>(iframeRef, (data) => {
-    if (data.type === 'dsh://sidebar:collapsed') {
-      setSidebarCollapsed(Boolean(data.collapsed))
-    }
-    else if (data.type === 'dsh://shortcuts') {
-      setDshShortcuts({ rows: parseShortcutRows(data.rows) })
-    }
-    else if (data.type === 'dsh://full-sidebar:ready') {
-      setFullSidebarRevealed(true)
-    }
-    else if (data.type === 'dsh://window:close') {
-      void getCurrentWindow().close()
-    }
-    else if (data.type === 'dsh://plugin-boot:ready') {
-      const pending = pendingSettingsTabRef.current
-      if (pending !== null) {
-        pendingSettingsTabRef.current = null
-        openSettingsTab(pending)
-      }
+  useListen<{ collapsed?: unknown }>('dsh://sidebar:collapsed', ({ payload }) => {
+    setSidebarCollapsed(Boolean(payload.collapsed))
+  })
+  useListen<{ rows?: unknown }>('dsh://shortcuts', ({ payload }) => {
+    setDshShortcuts({ rows: parseShortcutRows(payload.rows) })
+  })
+  useListen<void>('dsh://full-sidebar:ready', () => setFullSidebarRevealed(true))
+  useListen<void>('dsh://window:close', () => { void getCurrentWindow().close() })
+  useListen<void>('dsh://appearance:ready', () => {
+    const pending = pendingSettingsTabRef.current
+    if (pending !== null) {
+      pendingSettingsTabRef.current = null
+      openSettingsTab(pending)
     }
   })
 
@@ -139,8 +185,7 @@ export function Webview() {
         return <PreinstallSetup />
       case 'ready':
         return (
-          <Iframe
-            iframeRef={iframeRef}
+          <HarnessWebview
             srcOverride={remoteMode ? activeTunnelUrl : null}
             borderTint={borderTint}
           />
@@ -161,26 +206,27 @@ export function Webview() {
     return () => window.clearTimeout(timer)
   }, [fullSidebar, fullSidebarRevealed])
 
-  const bridge = live
+  const controls = live
     ? {
-        onToggleSidebar: () => post({ type: 'dsh://sidebar:toggle' }),
-        onNewChat: () => post({ type: 'dsh://session:new' }),
-        onOpenFolder: () => post({ type: 'dsh://workspace:add' }),
-        onOpenShortcuts: () => post({ type: 'dsh://shortcuts:open' }),
-        onViewCommand: (command: DshViewCommand) => post({ type: 'dsh://view:command', command }),
+        onToggleSidebar: () => { void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://sidebar:toggle') },
+        onNewChat: () => { void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://session:new') },
+        onOpenFolder: () => { void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://workspace:add') },
+        onOpenShortcuts: () => { void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://shortcuts:open') },
+        onViewCommand: (command: DshViewCommand) => { void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://view:command', { command }) },
         onOpenMachineManager: () => openLocalSettingsTab(REMOTE_TAB_MACHINES),
         onOpenRemoteAccess: () => openLocalSettingsTab(REMOTE_TAB_ACCESS),
+        onOpenSyncToRemote: () => openLocalSettingsTab(REMOTE_TAB_SYNC),
       }
     : {}
 
   return (
     <main className="relative flex flex-col min-h-0 flex-1" style={dshStyle.frame || {}}>
-      {/* 挂在 Iframe 外：启动页/预装引导/恢复页先于 Iframe 渲染，否则拿不到透明与调色板 token */}
+      {/* 启动页、预装引导与恢复页共用外观变量。 */}
       <style>{appearanceCss}</style>
       <If
         cond={fullSidebar}
         then={<FullSidebarNavbar />}
-        else={<Navbar onRemoteChange={handleRemoteChange} sidebarCollapsed={sidebarCollapsed} {...bridge} />}
+        else={<Navbar onRemoteChange={handleRemoteChange} sidebarCollapsed={sidebarCollapsed} {...controls} />}
       />
       <div className="relative flex min-h-0 flex-1">
         {renderContent()}

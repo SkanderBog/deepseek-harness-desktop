@@ -19,7 +19,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use crate::service::plugin::{declared_packages, load_presets, profile_dir};
 use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};

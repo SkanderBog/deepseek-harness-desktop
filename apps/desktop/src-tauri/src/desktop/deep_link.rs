@@ -1,6 +1,6 @@
 //! 正式版使用官方 `dsh://open`；夜间版单独注册 `dsh-nightly`，不覆盖正式版协议。
 
-use tauri::AppHandle;
+use crate::AppHandle;
 use tauri_plugin_deep_link::DeepLinkExt;
 
 pub fn is_open_request(url: &str) -> bool {

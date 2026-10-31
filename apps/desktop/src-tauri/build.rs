@@ -13,13 +13,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     #[cfg(target_os = "macos")]
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
-    let attributes = tauri_build::Attributes::new();
+    let attributes = tauri_build::Attributes::new().plugin(
+        "electron-window",
+        tauri_build::InlinedPlugin::new().commands(&["set_effects"]),
+    );
     let attributes = if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
     {
         let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
             .join("windows-app-manifest.xml");
-        // tauri-build 默认只给应用嵌入清单；测试程序也需要 Common Controls v6。
         println!("cargo:rerun-if-changed={}", manifest.display());
         println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
         println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());

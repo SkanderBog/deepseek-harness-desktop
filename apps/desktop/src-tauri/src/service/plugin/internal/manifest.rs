@@ -6,12 +6,16 @@ use std::collections::HashSet;
 use std::os::windows::fs::FileTypeExt;
 use std::path::Path;
 
-/// 读取并解析入口清单，避免仅凭文件存在就把截断或不可读的内置插件视为健康。
 pub(super) fn internal_plugin_entry_is_ready(entry: &Path) -> bool {
     let Ok(raw) = std::fs::read(entry.join("package.json")) else {
         return false;
     };
-    serde_json::from_slice::<serde_json::Value>(&raw).is_ok_and(|manifest| manifest.is_object())
+    serde_json::from_slice::<serde_json::Value>(&raw).is_ok_and(|manifest| {
+        manifest.is_object()
+            && manifest
+                .get("main")
+                .is_none_or(|main| main.as_str().is_some_and(|main| entry.join(main).is_file()))
+    })
 }
 
 /// 清理 profile bundle 列表中的重复引用，保留首次出现的顺序。
@@ -294,7 +298,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn internal_plugin_entry_requires_readable_manifest_object() {
+    fn internal_plugin_entry_requires_readable_manifest_and_declared_main() {
         let root = std::env::temp_dir().join(format!(
             "dsh-internal-entry-readiness-{}",
             std::process::id()
@@ -307,6 +311,21 @@ mod tests {
 
         std::fs::write(&manifest, br#"{"name":"dsh-tauri"}"#).unwrap();
         assert!(internal_plugin_entry_is_ready(&root));
+        std::fs::write(&manifest, br#"{"exports":"./index.js"}"#).unwrap();
+        assert!(internal_plugin_entry_is_ready(&root));
+
+        std::fs::write(
+            &manifest,
+            br#"{"name":"dsh-tauri","main":"./dist/index.js"}"#,
+        )
+        .unwrap();
+        assert!(!internal_plugin_entry_is_ready(&root));
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        std::fs::write(root.join("dist/index.js"), b"export function apply() {}").unwrap();
+        assert!(internal_plugin_entry_is_ready(&root));
+        std::fs::remove_file(root.join("dist/index.js")).unwrap();
+        std::fs::create_dir(root.join("dist/index.js")).unwrap();
+        assert!(!internal_plugin_entry_is_ready(&root));
 
         std::fs::write(&manifest, br#"{"name":"dsh-tauri""#).unwrap();
         assert!(!internal_plugin_entry_is_ready(&root));

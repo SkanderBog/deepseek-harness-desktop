@@ -5,7 +5,7 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::is_actionable_plugin_ref;
 use super::is_package_name;

@@ -1,13 +1,14 @@
 //! 备份 / 还原 Tauri 命令。
 
-use tauri::{AppHandle, WebviewWindow};
 
+
+use crate::{AppHandle, Window};
 use crate::service::{backup, workflow::instances};
 
 #[tauri::command]
 pub async fn export_recovery_backup(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     include_credentials: bool,
 ) -> Result<backup::BackupInfo, String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -33,7 +34,7 @@ pub async fn export_recovery_backup(
 #[tauri::command]
 pub async fn backup_profile(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     include_credentials: bool,
 ) -> Result<backup::BackupInfo, String> {
     let profile = instances::window_profile(&app_handle, window.label());
@@ -63,7 +64,7 @@ pub async fn backup_profile(
 #[tauri::command]
 pub async fn restore_profile(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     timestamp: String,
     as_new: bool,
 ) -> Result<(), String> {
@@ -92,7 +93,7 @@ pub async fn restore_profile(
 }
 
 #[tauri::command]
-pub fn list_backups(app_handle: AppHandle, window: WebviewWindow) -> Vec<backup::BackupInfo> {
+pub fn list_backups(app_handle: AppHandle, window: Window) -> Vec<backup::BackupInfo> {
     let profile = instances::window_profile(&app_handle, window.label());
     instances::scope_sync(profile, || backup::list_backups(&app_handle))
 }
@@ -100,7 +101,7 @@ pub fn list_backups(app_handle: AppHandle, window: WebviewWindow) -> Vec<backup:
 #[tauri::command]
 pub async fn delete_backup(
     app_handle: AppHandle,
-    window: WebviewWindow,
+    window: Window,
     timestamp: String,
 ) -> Result<(), String> {
     let profile = instances::window_profile(&app_handle, window.label());

@@ -2,10 +2,11 @@
 //! （防「假成功」），并就地补构建缺失的声明入口（`ensure_plugin_entry_built`，
 //! 见 `dsh.plugin.json` / `package.json` 的 `main`/`exports` 解析）。
 
+use crate::{AppHandle, Window};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter, WebviewWindow};
+use tauri::{ Emitter};
 
 use serde_json::Value as JsonValue;
 
@@ -221,7 +222,7 @@ pub(super) async fn ensure_plugin_entry_built(
     id: &str,
     pkg_dir: &Path,
     envs: &HashMap<String, String>,
-    window: &WebviewWindow,
+    window: &Window,
 ) -> Result<(), String> {
     if !pkg_dir.is_dir() {
         return Err(format!(

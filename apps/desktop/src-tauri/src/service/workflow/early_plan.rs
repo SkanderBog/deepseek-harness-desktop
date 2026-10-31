@@ -254,10 +254,6 @@ pub(super) fn prepare(
             "scroll follow reduced-motion patch",
             patch::scroll_follow::apply_at,
         ),
-        (
-            "chat follow anchor patch",
-            patch::chat_follow_anchor::apply_at,
-        ),
         ("mobile composer patch", patch::mobile_composer::apply_at),
         ("mobile sidebar patch", patch::mobile_sidebar::apply_at),
         ("SessionStore.remove patch", patch::session::apply_at),
@@ -265,10 +261,6 @@ pub(super) fn prepare(
         (
             "pi-ai thinking-as-text patch",
             patch::pi_ai_thinking::apply_at,
-        ),
-        (
-            "model selection mouse click patch",
-            patch::model_selection::apply_at,
         ),
         (
             "workspace worktree membership patch",

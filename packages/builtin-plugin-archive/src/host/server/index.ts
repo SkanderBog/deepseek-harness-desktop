@@ -1,13 +1,13 @@
 import { defineWebServer } from 'dsh-h3'
 import { guard } from 'dsh-tauri'
-import clearSessionArchive from './routes/session/archive/clear/post'
-import deleteSessionArchive from './routes/session/archive/delete'
-import getSessionArchive from './routes/session/archive/get'
-import postSessionArchive from './routes/session/archive/post'
-import postSessionUnarchive from './routes/session/archive/restore/post'
-import postSessionOpenPath from './routes/session/open/path/post'
-import deleteSessionWorkspaceArchive from './routes/session/workspace/archive/delete'
-import postSessionWorkspaceArchive from './routes/session/workspace/archive/post'
+import clearSessionArchive from './routes/session.archive.clear.post'
+import deleteSessionArchive from './routes/session.archive.delete'
+import getSessionArchive from './routes/session.archive.get'
+import postSessionArchive from './routes/session.archive.post'
+import postSessionUnarchive from './routes/session.archive.restore.post'
+import postSessionOpenPath from './routes/session.open.path.post'
+import deleteSessionWorkspaceArchive from './routes/session.workspace.archive.delete'
+import postSessionWorkspaceArchive from './routes/session.workspace.archive.post'
 
 export const server = defineWebServer((app) => {
   app.use(guard)

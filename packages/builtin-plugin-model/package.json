@@ -71,7 +71,6 @@
     "dev": "tsdown --watch",
     "prepublishOnly": "nr build",
     "start": "tsx src/index.ts",
-    "test": "vitest run",
     "typecheck": "tsc"
   },
   "dependencies": {
@@ -86,7 +85,6 @@
     "dsh-tauri-config": "workspace:*",
     "tailwind-variants": "catalog:runtime",
     "tsdown": "catalog:cli",
-    "valtio-define": "catalog:runtime",
-    "vitest": "catalog:testing"
+    "valtio-define": "catalog:runtime"
   }
 }

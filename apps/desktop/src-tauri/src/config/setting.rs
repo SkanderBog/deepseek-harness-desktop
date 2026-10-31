@@ -1,7 +1,8 @@
+use crate::{AppHandle};
 use super::constants::*;
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, OnceLock};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{ Emitter, Manager, Runtime};
 use tauri_plugin_store::StoreExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,13 +95,6 @@ pub struct Setting {
     /// 需要该效果的用户显式开启。拖拽本身不受此字段影响。
     #[serde(default)]
     pub throw_enabled: bool,
-    /// 强制以 XWayland 运行（默认关闭，下次启动生效）。
-    ///
-    /// 影响的是整个应用而非只有桌宠：原生 Wayland 下桌宠既不能置顶也不能定位
-    /// （issue #649），把应用拉到 XWayland 是在 GNOME 上恢复这两项能力的唯一办法，
-    /// 代价是主窗口也一并经 XWayland 渲染。默认关闭，由用户显式开启。
-    #[serde(default)]
-    pub force_xwayland: bool,
     /// 本地插件热重载：把已挂载的本地路径插件源码目录交给核心 HMR 监听，
     /// 源码改动即时生效（无需重启服务）。没有本地插件时不产生任何补丁层。
     #[serde(default = "default_local_plugin_hmr")]
@@ -232,13 +226,11 @@ impl Default for Setting {
             active_pet: None,
             pet_size: None,
             throw_enabled: false,
-            force_xwayland: false,
             local_plugin_hmr: default_local_plugin_hmr(),
         }
     }
 }
 
-/// 当前是否为 E2E 运行（内嵌 WebDriver server 被请求）。
 pub fn is_e2e_run() -> bool {
     std::env::var_os(E2E_PORT_ENV_VAR).is_some_and(|v| !v.is_empty())
 }
@@ -281,36 +273,6 @@ fn resolve_store_dat_file(e2e: bool, debug: bool) -> &'static str {
     } else {
         STORE_DAT_FILE
     }
-}
-
-/// 启动最早期读取 `force_xwayland`，绕过 `tauri_plugin_store` 直接解析 store 文件。
-///
-/// `GDK_BACKEND` 必须在 GTK 初始化之前设置，那时 `AppHandle` 尚不存在，插件的
-/// `StoreExt` 用不了。路径由 `logger::identifier_dir()` 与 `store_dat_file_name()` 拼出，
-/// 与插件的 `BaseDirectory::AppData` + 文件名解析一致，开发 / E2E / 生产三份 store
-/// 不互读。store 靠文件名区分 dev，目录不带 `dev/` 一层，与日志的做法不同。
-/// 文件缺失、JSON 非法、键缺失一律按关闭处理：此处早于 `logger::init()`，
-/// 无处告警，静默回落到默认行为比中断启动合适。
-pub fn force_xwayland_setting() -> bool {
-    crate::logger::identifier_dir()
-        .map(|dir| dir.join(store_dat_file_name()))
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .is_some_and(|raw| force_xwayland_in_store_json(&raw))
-}
-
-/// `force_xwayland_setting` 的纯函数内核，便于单测覆盖各种损坏输入。
-fn force_xwayland_in_store_json(raw: &str) -> bool {
-    let Ok(root) = serde_json::from_str::<serde_json::Value>(raw) else {
-        return false;
-    };
-    let Some(value) = root.get(STORE_SETTING_KEY) else {
-        return false;
-    };
-    let object = unwrap_json_value(value);
-    object
-        .get("force_xwayland")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
 }
 
 fn setting_write_lock() -> &'static Mutex<()> {
@@ -399,7 +361,6 @@ fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Set
     replacement.active_pet.clone_from(&current.active_pet);
     replacement.pet_size = current.pet_size;
     replacement.throw_enabled = current.throw_enabled;
-    replacement.force_xwayland = current.force_xwayland;
     replacement.local_plugin_hmr = current.local_plugin_hmr;
     replacement
 }
@@ -438,8 +399,6 @@ where
     setting
 }
 
-/// 泛型 `Runtime`：允许从非 Wry 具体化的窗口句柄（如工具函数的
-/// `WebviewWindow<R>`）读取设置；具体类型调用方不受影响。
 pub fn get_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>) -> Setting {
     let _guard = setting_write_lock()
         .lock()
@@ -467,58 +426,12 @@ pub fn set_dsh_pkg_identity(app_handle: &AppHandle, commit: String, tag: String)
 #[cfg(test)]
 mod tests {
     use super::{
-        default_close_action, default_zoom_factor, force_xwayland_in_store_json,
-        normalize_close_action, normalize_setting, normalize_zoom_factor,
+        default_close_action, default_zoom_factor, normalize_close_action, normalize_setting,
+        normalize_zoom_factor,
         preserve_persisted_fields, resolve_e2e_app_data_dir, resolve_store_dat_file,
         setting_from_value, unwrap_json_value, Setting, STORE_DAT_DEV_FILE, STORE_DAT_FILE,
-        STORE_DAT_TEST_FILE, STORE_SETTING_KEY, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
+        STORE_DAT_TEST_FILE, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
     };
-
-    /// 启动前读取跑在 `logger::init()` 之前，任何损坏输入都只能静默回落到关闭。
-    #[test]
-    fn force_xwayland_falls_back_to_off_on_any_unreadable_store() {
-        // 正常形状：`setting` 的值是对象。
-        assert!(force_xwayland_in_store_json(
-            r#"{"setting":{"force_xwayland":true}}"#
-        ));
-        assert!(!force_xwayland_in_store_json(
-            r#"{"setting":{"force_xwayland":false}}"#
-        ));
-        // 历史形状：`setting` 的值是一个内含对象的 JSON 字符串，read_store_dat_setting
-        // 同样兼容；漏掉这一支会让部分用户的设置被静默读成关闭。
-        assert!(force_xwayland_in_store_json(
-            r#"{"setting":"{\"force_xwayland\":true}"}"#
-        ));
-        // 字段缺失（老版本写下的 store）。
-        assert!(!force_xwayland_in_store_json(
-            r#"{"setting":{"port":3080}}"#
-        ));
-        // 键缺失、JSON 非法、空文件。
-        assert!(!force_xwayland_in_store_json(r#"{"window_state":{}}"#));
-        assert!(!force_xwayland_in_store_json("{ not json"));
-        assert!(!force_xwayland_in_store_json(""));
-        // 字符串包裹但内层非法。
-        assert!(!force_xwayland_in_store_json(r#"{"setting":"not json"}"#));
-        // 值不是 bool：不做真值推断，按关闭处理。
-        assert!(!force_xwayland_in_store_json(
-            r#"{"setting":{"force_xwayland":"yes"}}"#
-        ));
-        assert!(!force_xwayland_in_store_json(
-            r#"{"setting":{"force_xwayland":1}}"#
-        ));
-    }
-
-    /// 启动前读取按字符串字面量取字段，与 `Setting` 的序列化形状只靠约定对齐。
-    /// 字段改名不会有编译错误，只会让读取静默失效，这里拿真实序列化结果兜住。
-    #[test]
-    fn force_xwayland_key_matches_the_serialized_setting() {
-        let setting = Setting {
-            force_xwayland: true,
-            ..Setting::default()
-        };
-        let raw = serde_json::json!({ STORE_SETTING_KEY: setting }).to_string();
-        assert!(force_xwayland_in_store_json(&raw));
-    }
 
     #[test]
     fn e2e_app_data_requires_an_absolute_scratch_home() {
@@ -725,7 +638,7 @@ mod tests {
 
     #[test]
     fn unwrap_json_value_borrows_objects_and_parses_strings_once() {
-        let object = serde_json::json!({ "force_xwayland": true });
+        let object = serde_json::json!({ "port": 4099 });
         assert!(matches!(
             unwrap_json_value(&object),
             std::borrow::Cow::Borrowed(value) if std::ptr::eq(value, &object)
@@ -820,7 +733,6 @@ mod tests {
             active_pet: Some("chat:stale".to_string()),
             pet_size: Some(80.0),
             throw_enabled: false,
-            force_xwayland: false,
             local_plugin_hmr: false,
             ..Default::default()
         };
@@ -842,7 +754,6 @@ mod tests {
             active_pet: Some("codex:latest".to_string()),
             pet_size: Some(140.0),
             throw_enabled: true,
-            force_xwayland: true,
             local_plugin_hmr: true,
             ..Default::default()
         };
@@ -869,10 +780,6 @@ mod tests {
             "整对象写入不得覆盖最新桌宠字段"
         );
         assert!(merged.throw_enabled, "整对象写入不得覆盖最新的抛射开关");
-        assert!(
-            merged.force_xwayland,
-            "整对象写入不得覆盖最新的 XWayland 开关"
-        );
         assert!(
             merged.local_plugin_hmr,
             "整对象写入不得覆盖最新的本地插件热重载开关"

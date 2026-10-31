@@ -16,7 +16,7 @@ use super::utils::is_port_in_use;
 /// 会继续占用端口；下一次启动只能一路漂移端口（3080→3081→…）并触发服务端
 /// "already running"，表现为应用"坏掉"。启动前据此文件识别并清理这类残留。
 pub(super) fn harness_pid_path<R: tauri::Runtime>(
-    app_handle: &tauri::AppHandle<R>,
+    app_handle: &crate::AppHandle<R>,
 ) -> std::path::PathBuf {
     let channel = usize::from(app_handle.config().identifier == "dsh-tauri-nightly");
     let root = config::get_dsh_data_path(app_handle);
@@ -66,7 +66,7 @@ mod tests {
 /// - 端口占用者正是标记中的 PID → 本应用残留，结束其进程树并清标记；
 /// - 其余情况（标记不可解析、端口被其他程序占用、无法探测占用者）一律不动，
 ///   绝不凭端口猜进程、绝不杀未知进程。
-pub fn sweep_orphan_harness(app_handle: &tauri::AppHandle) {
+pub fn sweep_orphan_harness(app_handle: &crate::AppHandle) {
     if super::instances::current_profile().is_none() {
         let root = config::get_dsh_data_path(app_handle).join("profiles");
         if let Ok(entries) = fs::read_dir(root) {
@@ -177,7 +177,7 @@ pub(super) fn port_owner_pid(port: u16) -> Option<u32> {
 
 /// Windows RedirectionGuard（错误码 448 = ERROR_UNTRUSTED_MOUNT_POINT）逃逸重拉的标记路径。
 #[cfg(windows)]
-pub(super) fn relaunch_marker_path(app_handle: &tauri::AppHandle) -> std::path::PathBuf {
+pub(super) fn relaunch_marker_path(app_handle: &crate::AppHandle) -> std::path::PathBuf {
     config::get_base_dir(app_handle).join(".dsh-relaunch-448")
 }
 
@@ -186,7 +186,7 @@ pub(super) fn relaunch_marker_path(app_handle: &tauri::AppHandle) -> std::path::
 /// 448 只在「进程继承 RedirectionGuard 强制执行」时出现；干净上下文（父进程为
 /// explorer 等普通进程）下 Level-1 符号链接可正常穿越。
 #[cfg(windows)]
-pub(super) fn dsh_bin_open_error(app_handle: &tauri::AppHandle) -> Option<i32> {
+pub(super) fn dsh_bin_open_error(app_handle: &crate::AppHandle) -> Option<i32> {
     std::fs::File::open(config::get_dsh_binary_path(app_handle))
         .err()
         .and_then(|e| e.raw_os_error())
@@ -203,7 +203,7 @@ pub(super) fn dsh_bin_open_error(app_handle: &tauri::AppHandle) -> Option<i32> {
 /// explorer.exe，而非转交发起者）。标记文件用于防死循环：若上次重拉未逃逸
 /// （explorer 未运行等），本次回退到常规缺失处理（复位 installed 走安装流程）。
 #[cfg(windows)]
-pub(super) fn relaunch_via_shell_escape(app_handle: &tauri::AppHandle) {
+pub(super) fn relaunch_via_shell_escape(app_handle: &crate::AppHandle) {
     let marker = relaunch_marker_path(app_handle);
     if marker.exists() {
         let _ = std::fs::remove_file(&marker);

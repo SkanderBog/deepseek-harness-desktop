@@ -4,9 +4,11 @@
 //! 注入/移除（依赖 `AppHandle::path()`）仅 Unix 编译；纯文本操作辅助（upsert /
 //! strip / 备份写回）在全部平台编译（Windows 上按 dead_code 允许，供测试覆盖）。
 
+#[cfg(not(windows))]
+use crate::AppHandle;
 use std::fs;
 #[cfg(not(windows))]
-use tauri::{AppHandle, Manager};
+use tauri::{ Manager};
 
 /// shell rc 注入标记（用于幂等增删）
 #[cfg_attr(windows, allow(dead_code))]

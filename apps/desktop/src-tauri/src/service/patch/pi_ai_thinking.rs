@@ -140,7 +140,7 @@ fn patch_source(source: &str) -> PatchOutcome {
 pub fn apply_at(core_dir: &Path) -> Result<(), String> {
     patch_core_file(core_dir, PI_AI_COMPLETIONS_JS, patch_source)
 }
-pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
+pub fn apply(app_handle: &crate::AppHandle) -> Result<(), String> {
     patch_dsh(app_handle, PI_AI_COMPLETIONS_JS, patch_source)
 }
 

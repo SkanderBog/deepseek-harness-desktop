@@ -27,7 +27,7 @@ mod imp {
     ];
 
     /// 当前档案的 profile 目录：`<DSH_HOME>/profiles/<当前档案>`。
-    fn profile_dir(app_handle: &tauri::AppHandle) -> PathBuf {
+    fn profile_dir(app_handle: &crate::AppHandle) -> PathBuf {
         crate::service::profile::profile_dir_of(
             app_handle,
             &crate::service::profile::active_profile(app_handle),
@@ -132,7 +132,7 @@ mod imp {
     }
 
     /// 清理 profile 的遗留注入行（幂等）。
-    pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    pub fn apply(app_handle: &crate::AppHandle) -> Result<(), String> {
         apply_at(&profile_dir(app_handle))
     }
 
@@ -243,7 +243,7 @@ mod imp {
 #[cfg(not(windows))]
 mod imp {
     /// 非 Windows 平台无操作：补丁文件由 dsh 自身管理。
-    pub fn apply(_app_handle: &tauri::AppHandle) -> Result<(), String> {
+    pub fn apply(_app_handle: &crate::AppHandle) -> Result<(), String> {
         Ok(())
     }
 
@@ -258,7 +258,7 @@ mod imp {
 }
 
 /// 清理 profile 中遗留的 Windows 终端检查插件注入行（仅 Windows 生效，幂等）。
-pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
+pub fn apply(app_handle: &crate::AppHandle) -> Result<(), String> {
     imp::apply(app_handle)
 }
 

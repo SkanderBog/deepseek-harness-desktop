@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { EventTarget } from '@tauri-apps/api/event'
-import type { ComponentProps, RefObject } from 'react'
+import type { ComponentProps, ComponentType } from 'react'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,7 +8,7 @@ import { useDshShortcuts } from '@/hooks/use-dsh-shortcuts'
 import { Navbar } from './navbar'
 import { Webview } from './webview'
 
-const { store, userAgent, openOverlay, openUrl, toggleDevtools } = vi.hoisted(() => {
+const { store, userAgent, openOverlay, openUrl, toggleDevtools, emitEvent } = vi.hoisted(() => {
   const userAgent = navigator.userAgent
   Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Macintosh' })
   return {
@@ -16,6 +16,7 @@ const { store, userAgent, openOverlay, openUrl, toggleDevtools } = vi.hoisted(()
     openOverlay: vi.fn().mockResolvedValue(undefined),
     openUrl: vi.fn<(args: { url: string }) => Promise<void>>(),
     toggleDevtools: vi.fn<() => Promise<void>>(),
+    emitEvent: vi.fn(),
     store: {
       harness: { status: 'ready', serviceHealthy: true },
       recovery: { recovery: { required: false } },
@@ -36,6 +37,17 @@ vi.mock('@tanstack/react-query', () => ({
 vi.mock('@overlastic/react', () => ({ useOverlay: () => openOverlay }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('@/hooks/use-dsh-style', () => ({ useDshStyle: () => [{}] }))
+vi.mock('@/hooks/use-appearance', () => ({ useAppearance: () => '' }))
+vi.mock('@/hooks/use-notification-action', () => ({ useNotificationAction: vi.fn() }))
+vi.mock('@/hooks/use-notification-clicked', () => ({ useNotificationClicked: vi.fn() }))
+vi.mock('@tauri-apps/api/event', async (importOriginal) => {
+  const event = await importOriginal<typeof import('@tauri-apps/api/event')>()
+  return { ...event, emitTo: (target: EventTarget | string, name: string, payload?: unknown) => {
+    expect(target).toEqual({ kind: 'Window', label: 'main' })
+    emitEvent(name, payload)
+    return Promise.resolve()
+  } }
+})
 vi.mock('@/ui/dialog/about', () => ({ DesktopAboutDialog: () => null }))
 vi.mock('@/ui/dialog/config', () => ({ ConfigDialog: () => null }))
 vi.mock('@/ui/dialog/update', () => ({ DesktopUpdateDialog: () => null }))
@@ -44,9 +56,10 @@ vi.mock('@/utils/toast', () => ({ toast: vi.fn() }))
 vi.mock('@/ui/plugin/recovery', () => ({ Recovery: () => null }))
 vi.mock('./setup', () => ({ Setup: () => null }))
 vi.mock('./setup-preinstall', () => ({ PreinstallSetup: () => null }))
-vi.mock('./iframe', () => ({
-  Iframe: ({ iframeRef, srcOverride }: { iframeRef: RefObject<HTMLIFrameElement | null>, srcOverride: string | null }) => (
-    <iframe ref={iframeRef} title="Harness" src={srcOverride ?? 'http://127.0.0.1:3081'} />
+const DshWebview = 'webview' as unknown as ComponentType<{ title: string, src: string }>
+vi.mock('./harness-webview', () => ({
+  HarnessWebview: ({ srcOverride }: { srcOverride?: string | null }) => (
+    <DshWebview title="Harness" src={srcOverride ?? 'http://127.0.0.1:3081'} />
   ),
 }))
 vi.mock('./remote-switcher', () => ({
@@ -73,6 +86,7 @@ interface MenuEntry {
 
 const listeners = new Map<number, Listener>()
 let menuEntries: MenuEntry[]
+const closedWindows: string[] = []
 
 function nativeEvent(event: string, payload?: unknown, label?: string) {
   const runtime = window as unknown as { __TAURI_INTERNALS__: { runCallback: (id: number, data: unknown) => void } }
@@ -85,26 +99,20 @@ function nativeEvent(event: string, payload?: unknown, label?: string) {
   }
 }
 
-function iframe() {
-  return screen.getByTitle<HTMLIFrameElement>('Harness')
+function webview() {
+  return screen.getByTitle<HTMLElement>('Harness')
 }
 
 function reportShortcuts() {
-  const frame = iframe()
-  act(() => {
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      origin: new URL(frame.src).origin,
-      data: {
-        type: 'dsh://shortcuts',
-        rows: [{ id: 'sidebar.left.toggle', label: 'Sidebar', keys: ['⌥', '⌘', 'B'], available: true }],
-      },
-    }))
-  })
+  act(() => nativeEvent('dsh://shortcuts', {
+    rows: [{ id: 'sidebar.left.toggle', label: 'Sidebar', keys: ['⌥', '⌘', 'B'], available: true }],
+  }))
 }
 
 beforeEach(() => {
   listeners.clear()
+  closedWindows.length = 0
+  emitEvent.mockClear()
   openOverlay.mockClear()
   openUrl.mockReset().mockResolvedValue(undefined)
   toggleDevtools.mockReset().mockResolvedValue(undefined)
@@ -129,6 +137,9 @@ beforeEach(() => {
         return
       case 'sync_view_menu':
         menuEntries = structuredClone((args as { entries: MenuEntry[] }).entries)
+        return
+      case 'plugin:window|close':
+        closedWindows.push((args as { label: string }).label)
         return
       case 'plugin:window|is_fullscreen':
       case 'plugin:window|is_maximized':
@@ -176,6 +187,15 @@ describe('shell remote share availability', () => {
 })
 
 describe('native View menu state', () => {
+  it('closes only the window targeted by a native DSH event', async () => {
+    render(<Webview />)
+    await waitFor(() => expect([...listeners.values()].find(listener => listener.event === 'dsh://window:close')?.target).toEqual({ kind: 'Window', label: 'main' }))
+    act(() => nativeEvent('dsh://window:close', undefined, 'other'))
+    expect(closedWindows).toEqual([])
+    act(() => nativeEvent('dsh://window:close', undefined, 'main'))
+    await waitFor(() => expect(closedWindows).toEqual(['main']))
+  })
+
   it('restores enabled commands and hints after the language change rebuilds the native menu', async () => {
     render(<Webview />)
     reportShortcuts()
@@ -190,15 +210,14 @@ describe('native View menu state', () => {
     const view = render(<Webview />)
     fireEvent.click(screen.getByRole('button', { name: 'Remote alpha' }))
     reportShortcuts()
-    const frame = iframe()
-    const post = vi.spyOn(frame.contentWindow!, 'postMessage')
+    const frame = webview()
     store.harness.serviceHealthy = false
     view.rerender(<Webview />)
     act(() => nativeEvent('tauri://focus', null, 'main'))
     await waitFor(() => expect(menuEntries[0].enabled).toBe(true))
     act(() => nativeEvent('macos-menu-action', 'desktop-toggle-sidebar', 'main'))
-    expect(post).toHaveBeenCalledExactlyOnceWith({ source: 'dsh-desktop', type: 'dsh://view:command', command: 'sidebar.left.toggle' }, 'http://127.0.0.1:4001')
-    expect(iframe()).toBe(frame)
+    expect(emitEvent).toHaveBeenCalledExactlyOnceWith('dsh://view:command', { command: 'sidebar.left.toggle' })
+    expect(webview()).toBe(frame)
     store.harness.serviceHealthy = true
     view.rerender(<Webview />)
     await waitFor(() => expect(menuEntries[0].enabled).toBe(true))
@@ -225,7 +244,7 @@ describe('native View menu state', () => {
     await waitFor(() => expect(menuEntries[0].enabled).toBe(true))
   })
 
-  it('clears the remote catalog when the shell removes the iframe', async () => {
+  it('clears the remote catalog when the shell removes the webview', async () => {
     const view = render(<Webview />)
     fireEvent.click(screen.getByRole('button', { name: 'Remote alpha' }))
     reportShortcuts()

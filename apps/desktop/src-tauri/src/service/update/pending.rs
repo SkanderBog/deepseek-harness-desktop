@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use crate::AppHandle;
 use tauri_plugin_store::StoreExt;
 
 use crate::config::{store_dat_file_name, STORE_PENDING_INSTALLER_KEY};

@@ -28,10 +28,10 @@ import { preinstall } from '../preinstall'
 import { recovery } from '../recovery'
 import { setting } from '../setting'
 import {
-  IFRAME_FRAME_GRACE_TIMEOUT,
-  IFRAME_LOAD_TIMEOUT,
-  IFRAME_RECOVERY_ABSOLUTE_TIMEOUT,
-  IFRAME_RELOAD_MAX_ATTEMPTS,
+  WEBVIEW_FRAME_GRACE_TIMEOUT,
+  WEBVIEW_LOAD_TIMEOUT,
+  WEBVIEW_RECOVERY_ABSOLUTE_TIMEOUT,
+  WEBVIEW_RELOAD_MAX_ATTEMPTS,
   PLUGIN_ABSOLUTE_TIMEOUT,
   PLUGIN_ACTIVITY_CHECK_INTERVAL,
   PLUGIN_INACTIVITY_TIMEOUT,
@@ -82,13 +82,13 @@ let bootStarted = false
 let pluginActivitySequence = 0
 let pluginActivityReason = ''
 const restartFlight = new SingleFlight<void>()
-const iframeReloadGate = new BoundedReloadGate(IFRAME_RELOAD_MAX_ATTEMPTS)
-let iframeRefreshTimer: ReturnType<typeof setTimeout> | undefined
+const webviewReloadGate = new BoundedReloadGate(WEBVIEW_RELOAD_MAX_ATTEMPTS)
+let webviewRefreshTimer: ReturnType<typeof setTimeout> | undefined
 let policyApprovalKey: string | undefined
 
 /**
  * 桌面外壳核心业务模块：安装/启动流程、服务生命周期（启动/健康检查/重启/停止）、
- * iframe 加载状态与挂起兜底。
+ * webview 加载状态与挂起兜底。
  *
  * 拆分说明（参考 damn-reports 的 store 组织方式）：
  * - 版本更新 → `harness-updater`，下载完成提示 → `download`；
@@ -111,22 +111,22 @@ export const harness = defineStore({
     patchLayerHint: '',
     heapOomHint: '',
     serviceUrl: 'http://127.0.0.1:3080',
-    /** 带时间戳的 iframe 地址（boot 时生成一次，避免缓存） */
-    iframeSrc: '',
+    /** 带时间戳的 webview 地址（boot 时生成一次，避免缓存） */
+    webviewSrc: '',
     frontendGeneration: 0,
     frontendBootHtml: null as string | null,
-    iframeLoaded: false,
-    iframeError: false,
+    webviewLoaded: false,
+    webviewError: false,
     /**
-     * 已确认承载 dsh 文档的 iframe 代（`iframeKey`）。
+     * 已确认承载 dsh 文档的 webview 代（`webviewKey`）。
      *
-     * iframe 的 load 事件不足以证明页面加载成功：浏览器内部错误页（代理拦截、
+     * webview 的 load 事件不足以证明页面加载成功：浏览器内部错误页（代理拦截、
      * DNS 失败等）同样触发 load，且永远不会发出帧内消息（issue #705）。因此页面
-     * 是否真的起来只以「帧内自报」为准，并把确认绑定到具体那一代 iframe——重挂
+     * 是否真的起来只以「帧内自报」为准，并把确认绑定到具体那一代 webview——重挂
      * 之后旧文档的迟到消息不能替新文档背书。
      */
-    iframeAliveKey: null as number | null,
-    iframeKey: 0,
+    webviewAliveKey: null as number | null,
+    webviewKey: 0,
     serviceHealthy: false,
     serviceRunning: false,
     startupPhase: 'plugin-install' as StartupPhase,
@@ -138,20 +138,20 @@ export const harness = defineStore({
     startupStatusKey(): string {
       return STARTUP_STATUS_KEYS[this.startupPhase]
     },
-    /** 服务健康但 iframe 加载失败：页面覆盖层展示重试入口 */
-    showIframeError(): boolean {
-      return this.serviceHealthy && this.iframeError
+    /** 服务健康但 webview 加载失败：页面覆盖层展示重试入口 */
+    showWebviewError(): boolean {
+      return this.serviceHealthy && this.webviewError
     },
-    /** 当前这一代 iframe 是否已自报承载 dsh 文档（重挂即失效，见 `iframeAliveKey`） */
-    iframeAlive(): boolean {
-      return this.iframeAliveKey === this.iframeKey
+    /** 当前这一代 webview 是否已自报承载 dsh 文档（重挂即失效，见 `webviewAliveKey`） */
+    webviewAlive(): boolean {
+      return this.webviewAliveKey === this.webviewKey
     },
     /**
      * 内嵌页面加载失败的补充说明：服务已就绪却没有任何帧内消息，说明帧里根本没
      * 起来 dsh 页面（典型是一张浏览器内部错误页），而不是服务没跑起来。
      */
-    iframeErrorHint(): string {
-      return this.iframeAlive ? '' : i18next.t('ui.iframe_unreachable_hint')
+    webviewErrorHint(): string {
+      return this.webviewAlive ? '' : i18next.t('ui.webview_unreachable_hint')
     },
   },
   actions: {
@@ -177,7 +177,7 @@ export const harness = defineStore({
       await this.boot()
     },
 
-    /** 订阅当前持有的 Harness 根进程退出事件，及时撤下失效 iframe。 */
+    /** 订阅当前持有的 Harness 根进程退出事件，及时撤下失效 webview。 */
     async listenProcessExit() {
       try {
         await listen<HarnessProcessExitedPayload>('harness-process-exited', (event) => {
@@ -232,15 +232,15 @@ export const harness = defineStore({
         `[Harness] owned process ${payload.pid} exited unexpectedly`,
         exitDetail,
       )
-      iframeReloadGate.reset()
-      if (iframeRefreshTimer !== undefined) {
-        clearTimeout(iframeRefreshTimer)
-        iframeRefreshTimer = undefined
+      webviewReloadGate.reset()
+      if (webviewRefreshTimer !== undefined) {
+        clearTimeout(webviewRefreshTimer)
+        webviewRefreshTimer = undefined
       }
       this.serviceHealthy = false
-      this.iframeLoaded = false
-      this.iframeError = false
-      this.iframeAliveKey = null
+      this.webviewLoaded = false
+      this.webviewError = false
+      this.webviewAliveKey = null
 
       const error = await attachStartupDiagnostics(new Error(message), true)
       if (exitToken !== bootToken)
@@ -296,59 +296,53 @@ export const harness = defineStore({
       }
     },
 
-    /** 刷新 iframe：清除加载态并延迟重新挂载 */
-    refreshIframe() {
-      this.iframeLoaded = false
-      this.iframeError = false
-      this.iframeAliveKey = null
-      if (iframeRefreshTimer !== undefined) {
-        clearTimeout(iframeRefreshTimer)
+    /** 刷新 webview：清除加载态并延迟重新挂载 */
+    refreshWebview() {
+      this.webviewLoaded = false
+      this.webviewError = false
+      this.webviewAliveKey = null
+      if (webviewRefreshTimer !== undefined) {
+        clearTimeout(webviewRefreshTimer)
       }
-      iframeRefreshTimer = setTimeout(() => {
-        iframeRefreshTimer = undefined
-        this.iframeKey++
+      webviewRefreshTimer = setTimeout(() => {
+        webviewRefreshTimer = undefined
+        this.webviewKey++
       }, 800)
     },
 
-    /** iframe 加载成功/失败时由视图回调更新状态 */
-    markIframeLoaded() {
-      this.iframeLoaded = true
-      this.iframeError = false
+    /** webview 加载成功/失败时由视图回调更新状态 */
+    markWebviewLoaded() {
+      this.webviewLoaded = true
+      this.webviewError = false
     },
 
-    markIframeError() {
-      this.iframeError = true
-      this.iframeLoaded = false
+    markWebviewError() {
+      this.webviewError = true
+      this.webviewLoaded = false
     },
 
-    /** 帧内任一桥消息到达：确认帧里确实跑着 dsh 页面（load 事件不算数，见 state 注释） */
-    markIframeAlive() {
-      this.iframeAliveKey = this.iframeKey
+    markWebviewAlive(generation: number) {
+      if (generation !== this.webviewKey)
+        return
+      this.webviewAliveKey = generation
     },
 
-    /**
-     * 帧内文档开始离开（pagehide）：旧确认立即作废。
-     *
-     * 帧内导航（dsh 页面把整帧跳到远端登录/错误页）不换 iframe 元素，只靠代绑定
-     * 抓不到；新文档要么自己重新自报，要么在宽限窗内被判成「帧里没有 dsh 页面」。
-     * 同时撤回 load 结论：这一代已经没有任何已加载的文档了。
-     */
-    markIframeLeaving() {
-      this.iframeAliveKey = null
-      this.iframeLoaded = false
+    markWebviewLeaving() {
+      this.webviewAliveKey = null
+      this.webviewLoaded = false
     },
 
-    markIframeBootReady() {
-      iframeReloadGate.markReady()
-      if (iframeRefreshTimer !== undefined) {
-        clearTimeout(iframeRefreshTimer)
-        iframeRefreshTimer = undefined
+    markWebviewBootReady() {
+      webviewReloadGate.markReady()
+      if (webviewRefreshTimer !== undefined) {
+        clearTimeout(webviewRefreshTimer)
+        webviewRefreshTimer = undefined
       }
     },
 
-    async recoverIframeBoot() {
-      const generation = this.iframeKey
-      const decision = iframeReloadGate.request(generation)
+    async recoverWebviewBoot() {
+      const generation = this.webviewKey
+      const decision = webviewReloadGate.request(generation)
       if (decision === 'duplicate' || decision === 'ready')
         return
       if (decision === 'exhausted') {
@@ -359,13 +353,13 @@ export const harness = defineStore({
       }
 
       const result = await pollHarnessReadiness(
-        IFRAME_RECOVERY_ABSOLUTE_TIMEOUT,
-        () => generation === this.iframeKey && this.serviceRunning,
+        WEBVIEW_RECOVERY_ABSOLUTE_TIMEOUT,
+        () => generation === this.webviewKey && this.serviceRunning,
       )
-      if (generation !== this.iframeKey || !this.serviceRunning)
+      if (generation !== this.webviewKey || !this.serviceRunning)
         return
       if (result.healthy) {
-        this.refreshIframe()
+        this.refreshWebview()
         return
       }
 
@@ -376,12 +370,7 @@ export const harness = defineStore({
       this.fail(error.message, undefined, undefined, undefined, !result.notOwned)
     },
 
-    /**
-     * iframe 内官方 boot 失败页上报（dsh://plugin-boot:failed）：
-     * 立即把壳层切到错误界面并展示失败页文本（如 `web boot: 1 entry did not
-     * activate`），同时尝试从日志定位问题插件弹出修复界面。
-     */
-    async handleIframeBootFailure(detail?: string) {
+    async handleWebviewBootFailure(detail?: string) {
       const message = detail && detail.includes('Failed to load plugins')
         ? detail
         : i18next.t('errors.client_boot_failed')
@@ -428,7 +417,7 @@ export const harness = defineStore({
         return false
 
       // poll 通过与 ready 提交之间仍可能退出，因此提交窗口开启前复核一次 ownership；
-      // 但不再为此重跑全量探测（实测 93 个 / 18MB / 311ms，纯粹推迟 iframe 挂载）：
+      // 但不再为此重跑全量探测（实测 93 个 / 18MB / 311ms，纯粹推迟 webview 挂载）：
       // ownership 只取决于后端进程槽位与启动守卫，纯内存查询即可判定。上一轮 poll 已
       // 确认就绪，故只有 ownership 丢失才推翻结果，短暂 IPC 失败不降级。
       let ownershipFailure: string | null = null
@@ -450,7 +439,7 @@ export const harness = defineStore({
         return false
 
       this.serviceUrl = readyInfo.service_url
-      this.iframeSrc = generateTimestampedUrl(readyInfo.service_url)
+      this.webviewSrc = generateTimestampedUrl(readyInfo.service_url)
       this.frontendBootHtml = probe?.bootOrigin === readyInfo.service_url ? probe.bootHtml ?? null : null
       resetPortConflictRestarts()
       this.serviceHealthy = true
@@ -465,10 +454,10 @@ export const harness = defineStore({
       preinstall.error = ''
       // 服务（重）启动成功：清空插件异常修复态（若曾进入），并重置已「暂不处理」的插件
       recovery.reset()
-      iframeReloadGate.reset()
-      if (iframeRefreshTimer !== undefined) {
-        clearTimeout(iframeRefreshTimer)
-        iframeRefreshTimer = undefined
+      webviewReloadGate.reset()
+      if (webviewRefreshTimer !== undefined) {
+        clearTimeout(webviewRefreshTimer)
+        webviewRefreshTimer = undefined
       }
       // 服务（重）启动成功后，dsh 版本/端口/CLI 链接状态等运行时信息可能已变化
       // （典型：Harness 更新后旧版本缓存仍在，调试侧边栏需刷新页面才显示新版本）。
@@ -482,7 +471,7 @@ export const harness = defineStore({
       return true
     },
 
-    /** 拉起服务并等待健康检查通过，通过后才允许挂载 iframe */
+    /** 拉起服务并等待健康检查通过，通过后才允许挂载 webview */
     async launchAndWait(token?: number) {
       const launchToken = token ?? ++bootToken
       if (launchToken !== bootToken)
@@ -500,9 +489,9 @@ export const harness = defineStore({
       this.heapOomHint = ''
       recovery.reset()
       this.serviceHealthy = false
-      this.iframeLoaded = false
-      this.iframeError = false
-      this.iframeAliveKey = null
+      this.webviewLoaded = false
+      this.webviewError = false
+      this.webviewAliveKey = null
       this.startupPhase = 'process-boot'
       this.startupReason = i18next.t('status.loading_process')
       try {
@@ -517,7 +506,7 @@ export const harness = defineStore({
         if (launchToken !== bootToken)
           return
         this.serviceUrl = runtimeInfo.service_url
-        this.iframeSrc = generateTimestampedUrl(runtimeInfo.service_url)
+        this.webviewSrc = generateTimestampedUrl(runtimeInfo.service_url)
 
         const result = await pollHarnessReadiness(
           STARTUP_ABSOLUTE_TIMEOUT,
@@ -547,7 +536,7 @@ export const harness = defineStore({
         // 服务已就绪后再取一次真实地址：`launch_harness` 可能因后端已在并发拉起
         // （auto_start）而提前返回，此刻端口若尚未落库，上面读到的 service_url 会是
         // 旧端口；健康检查通过意味着服务已在最终端口就绪，此时读取必然准确。
-        // 避免 iframe 挂载到一个无人监听的地址（表现为首次加载失败、刷新后恢复）。
+        // 避免 webview 挂载到一个无人监听的地址（表现为首次加载失败、刷新后恢复）。
         const readinessToken = launchToken
         readinessCommitToken = readinessToken
         try {
@@ -573,16 +562,16 @@ export const harness = defineStore({
         toast.close(policyApprovalKey)
         policyApprovalKey = undefined
       }
-      iframeReloadGate.reset()
-      if (iframeRefreshTimer !== undefined) {
-        clearTimeout(iframeRefreshTimer)
-        iframeRefreshTimer = undefined
+      webviewReloadGate.reset()
+      if (webviewRefreshTimer !== undefined) {
+        clearTimeout(webviewRefreshTimer)
+        webviewRefreshTimer = undefined
       }
       // 回到加载态：已安装时不再显示检测/启动界面，直接进入页面加载状态
       this.serviceHealthy = false
-      this.iframeLoaded = false
-      this.iframeError = false
-      this.iframeAliveKey = null
+      this.webviewLoaded = false
+      this.webviewError = false
+      this.webviewAliveKey = null
       // 重新启动/进入启动流程时先退出上一轮的错误与修复态（重启可能由插件修复、
       // 配置切换触发），避免旧的「启动失败 / Preview」等信息在启动期间闪现。
       // 注意：保留 attempts 计数，连续失败仍能命中「频繁失败」提示。
@@ -598,7 +587,6 @@ export const harness = defineStore({
       let policyApproval: { versions: PolicyBlockedVersion[], profile: string } | undefined
 
       try {
-        // 事件监听失败（例如 IPC 自定义协议被 CSP 拦截、回退 postMessage 也异常）
         // 不应阻断启动流程，因此容错跳过。
         try {
           unlistenInstall = await this.listenInstallProgress()
@@ -608,7 +596,7 @@ export const harness = defineStore({
         }
         const runtimeInfo = await invoke<{ service_url: string }>('get_runtime_info')
         this.serviceUrl = runtimeInfo.service_url
-        this.iframeSrc = generateTimestampedUrl(runtimeInfo.service_url)
+        this.webviewSrc = generateTimestampedUrl(runtimeInfo.service_url)
 
         // 已安装过则跳过安装界面，避免每次启动都闪现"正在安装依赖..."
         // 设置由 setting store 持有（与 Rust 共享同一份 .store.dat）。必须先等水合
@@ -820,11 +808,11 @@ export const harness = defineStore({
         this.busyAction = 'restart'
         ++bootToken
         this.resetFrontendPreload()
-        // 重启旧进程前先撤下旧 iframe；这样延迟到达的旧进程退出事件不会被
+        // 重启旧进程前先撤下旧 webview；这样延迟到达的旧进程退出事件不会被
         // 误当成新一代启动失败。新进程通过 completeReadiness 后再恢复 healthy。
         this.serviceHealthy = false
-        this.iframeLoaded = false
-        this.iframeError = false
+        this.webviewLoaded = false
+        this.webviewError = false
         // 手动重启（含修复界面上的「重启 Harness」）：先退出恢复态，
         // 若重启仍失败，boot 的 catch 会重新定位问题插件并再次弹出。
         recovery.hide()
@@ -985,56 +973,53 @@ export const harness = defineStore({
   },
 })
 
-// 进入 ready 后 iframe 始终没有自报「帧里跑着 dsh 页面」→ 转为错误界面，避免一直
-// 停在黑色加载遮罩。判定只看帧内自报，不看 load：浏览器内部错误页（代理拦截、DNS
-// 失败等）同样触发 load 却永远没有帧内消息，只按 load 判定就会把一张浏览器错误页
-// 当成加载成功——壳层既不给重试入口也不报错，用户只能重启电脑（issue #705）。
-let iframeWatch: { loaded: boolean, timer: ReturnType<typeof setTimeout> } | null = null
+let webviewWatch: { key: number, loaded: boolean, timer: ReturnType<typeof setTimeout> } | null = null
 harness.$subscribe(() => {
-  const { status, serviceHealthy, iframeLoaded, iframeError } = harness.$state
-  const watching = status === 'ready' && serviceHealthy && !harness.iframeAlive && !iframeError
+  const { status, serviceHealthy, webviewKey, webviewLoaded, webviewError } = harness.$state
+  const watching = status === 'ready' && serviceHealthy && !harness.webviewAlive && !webviewError
   const context = {
     status,
     serviceHealthy,
     serviceRunning: harness.serviceRunning,
-    iframeKey: harness.iframeKey,
-    iframeLoaded,
-    iframeAlive: harness.iframeAlive,
-    iframeError,
+    webviewKey: harness.webviewKey,
+    webviewLoaded,
+    webviewAlive: harness.webviewAlive,
+    webviewError,
   }
   if (!watching) {
-    if (iframeWatch) {
-      console.warn('[Harness] iframe watchdog cancelled', context)
-      clearTimeout(iframeWatch.timer)
-      iframeWatch = null
+    if (webviewWatch) {
+      console.warn('[Harness] webview watchdog cancelled', context)
+      clearTimeout(webviewWatch.timer)
+      webviewWatch = null
     }
     return
   }
-  // 帧已提交文档（load 已触发）却没有帧内消息：只剩「帧里是浏览器错误页」这种可能，
-  // 用远短于整体加载上限的宽限窗口尽快给出可重试界面。
-  if (iframeWatch?.loaded === iframeLoaded)
+  if (webviewWatch?.key === webviewKey && webviewWatch.loaded === webviewLoaded)
     return
-  if (iframeWatch) {
-    clearTimeout(iframeWatch.timer)
+  if (webviewWatch) {
+    clearTimeout(webviewWatch.timer)
   }
-  const timeoutMs = iframeLoaded ? IFRAME_FRAME_GRACE_TIMEOUT : IFRAME_LOAD_TIMEOUT
-  console.warn('[Harness] iframe watchdog armed', { ...context, timeoutMs })
-  iframeWatch = {
-    loaded: iframeLoaded,
+  const timeoutMs = webviewLoaded ? WEBVIEW_FRAME_GRACE_TIMEOUT : WEBVIEW_LOAD_TIMEOUT
+  console.warn('[Harness] webview watchdog armed', { ...context, timeoutMs })
+  webviewWatch = {
+    key: webviewKey,
+    loaded: webviewLoaded,
     timer: setTimeout(() => {
-      iframeWatch = null
-      console.warn('[Harness] iframe watchdog expired', {
+      if (harness.webviewKey !== webviewKey || harness.status !== 'ready' || !harness.serviceHealthy || harness.webviewAlive || harness.webviewError)
+        return
+      webviewWatch = null
+      console.warn('[Harness] webview watchdog expired', {
         status: harness.status,
         serviceHealthy: harness.serviceHealthy,
         serviceRunning: harness.serviceRunning,
-        iframeKey: harness.iframeKey,
-        iframeLoaded: harness.iframeLoaded,
-        iframeAlive: harness.iframeAlive,
-        iframeError: harness.iframeError,
+        webviewKey: harness.webviewKey,
+        webviewLoaded: harness.webviewLoaded,
+        webviewAlive: harness.webviewAlive,
+        webviewError: harness.webviewError,
         timeoutMs,
       })
-      harness.iframeLoaded = false
-      harness.iframeError = true
+      harness.webviewLoaded = false
+      harness.webviewError = true
     }, timeoutMs),
   }
 })

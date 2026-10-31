@@ -7,6 +7,7 @@
 //! （超时/读管道失败/broken shim）一律降级为 `Ok(None)`，由 [`ensure_pnpm`] 回退
 //! 捆绑版 pnpm；只有进程状态无法确认时才 fail-closed 返回 `Err`（issue #449）。
 
+use crate::{AppHandle, Window};
 use crate::config;
 use crate::service::cli;
 use crate::service::download;
@@ -17,7 +18,7 @@ use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, WebviewWindow};
+use tauri::{ Emitter};
 
 use super::acquire_process_lock;
 use super::new_process_owner;
@@ -37,7 +38,7 @@ const PNPM_PROBE_LIVENESS_INTERVAL: std::time::Duration = std::time::Duration::f
 
 pub(super) async fn ensure_pnpm(
     app_handle: &AppHandle,
-    window: &WebviewWindow,
+    window: &Window,
     owner: ProcessOwner,
 ) -> Result<bool, String> {
     // 档案的 node_modules 由哪个 pnpm 主版本创建（.modules.yaml 的 storeDir 段）

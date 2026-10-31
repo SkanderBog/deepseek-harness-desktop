@@ -33,7 +33,7 @@ fn monitor() -> &'static Mutex<Monitor> {
     MONITOR.get_or_init(|| Mutex::new(Monitor::default()))
 }
 
-fn ensure_shell(webview: &tauri::Webview) -> Result<(), String> {
+fn ensure_shell(webview: &crate::Webview) -> Result<(), String> {
     let url = webview
         .url()
         .map_err(|error| format!("TASK_MANAGER_ORIGIN: {error}"))?;
@@ -175,7 +175,7 @@ fn validate_end(process: &TaskManagerProcess, start_time: u64) -> Result<(), Str
 
 #[tauri::command]
 pub async fn get_task_manager_processes(
-    webview: tauri::Webview,
+    webview: crate::Webview,
 ) -> Result<Vec<TaskManagerProcess>, String> {
     ensure_shell(&webview)?;
     let profile =
@@ -193,7 +193,7 @@ pub async fn get_task_manager_processes(
 
 #[tauri::command]
 pub async fn end_task_manager_process(
-    webview: tauri::Webview,
+    webview: crate::Webview,
     pid: u32,
     start_time: u64,
 ) -> Result<(), String> {

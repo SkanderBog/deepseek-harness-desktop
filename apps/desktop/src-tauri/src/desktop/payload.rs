@@ -1,5 +1,3 @@
-/// 下载完成事件载荷：`on_download` 的 Finished 分支向前端 emit，
-/// 由桌面外壳展示"已保存 + 打开文件夹"提示（iframe 内的下载对用户不可见）。
 #[derive(Clone, serde::Serialize)]
 pub struct DownloadFinishedPayload {
     /// 原始下载地址（dsh 的 /api/session.export?sessionId=...）

@@ -10,12 +10,13 @@
 //! 恢复路径只有：托盘左键 / 托盘菜单「打开面板」/ `RunEvent::Reopen`
 //! （启动台·Spotlight）/ release single-instance。
 
+use crate::{AppHandle, Window};
 pub use crate::config::{CLOSE_ACTION_QUIT, CLOSE_ACTION_TRAY};
 
 #[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
 
-use tauri::{AppHandle, Runtime, WebviewWindow, Window};
+use tauri::{ Runtime};
 // macOS 侧需要 Manager（从窗口取回 AppHandle）与 ActivationPolicy 下发应用级策略
 #[cfg(target_os = "macos")]
 use tauri::{ActivationPolicy, Manager};
@@ -164,7 +165,7 @@ pub fn set_regular_policy<R: Runtime>(app: &AppHandle<R>) {
 /// ⌘-Tab 将在整个托盘驻留期间保持可见，与 `ui.close_action_hint`
 /// 的承诺矛盾。仅当关窗动作是 `tray` 时挂起。
 #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
-pub fn rearm_pending_accessory_if_fullscreen<R: Runtime>(window: &WebviewWindow<R>) {
+pub fn rearm_pending_accessory_if_fullscreen<R: Runtime>(window: &Window<R>) {
     #[cfg(target_os = "macos")]
     {
         let Ok(is_fullscreen) = window.is_fullscreen() else {

@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use serde_yaml::{Mapping, Value};
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::atomic_write::write_patch_layer_atomically;
 use super::installed::ProfilePackageJson;

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from '@testing-library/react'
+import { useEffect } from 'react'
 import { defineStore } from 'valtio-define'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAppearance } from './use-appearance'
@@ -9,19 +10,33 @@ const mocks = vi.hoisted(() => ({
   platform: 'linux',
   setEffects: vi.fn(() => Promise.resolve()),
   clearEffects: vi.fn(() => Promise.resolve()),
+  emit: vi.fn(),
+  listeners: new Map<string, (event: { event: string, id: number, payload: unknown }) => void>(),
 }))
 vi.mock('@/store', () => ({ store: { get setting() {
   return mocks.setting
 } } }))
-vi.mock('@tauri-apps/api/window', () => ({
+vi.mock('tauri-runtime-electron/api/window', () => ({
   Effect: { Acrylic: 'acrylic', Mica: 'mica', UnderWindowBackground: 'underWindowBackground' },
   EffectState: { FollowsWindowActiveState: 'followsWindowActiveState' },
-  getCurrentWindow: () => ({ setEffects: mocks.setEffects, clearEffects: mocks.clearEffects }),
+  getCurrentWindow: () => ({ label: 'appearance-window', setEffects: mocks.setEffects, clearEffects: mocks.clearEffects }),
+}))
+vi.mock('@tauri-apps/api/event', () => ({
+  emitTo: (target: unknown, event: string, payload?: unknown) => {
+    expect(target).toEqual({ kind: 'Window', label: 'appearance-window' })
+    return mocks.emit(event, payload)
+  },
 }))
 vi.mock('@tauri-apps/plugin-os', () => ({ type: () => mocks.platform }))
 vi.mock('./use-dsh-style', () => ({ useDshStyle: () => [{ colorScheme: 'dark' }] }))
-
-const IFRAME_ORIGIN = 'http://localhost:3080'
+vi.mock('./use-listen', () => ({
+  useListen: (event: string, handler: (event: { event: string, id: number, payload: unknown }) => void) => {
+    useEffect(() => {
+      mocks.listeners.set(event, handler)
+      return () => { mocks.listeners.delete(event) }
+    }, [event, handler])
+  },
+}))
 
 afterEach(() => {
   cleanup()
@@ -36,54 +51,45 @@ afterEach(() => {
 function setup(transparent: boolean, hydrated = true) {
   ;(window as any).__DSH_TRANSPARENT__ = transparent
   mocks.setting = defineStore({ state: () => ({ appearance: { palette: 'nord', terminal: false, opacity: 70 }, hydrated }) })
-  const iframe = document.createElement('iframe')
-  iframe.src = IFRAME_ORIGIN
-  document.body.append(iframe)
-  const post = vi.spyOn(iframe.contentWindow!, 'postMessage').mockImplementation(() => {})
-  const hook = renderHook(() => useAppearance({ current: iframe }))
-  function dispatch(type: string, origin = IFRAME_ORIGIN) {
-    act(() => window.dispatchEvent(new MessageEvent('message', {
-      source: iframe.contentWindow!,
-      origin,
-      data: { type },
-    })))
+  mocks.emit.mockClear()
+  mocks.listeners.clear()
+  const hook = renderHook(() => useAppearance())
+  function dispatch(event: string) {
+    act(() => mocks.listeners.get(event)?.({ event, id: 1, payload: undefined }))
   }
   return {
-    post,
+    emit: mocks.emit,
     hook,
-    // 帧内 document-start 的启动期请求（壳层据此下发 boot 投影）
-    request: (origin?: string) => dispatch('dsh://appearance:request', origin),
-    // 外观插件激活后的既有握手
-    ready: (origin?: string) => dispatch('dsh://appearance:ready', origin),
+    ready: () => dispatch('dsh://appearance:ready'),
   }
 }
 
 describe('desktop appearance projection', () => {
   it('keeps the canvas opaque until the native window has restarted with transparency enabled', () => {
-    const { post, ready, hook } = setup(false)
+    const { emit, ready, hook } = setup(false)
     ready()
-    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ type: 'dsh://appearance', appearance: { opacity: 100 } })
+    expect(emit.mock.calls.at(-1)?.[1]).toMatchObject({ appearance: { opacity: 100 } })
     expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:#343c4a!important')
   })
 
-  it('sends the saved opacity to a transparent window and removes the bridge listener on unmount', () => {
-    const { post, ready, hook } = setup(true)
+  it('sends the saved opacity to a transparent window and removes the Tauri event listener on unmount', () => {
+    const { emit, ready, hook } = setup(true)
     ready()
-    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { palette: 'nord', opacity: 70 } })
+    expect(emit.mock.calls.at(-1)?.[1]).toMatchObject({ appearance: { palette: 'nord', opacity: 70 } })
     expect(hook.result.current).toContain('color-mix(in srgb,#2e3440 70%,transparent)')
     hook.unmount()
-    post.mockClear()
+    emit.mockClear()
     ready()
-    expect(post).not.toHaveBeenCalled()
+    expect(emit).not.toHaveBeenCalled()
   })
 
-  it('projects the same blur into the shell and embedded appearance message', async () => {
-    const { post, ready, hook } = setup(true)
+  it('projects the same blur into the shell and Tauri appearance event', async () => {
+    const { emit, ready, hook } = setup(true)
     ready()
     await act(async () => {
       mocks.setting.appearance = { palette: 'nord', terminal: false, transparency: true, opacity: 70, blur: true }
     })
-    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { blur: true } })
+    expect(emit.mock.calls.at(-1)?.[1]).toMatchObject({ appearance: { blur: true } })
     expect(hook.result.current).toContain('backdrop-filter:blur(16px)')
     expect(hook.result.current).toContain('-webkit-backdrop-filter:blur(16px)')
   })
@@ -154,26 +160,24 @@ describe('desktop appearance projection', () => {
   })
 
   it('immediately restores an opaque canvas when native transparency is disabled', async () => {
-    const { post, ready, hook } = setup(true)
+    const { emit, ready, hook } = setup(true)
     ready()
     await act(async () => {
       mocks.setting.appearance = { palette: 'nord', terminal: false, opacity: 70, transparency: false }
     })
-    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { transparency: false, opacity: 100 } })
+    expect(emit.mock.calls.at(-1)?.[1]).toMatchObject({ appearance: { transparency: false, opacity: 100 } })
     expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:#343c4a!important')
   })
 
   it('keeps a transparent default palette opaque at 100 percent', async () => {
-    const { hook, request, post } = setup(true)
-    request()
-    expect(post.mock.calls.at(-1)?.[0].bootCss).toContain('[data-dsh-boot]')
+    const { hook, ready, emit } = setup(true)
+    ready()
     await act(async () => {
       mocks.setting.appearance = { palette: 'default', terminal: false, transparency: true, opacity: 100, blur: true }
     })
     expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:#1b1b1c!important')
     expect(hook.result.current).not.toContain('backdrop-filter:blur')
-    request()
-    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ bootCss: '' })
+    expect(emit.mock.calls.at(-1)?.[1]).toEqual({ appearance: expect.objectContaining({ palette: 'default', transparency: true, opacity: 100 }) })
   })
 
   it('keeps the settings dialog opaque with the content-area option', async () => {
@@ -209,31 +213,22 @@ describe('desktop appearance projection', () => {
     expect(hook.result.current).not.toContain('--field-border:')
   })
 
-  it('rejects an appearance handshake from the wrong origin', () => {
-    const { post, ready } = setup(true)
-    ready('https://example.invalid')
-    expect(post).not.toHaveBeenCalled()
-  })
-
-  it('answers a document-start boot request with the boot projection alongside the runtime appearance', () => {
-    const { post, request } = setup(true)
-    request()
-    const message = post.mock.calls.at(-1)?.[0]
-    expect(message).toMatchObject({ type: 'dsh://appearance', appearance: { palette: 'nord' } })
-    expect(message.bootCss).toContain('#root > [data-dsh-boot]')
-    expect(message.bootCss).toContain('color-mix(in srgb,#2e3440 70%,transparent)')
+  it('accepts appearance handshakes from the Tauri event listener', () => {
+    const { emit, ready } = setup(true)
+    ready()
+    expect(emit).toHaveBeenCalledWith('dsh://appearance', { appearance: expect.objectContaining({ palette: 'nord' }) })
   })
 
   it('does no message work on unrelated renders and restores opaque styling on reset', async () => {
-    const { post, ready, hook } = setup(true)
+    const { emit, ready, hook } = setup(true)
     ready()
-    post.mockClear()
+    emit.mockClear()
     hook.rerender()
-    expect(post).not.toHaveBeenCalled()
+    expect(emit).not.toHaveBeenCalled()
     await act(async () => {
       mocks.setting.appearance = { palette: 'default', terminal: false, opacity: 100 }
     })
-    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ appearance: { palette: 'default', opacity: 100 } })
+    expect(emit.mock.calls.at(-1)?.[1]).toMatchObject({ appearance: { palette: 'default', opacity: 100 } })
     expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:#1b1b1c!important')
   })
 })

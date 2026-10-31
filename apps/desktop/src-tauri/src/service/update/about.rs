@@ -38,7 +38,7 @@ fn release_tag(version: &str) -> Option<String> {
     Some(format!("v{version}"))
 }
 
-pub async fn about(app_handle: &tauri::AppHandle) -> DesktopAboutInfo {
+pub async fn about(app_handle: &crate::AppHandle) -> DesktopAboutInfo {
     let version = current_version();
     let published_at = match release_tag(&version) {
         Some(tag) => fetch_tag_published_at(app_handle, &tag)

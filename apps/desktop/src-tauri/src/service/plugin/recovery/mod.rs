@@ -16,7 +16,7 @@
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::errors;
 

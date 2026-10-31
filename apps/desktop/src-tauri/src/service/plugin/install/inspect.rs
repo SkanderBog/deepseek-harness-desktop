@@ -9,7 +9,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use semver::Version;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use crate::service::plugin::compat::{self, PluginInspect};
 use crate::service::plugin::update::encode_registry_name;

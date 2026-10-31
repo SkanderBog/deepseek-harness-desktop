@@ -1,10 +1,11 @@
 //! shim 落盘：生成标记识别、悬空符号链接处理、用户文件保留、按外部解析方的
 //! 代码页编码（cmd 用系统代码页、ps1 用带 BOM 的 UTF-8）与写入编排。
 
+use crate::{AppHandle};
 use crate::config;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Runtime};
+use tauri::{ Runtime};
 
 #[cfg(not(windows))]
 #[allow(unused_imports)] // debug 构建 dsh shim 不写入；测试仍引用

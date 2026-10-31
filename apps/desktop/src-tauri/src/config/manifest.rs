@@ -5,11 +5,12 @@
 //! release 优先随安装包分发的资源目录，两者互为兜底。清单缺失/损坏只记日志并回落
 //! 空清单——插件与宠物目录不是启动硬依赖；依赖映射的读写见 [`super::dependencies`]。
 
+use crate::AppHandle;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{ Manager, Runtime};
 
 /// 资源清单文件名
 pub const MANIFEST_FILE: &str = "manifest.jsonc";
@@ -239,7 +240,6 @@ pub struct PresetPetSpec {
     pub ext: Option<PresetPetExt>,
 }
 
-/// 素材基地址：`default` 必填，`mac` 覆盖 Apple 平台（WKWebView 不认 VP9-alpha）
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PresetPetUri {

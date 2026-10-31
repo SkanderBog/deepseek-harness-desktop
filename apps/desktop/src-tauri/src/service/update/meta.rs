@@ -35,7 +35,7 @@ pub(super) struct LatestRelease {
 }
 
 /// 构造带统一 UA 的 HTTP 客户端（并发小、超时短）。
-fn http_client(app_handle: &tauri::AppHandle) -> Result<reqwest::Client, String> {
+fn http_client(app_handle: &crate::AppHandle) -> Result<reqwest::Client, String> {
     crate::config::proxy::http_client_builder(app_handle)?
         .user_agent("deepseek-harness-desktop")
         .timeout(Duration::from_secs(5))
@@ -76,7 +76,7 @@ fn parse_atom_entries(body: &str) -> Vec<(String, String)> {
 }
 
 /// 拉取 releases.atom 并解析全部 release（不走 api.github.com，不受未认证限流约束）。
-pub(super) async fn fetch_releases_meta(app_handle: &tauri::AppHandle) -> Result<Vec<(String, String)>, String> {
+pub(super) async fn fetch_releases_meta(app_handle: &crate::AppHandle) -> Result<Vec<(String, String)>, String> {
     let body = http_client(app_handle)?
         .get(format!("{REPO_URL}/releases.atom"))
         .send()
@@ -141,7 +141,7 @@ fn parse_digest_from_expanded_assets(body: &str, expected_name: &str) -> Option<
 /// expanded_assets 会列出所有平台的安装包，各带一个 `sha256:`，不能取「页面里
 /// 第一个能解析出摘要的资产」，否则会把别的资产的摘要套到当前平台安装包上，
 /// 导致完整性校验必然失败（见 `fetch_latest_release`）。
-async fn fetch_expanded_assets(app_handle: &tauri::AppHandle, tag: &str) -> Result<(Vec<String>, String), String> {
+async fn fetch_expanded_assets(app_handle: &crate::AppHandle, tag: &str) -> Result<(Vec<String>, String), String> {
     let body = http_client(app_handle)?
         .get(format!("{REPO_URL}/releases/expanded_assets/{tag}"))
         .send()
@@ -279,7 +279,7 @@ fn parse_published_at(html: &str) -> Option<String> {
 ///
 /// 仓库一个正式版都没有时该端点直接 404：这是「无更新」而不是检查失败，必须返回
 /// `Ok(None)`，否则界面会把「已是最新」显示成检查出错。
-async fn fetch_latest_stable_tag(app_handle: &tauri::AppHandle) -> Result<Option<String>, String> {
+async fn fetch_latest_stable_tag(app_handle: &crate::AppHandle) -> Result<Option<String>, String> {
     let response = http_client(app_handle)?
         .get(format!("{REPO_URL}/releases/latest"))
         .send()
@@ -300,7 +300,7 @@ async fn fetch_latest_stable_tag(app_handle: &tauri::AppHandle) -> Result<Option
 /// 页）——第一页就可能拿到多个更旧的正式版，多了没有意义。返回空表示确实没有更旧的
 /// 正式版（此时「没有可用更新」是正确结论，不是检查失败）。
 async fn fetch_listed_stable_candidates(
-    app_handle: &tauri::AppHandle,
+    app_handle: &crate::AppHandle,
     current: &str,
     skip: &[String],
 ) -> Result<Vec<(String, String)>, String> {
@@ -333,7 +333,7 @@ async fn fetch_listed_stable_candidates(
 
 /// 拉取某个 release 的 tag 页面并解析发布时间（解析不出来返回 `None`，不阻断更新检查）。
 pub(super) async fn fetch_tag_published_at(
-    app_handle: &tauri::AppHandle,
+    app_handle: &crate::AppHandle,
     tag: &str,
 ) -> Result<Option<String>, String> {
     let body = http_client(app_handle)?
@@ -353,7 +353,7 @@ pub(super) async fn fetch_tag_published_at(
 ///
 /// 没有匹配安装包时继续看下一个候选（见 [`fetch_latest_release`] 的语义说明）。
 async fn first_matching_release(
-    app_handle: &tauri::AppHandle,
+    app_handle: &crate::AppHandle,
     candidates: Vec<(String, String)>,
 ) -> Result<Option<LatestRelease>, String> {
     for (tag, published_at) in candidates {
@@ -382,7 +382,7 @@ async fn first_matching_release(
 ///
 /// 返回 `Ok(Some(LatestRelease))` 表示有更新且匹配到当前平台安装包；
 /// `Ok(None)` 表示无更新（或未匹配到资产）。网络失败返回 Err。
-pub(super) async fn fetch_latest_release(app_handle: &tauri::AppHandle) -> Result<Option<LatestRelease>, String> {
+pub(super) async fn fetch_latest_release(app_handle: &crate::AppHandle) -> Result<Option<LatestRelease>, String> {
     if !super::version::supports_stable_updates(&app_handle.config().identifier) {
         return Ok(None);
     }
@@ -428,7 +428,7 @@ pub(super) async fn fetch_latest_release(app_handle: &tauri::AppHandle) -> Resul
 ///
 /// 返回 `None` 表示该 release 无匹配当前平台的安装包（调用方继续看更旧的正式版）。
 async fn fetch_release_assets(
-    app_handle: &tauri::AppHandle,
+    app_handle: &crate::AppHandle,
     tag: &str,
     version: &str,
     published_at: &str,

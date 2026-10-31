@@ -4,12 +4,13 @@
 //! macOS 仅订阅鼠标事件，避免后台线程调用 HIToolbox 导致崩溃（issue #397）；
 //! Windows 使用 GetCursorPos，避免 rdev 键盘钩子干扰前台应用的 IME 状态。
 
+use crate::{Window};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use tauri::{Emitter, State, WebviewWindow};
+use tauri::{Emitter, State};
 
 /// 全局鼠标事件名（与前端 `@tauri-apps/api/event` 的 listen 保持一致）。
 pub const PET_MOUSE_MOVE_EVENT: &str = "device-mouse-move";
@@ -54,7 +55,7 @@ const MACOS_MOUSE_EVENTS: &[core_graphics::event::CGEventType] = &[
 #[derive(Default)]
 pub struct PetMouseStreamState {
     started: Arc<AtomicBool>,
-    emitter: Arc<Mutex<Option<WebviewWindow>>>,
+    emitter: Arc<Mutex<Option<Window>>>,
     revision: Arc<AtomicUsize>,
 }
 
@@ -110,11 +111,8 @@ fn should_emit<T: PartialEq>(last: Option<&T>, current: &T, rebound: bool) -> bo
 }
 
 /// 启动全局鼠标位置流（幂等：已启动时只刷新接收窗口，不重复起线程）。
-///
-/// 命令参数带 `WebviewWindow`，Tauri 保证在主线程执行；`bind_pet_mouse_emitter`
-/// 只做一次短临界区的句柄替换与一次原子自增，不阻塞事件循环。
 #[tauri::command]
-pub fn start_pet_mouse_stream(window: WebviewWindow, state: State<'_, PetMouseStreamState>) {
+pub fn start_pet_mouse_stream(window: Window, state: State<'_, PetMouseStreamState>) {
     bind_pet_mouse_emitter(&state.emitter, &state.revision, window);
     if state.started.swap(true, Ordering::SeqCst) {
         return;
@@ -190,9 +188,9 @@ pub fn start_pet_mouse_stream(window: WebviewWindow, state: State<'_, PetMouseSt
 /// 自增 `revision` 让节流线程知道「换了接收方」：即使光标没动、去重判定会跳过发送，
 /// 也必须补发一次位置，否则重建后的桌宠收不到任何鼠标事件、穿透态无法按命中区计算。
 fn bind_pet_mouse_emitter(
-    slot: &Arc<Mutex<Option<WebviewWindow>>>,
+    slot: &Arc<Mutex<Option<Window>>>,
     revision: &Arc<AtomicUsize>,
-    window: WebviewWindow,
+    window: Window,
 ) {
     let mut current = slot.lock().unwrap_or_else(|error| error.into_inner());
     *current = Some(window);

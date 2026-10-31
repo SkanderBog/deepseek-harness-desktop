@@ -17,7 +17,7 @@
 
 use std::path::{Path, PathBuf};
 
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::patch_entries::{
     scan_unresolved_entries_in, unresolved_entries_message, PATCH_ENTRY_UNRESOLVED,

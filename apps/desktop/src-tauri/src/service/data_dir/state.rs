@@ -6,7 +6,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use crate::AppHandle;
 
 /// 备份目录名后缀前缀：`D:\DSHHome.moved-2026-10-02T21-33-14`
 const MOVED_INFIX: &str = ".moved-";

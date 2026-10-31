@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use crate::service::data_dir;
 
@@ -99,7 +99,7 @@ pub async fn preview_data_dir_migration(
 /// 任务结束，期间任何安装 / 备份 / 核心切换请求都会排队等待。
 #[tauri::command]
 pub async fn migrate_data_dir(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
     parent: String,
     leaf: String,
@@ -128,7 +128,7 @@ pub async fn migrate_data_dir(
 /// 回滚到旧目录备份（`backup` 为空时按「会话数优先、时间戳其次」自动挑选）。
 #[tauri::command]
 pub async fn rollback_data_dir(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
     backup: Option<String>,
 ) -> Result<data_dir::MigrationOutcome, String> {

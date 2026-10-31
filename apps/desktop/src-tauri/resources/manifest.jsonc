@@ -80,6 +80,12 @@
     ],
     "built-in": [
       {
+        "id": "dsh-taiwind",
+        "spec": "dsh-taiwind",
+        "name": "DSH Tailwind",
+        "repo": "https://github.com/hairyf/dsh-taiwind"
+      },
+      {
         "id": "dsh-tauri",
         "spec": "dsh-tauri",
         "name": "DSH Tauri",

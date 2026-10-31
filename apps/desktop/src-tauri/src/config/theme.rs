@@ -1,9 +1,10 @@
+use crate::{AppHandle};
 use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 #[cfg(target_os = "macos")]
 use tauri::Manager;
-use tauri::{AppHandle, Emitter};
+use tauri::{ Emitter};
 
 use super::runtime::get_dsh_data_path;
 
@@ -147,7 +148,7 @@ pub fn apply_window_theme(app_handle: &AppHandle, theme: DshTheme) {
         DshTheme::Light => Some(tauri::Theme::Light),
         DshTheme::Dark => Some(tauri::Theme::Dark),
     };
-    for window in app_handle.webview_windows().into_values() {
+    for window in app_handle.windows().into_values() {
         if let Err(err) = window.set_theme(appearance) {
             log::warn!("[theme] failed to sync native window appearance: {err}");
         }

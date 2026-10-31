@@ -161,7 +161,7 @@ export function ConfigCore() {
         timeout: 10_000,
       })
       // 需求 5：切换核心后自动重启服务；等待重启完成后再收起提示 toast，
-      // 避免切换请求返回后旧 iframe 与新核心启动流程并发运行。
+      // 避免切换请求返回后旧 webview 与新核心启动流程并发运行。
       try {
         await store.harness.restart()
         toast.close(key)

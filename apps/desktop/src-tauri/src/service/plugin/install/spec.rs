@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::bundled_dep_spec;
 use super::bundled_plugin_dir;

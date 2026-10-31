@@ -25,7 +25,7 @@
 
 根[声明索引](<../../../THIRD_PARTY_NOTICES.md>)中 Harness source 行及各包当前参考版本为 rc.1，保留 alpha.1 等历史派生来源与 [Scheduler 声明](<../../dsh-tauri-scheduler/THIRD_PARTY_NOTICES.md#L45-L65>)的 `ec48669f48ac81bac353fc646e7cf9c57241242f`，未宣称重新复制所有文件。
 
-推荐版本不代替最低版本：15 个具 `dsh` 元数据的运行插件仍以根级 `engines.dsh: ">=0.1.7-rc.1"` 声明支持下限；[最低版本回归](<../../../test/plugin-version-baseline.test.ts>)读取真实清单、检查精确范围与 `includePrerelease` 准入，允许 floor / rc.1、排除 `0.1.6` 和低于 floor 的同代预发布；不证明最低内核完整运行通过。私有聚合包 `dsh-tauri-bundle` 与纯构建包 `dsh-tauri-tsdown` 不在这 15 个运行插件内。固定规范不改；依赖实际解析以 [workspace 配置](<../../../pnpm-workspace.yaml>)与 [lockfile](<../../../pnpm-lock.yaml>)为准。
+推荐版本不代替最低版本：15 个具 `dsh` 元数据的运行插件仍以根级 `engines.dsh: ">=0.1.7-rc.1"` 声明支持下限；历史最低版本回归读取真实清单、检查精确范围与 `includePrerelease` 准入，允许 floor / rc.1、排除 `0.1.6` 和低于 floor 的同代预发布；不证明最低内核完整运行通过。私有聚合包 `dsh-tauri-bundle` 与纯构建包 `dsh-tauri-tsdown` 不在这 15 个运行插件内。固定规范不改；依赖实际解析以 [workspace 配置](<../../../pnpm-workspace.yaml>)与 [lockfile](<../../../pnpm-lock.yaml>)为准。
 
 ## 验证与限制
 

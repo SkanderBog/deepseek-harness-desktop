@@ -7,13 +7,13 @@
 use crate::config;
 use crate::logger;
 use crate::service::{core, plugin, profile};
-use tauri::AppHandle;
+use crate::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 /// 健康检查（通过 Rust 代理，避免 WebView CORS 问题）
 #[tauri::command]
 pub async fn proxy_health_check(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<crate::service::workflow::HealthCheck, String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
@@ -30,7 +30,7 @@ pub async fn proxy_health_check(
 #[tauri::command]
 pub fn harness_ownership(
     app_handle: AppHandle,
-    window: tauri::WebviewWindow,
+    window: crate::Window,
 ) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     crate::service::workflow::instances::scope_sync(
@@ -42,7 +42,7 @@ pub fn harness_ownership(
 /// 运行时/版本/诊断信息（侧边栏展示）
 #[tauri::command]
 pub async fn get_runtime_info(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<config::RuntimeInfo, String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
@@ -58,7 +58,7 @@ pub async fn get_runtime_info(
 /// 在系统浏览器中打开 Harness 界面
 #[tauri::command]
 pub async fn open_in_browser(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
@@ -80,7 +80,7 @@ pub async fn open_in_browser(
 /// 单例剪贴板导致的崩溃/挂死（同「复制日志」）。
 #[tauri::command]
 pub async fn copy_service_url(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
@@ -149,7 +149,7 @@ fn tail_bytes(s: &str, max_bytes: usize) -> &str {
 /// 读取 dsh 服务日志
 #[tauri::command]
 pub async fn read_service_logs(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
     max_bytes: Option<usize>,
 ) -> Result<String, String> {
@@ -174,7 +174,7 @@ pub async fn read_service_logs(
 /// 清空 dsh 服务日志
 #[tauri::command]
 pub async fn clear_service_logs(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
@@ -215,27 +215,9 @@ fn format_env_info(
     lines.join("\n")
 }
 
-/// 读取运行日志（DSH 服务日志 + 桌面端 Rust 运行日志），格式化为便于
-/// 反馈/报障复制的纯文本块：`### 环境信息`、`### 服务日志`、`### 前台日志`
-/// 与 `### 后台日志` 四段。
-///
-/// 服务日志来自 `logs/dsh-web.log`（debug 构建为 `logs/dsh-web.dev.log`）；
-/// 运行日志来自 `logs/desktop.log`（桌面端自身 `logger::init` 每次启动落盘，
-/// 见 logger/mod.rs）。前端 `console.*` 已在 logger 的文件层按 `target: "frontend"`
-/// 跳过、不会写入 `desktop.log`（见 logger/mod.rs），因此「后台日志」取的是纯后端
-/// `log::*`；仅对旧版本已落盘、尚未轮转掉的 `frontend:` 行做一次兜底剔除。据此把
-/// 「运行日志」拆成：
-/// - `### 前台日志`：取自前端独立文件 `logs/desktop.frontdesk.log`
-///   （`logger::init` 单独落盘，见 logger/mod.rs），含壳层前端 `console.*` 与
-///   注入脚本从 dsh iframe 转回的帧内 console/未捕获异常（标识 `[iframe]`，
-///   见 desktop/frame_log.rs）；
-/// - `### 后台日志`：取自 `logs/desktop.log`，剔除残余 `target: "frontend"` 行，
-///   仅保留后端 `log::*`。
-/// 每段取末尾最多 `MAX_LINES` 行（前端日志量大，仅取一半 `FRONTEND_MAX_LINES`），
-/// 避免粘贴内容超出 GitHub issue 长度上限。
 #[tauri::command]
 pub async fn read_run_logs(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<String, String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());

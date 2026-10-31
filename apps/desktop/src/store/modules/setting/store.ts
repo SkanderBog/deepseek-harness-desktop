@@ -2,7 +2,7 @@ import type { AppSettingUpdate, ZoomAction } from './types'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { defineStore } from 'valtio-define'
-import { APPEARANCE_DEFAULTS, normalizeAppearance } from '../../../../packages/dsh-tauri/src/shared/appearance'
+import { APPEARANCE_DEFAULTS, normalizeAppearance } from '../../../../../../packages/builtin-plugin-tauri/src/shared/appearance'
 import { ZOOM_FACTOR_STEP } from './constants'
 import { normalizeZoomFactor } from './utils'
 

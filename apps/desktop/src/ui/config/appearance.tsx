@@ -9,7 +9,7 @@ import { Panel } from '@/components/panel'
 import { store } from '@/store'
 import { ZOOM_FACTOR_DEFAULT, ZOOM_FACTOR_OPTIONS } from '@/store/modules/setting'
 import { toast } from '@/utils/toast'
-import { APPEARANCE_DEFAULTS, APPEARANCE_PALETTES, normalizeAppearance } from '../../../packages/dsh-tauri/src/shared/appearance'
+import { APPEARANCE_DEFAULTS, APPEARANCE_PALETTES, normalizeAppearance } from '../../../../../packages/builtin-plugin-tauri/src/shared/appearance'
 
 /** 打开「原生透明」时一并给出的初始组合：内容区保持不透明、背景 80%、开启模糊。 */
 const TRANSPARENCY_DEFAULTS = { opacity: 80, blur: true, sidebarOnly: true }

@@ -31,6 +31,7 @@
 //! - [`diagnose`]：失败输出解析（网络 / git 传输层 / ANSI 清洗与消息挑选）
 //! - [`artifact`]：安装产物落盘核验（防「假成功」）+ 声明入口就地补构建
 
+use crate::{AppHandle, Window};
 use crate::config;
 use crate::service::cli;
 use crate::service::core;
@@ -40,7 +41,7 @@ use crate::service::profile::{
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path;
-use tauri::{AppHandle, Emitter, WebviewWindow};
+use tauri::{ Emitter};
 
 // plugin 兄弟模块的再导出：子模块经 `super::` 统一从这里取，跨模块边界只在此定义。
 pub(crate) use super::ensure_profile_npmrc;
@@ -716,7 +717,7 @@ async fn run_plugin_with_allow_build_retry(
     args: &[OsString],
     cwd: &Path,
     envs: &HashMap<String, String>,
-    window: &WebviewWindow,
+    window: &Window,
     action: &str,
     cancel: Option<&tokio::sync::watch::Receiver<bool>>,
     owner: ProcessOwner,
@@ -790,7 +791,7 @@ async fn run_plugin_install_with_transient_retry(
     args: &[OsString],
     cwd: &Path,
     envs: &HashMap<String, String>,
-    window: &WebviewWindow,
+    window: &Window,
     action: &str,
     cancel: Option<&tokio::sync::watch::Receiver<bool>>,
     owner: ProcessOwner,

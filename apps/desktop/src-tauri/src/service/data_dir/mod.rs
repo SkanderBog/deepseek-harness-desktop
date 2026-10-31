@@ -18,9 +18,10 @@
 //! - [`state`]：上次迁移记录与 `.moved-*` 命名规则
 //! - [`migrate`]：迁移/回滚的编排（校验、复制、改名、改写环境变量）
 
+use crate::{AppHandle};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter as _};
+use tauri::{ Emitter as _};
 
 mod env;
 mod fs_ops;

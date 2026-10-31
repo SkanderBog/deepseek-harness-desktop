@@ -4,7 +4,7 @@
 //! 以及关于对话框信息。
 
 use crate::service::update;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 /// 检查桌面端自身是否有新版本（含安装包是否已下载）
 #[tauri::command]

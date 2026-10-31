@@ -17,10 +17,11 @@
 //! 3. 相对 root 里一旦出现 `..`，忽略规则会被拼成跨盘串而全部失效，故同盘 root 用
 //!    不含 `..` 的相对路径、跨盘 root 用绝对路径。
 
+use crate::{AppHandle};
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
-use tauri::{AppHandle, Manager};
+use tauri::{ Manager};
 
 use super::installed::{profile_dir, ProfilePackageJson};
 use super::patch_guard::now_stamp;

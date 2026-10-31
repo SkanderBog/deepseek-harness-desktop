@@ -99,8 +99,6 @@ pub const STORE_DAT_DEV_FILE: &str = ".store.dev.dat";
 /// 用户正在使用的开发版配置（且 `app_data_dir()` 由 `SHGetKnownFolderPath` 解析，
 /// 重定向 `APPDATA`/`USERPROFILE` 环境变量**无法**把它引到 scratch 目录）。
 pub const STORE_DAT_TEST_FILE: &str = ".store.test.dat";
-/// E2E 信号环境变量：与 `tauri-plugin-wdio-webdriver` 的门控同源——该插件只在
-/// 此变量存在时监听，应用也据此切到测试 Store，二者不会各走各的。
 pub const E2E_PORT_ENV_VAR: &str = "TAURI_WEBDRIVER_PORT";
 
 /// 下载缓存根的环境变量：覆盖 `<app-data>[/dev]` 这个基础目录。
@@ -109,14 +107,6 @@ pub const E2E_PORT_ENV_VAR: &str = "TAURI_WEBDRIVER_PORT";
 /// 若不覆盖就会反复重下；把它指向一个稳定目录即可让首次下载在后续运行中复用。
 pub const DOWNLOAD_CACHE_ENV_VAR: &str = "DSH_DOWNLOAD_CACHE_DIR";
 
-/// WebView2 用户数据目录的环境变量：仅在 E2E 运行中生效。
-///
-/// `app_local_data_dir()` 由 `SHGetKnownFolderPath` 解析，重定向 `LOCALAPPDATA`
-/// 无效，因此 debug 构建的 WebView2 profile（`EBWebView-dev`，内含 localStorage）
-/// 会与用户正在使用的开发版共用：E2E 写入的语言等前端状态会污染开发会话，用例
-/// 之间也会互相串。E2E 把它指向 scratch home 即可每次运行独占。
-#[cfg(target_os = "windows")]
-pub const E2E_WEBVIEW_DATA_DIR_ENV_VAR: &str = "DSH_E2E_WEBVIEW_DATA_DIR";
 pub const STORE_SETTING_KEY: &str = "setting";
 /// Store 中记录主窗口几何（位置/大小/最大化）的键
 pub const STORE_WINDOW_STATE_KEY: &str = "window_state";

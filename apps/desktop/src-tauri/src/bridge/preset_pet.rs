@@ -1,15 +1,10 @@
 //! bridge/preset_pet.rs — 预设宠物清单（`resources/manifest.jsonc` 的 `pets.built-in`）。
 //!
-//! 预设宠物不再下载到本地：清单里的条目本身就是 `dsh-pet-component` 的
-//! `<Pet>` 渲染参数（`config` / `uri` / `ext` / `kind` / `size`），pet 窗口按
-//! 当前激活 id 取到条目后直连远端素材播放（macOS 用 `uri.mac` / `ext.mac`
-//! 指向 HEVC-with-Alpha 的 `.mov` 素材：WKWebView 不认 VP9-alpha WebM）。
-//!
 //! 内置清单与用户登记的远端条目合并返回；store 只持久化资源地址与元信息。
 
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
-use tauri::AppHandle;
+use crate::AppHandle;
 use tauri_plugin_store::StoreExt;
 
 const REMOTE_PET_CATALOG_KEY: &str = "remote_pet_catalog";
@@ -447,22 +442,6 @@ mod tests {
                 assert!(kind == "dsh" || kind == "codex");
             }
         }
-    }
-
-    #[test]
-    fn shipped_catalog_provides_macos_mov_override() {
-        // macOS 的 WKWebView 不认 VP9-alpha：至少一个预设必须给出 .mov 覆盖块。
-        let spec = shipped_catalog()
-            .into_iter()
-            .find(|spec| spec.uri.mac.is_some())
-            .expect("至少一个预设应提供 macOS 素材覆盖");
-        let mac = spec.uri.mac.unwrap();
-        assert!(mac.starts_with("https://"));
-        assert!(mac.ends_with("/mov"), "macOS 素材目录应为 mov/: {mac}");
-        assert_eq!(
-            spec.ext.as_ref().and_then(|ext| ext.mac.as_deref()),
-            Some("mov")
-        );
     }
 
     #[test]

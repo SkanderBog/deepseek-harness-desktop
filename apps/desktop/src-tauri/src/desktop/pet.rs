@@ -11,10 +11,6 @@
 //!   不与主窗口几何互相污染（主窗口用 `config::window_state`）。
 //!
 //! 平台说明：
-//! - macOS 透明窗口需要 `macOSPrivateApi`（见 tauri.conf.json `app` 段），且
-//!   Tauri 的 masking 需 `macos-private-api` Cargo feature，由
-//!   `src-tauri/Cargo.toml` 按平台门控开启。这里透明依赖平台原生支持，创建失败
-//!   时回退为非透明窗口继续工作。
 //! - `always_on_top` 在 Windows 上 Tauri 原生 API 即可保持置顶（BongoCat 为
 //!   额外稳定性用 SetWindowPos 循环轮询，本项目暂不做该平台特定加固）。
 //! - 原生 Wayland 会话下 `always_on_top` 与 `set_position` 都不生效，桌宠被主窗口
@@ -22,13 +18,13 @@
 //!   同一后端下 `outer_position()` 恒为 `{x:0,y:0}`，几何持久化因此一并跳过。
 //!   判定见 `crate::pet_overlay_supported`，前端据此提示用户。
 
+use crate::{AppHandle, Window};
 use crate::config::{store_dat_file_name, STORE_PET_WINDOW_STATE_KEY};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-#[cfg(not(target_os = "macos"))]
 use tauri::PhysicalPosition;
-use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window};
+use tauri::{ Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;
 
 /// 桌宠窗口的 label（Tauri 窗口标识，脚本层与能力配置以此引用）。
@@ -286,92 +282,14 @@ pub fn pet_window_logical_size(percent: f64, aspect: f64) -> (f64, f64) {
     )
 }
 
-/// Linux：WebKitGTK 页面缩放里 GTK 缩放系数之外的部分，千分比存储。
-///
-/// 实测（WebKitGTK 2.54，KDE）页面 `devicePixelRatio` =
-/// GTK 缩放系数 × `gtk-xft-dpi`/96 × `GDK_DPI_SCALE`（XWayland 下）：
-/// `Xft.dpi=144` → 1.5；再加 `GDK_DPI_SCALE=0.8333` → 1.25；`GDK_SCALE=2` → 3。
-/// 原生 Wayland 下 dpr 只等于 GTK 缩放系数，该部分取 1。
-/// `gtk::Settings` 只能在主线程读，而建窗跑在异步任务里，所以在主线程算好缓存在这里。
-#[cfg(target_os = "linux")]
-static PAGE_EXTRA_SCALE_MILLI: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(1000);
-
-/// 由 `gtk-xft-dpi`（1/1024 DPI，未设置为 -1）与 `GDK_DPI_SCALE` 推出页面额外缩放。
-#[cfg(target_os = "linux")]
-fn linux_page_extra_scale(gdk_x11: bool, xft_dpi_1024: i32, gdk_dpi_scale: Option<&str>) -> f64 {
-    if !gdk_x11 {
-        return 1.0;
-    }
-    let dpi = if xft_dpi_1024 > 0 {
-        f64::from(xft_dpi_1024) / 1024.0 / 96.0
-    } else {
-        1.0
-    };
-    let env = gdk_dpi_scale
-        .and_then(|value| value.trim().parse::<f64>().ok())
-        .filter(|value| value.is_finite() && *value > 0.0)
-        .unwrap_or(1.0);
-    dpi * env
-}
-
-/// 重新读取页面额外缩放并缓存。**必须在主线程调用**（app setup / 窗口事件回调）。
-#[cfg(target_os = "linux")]
-pub fn refresh_page_extra_scale() {
-    use gtk::prelude::GtkSettingsExt;
-    // GDK 走 X11（XWayland）时 WebKitGTK 才按 Xft.dpi 放大页面；判定与置顶能力共用。
-    let gdk_x11 = crate::pet_overlay_supported_env();
-    let xft_dpi = gtk::Settings::default()
-        .map(|settings| settings.gtk_xft_dpi())
-        .unwrap_or(-1);
-    let scale = linux_page_extra_scale(
-        gdk_x11,
-        xft_dpi,
-        std::env::var("GDK_DPI_SCALE").ok().as_deref(),
-    );
-    PAGE_EXTRA_SCALE_MILLI.store(
-        (scale * 1000.0).round().clamp(250.0, 8000.0) as u32,
-        std::sync::atomic::Ordering::Relaxed,
-    );
-}
-
-/// Linux：一个 CSS 像素对应多少物理像素（= 页面 `devicePixelRatio`），与前端
-/// `usePetWindowSize` / 输入形状同一口径。
-#[cfg(target_os = "linux")]
-fn pet_page_scale(gtk_scale: f64) -> f64 {
-    let extra =
-        f64::from(PAGE_EXTRA_SCALE_MILLI.load(std::sync::atomic::Ordering::Relaxed)) / 1000.0;
-    gtk_scale * extra
-}
-
-/// Linux：当前设置下桌宠窗口的物理尺寸（CSS 尺寸 × 页面缩放）。
-#[cfg(target_os = "linux")]
-fn pet_window_physical_size<R: Runtime>(app: &AppHandle<R>, gtk_scale: f64) -> (u32, u32) {
-    let (width, height) =
-        pet_window_logical_size(get_pet_size_percent(app), pet_window_aspect(app));
-    let scale = pet_page_scale(gtk_scale);
-    (
-        (width * scale).round() as u32,
-        (height * scale).round() as u32,
-    )
-}
-
 /// 跨屏 DPI 变化时只恢复页面尺寸，避免整窗夹取把正在拖动的宠物推回原屏。
 pub fn apply_pet_size<R: Runtime>(app: &AppHandle<R>) {
-    let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) else {
+    let Some(window) = app.get_window(PET_WINDOW_LABEL) else {
         return;
     };
-    #[cfg(target_os = "linux")]
-    let size: tauri::Size = {
-        let (width, height) = pet_window_physical_size(app, window.scale_factor().unwrap_or(1.0));
-        tauri::PhysicalSize::new(width, height).into()
-    };
-    #[cfg(not(target_os = "linux"))]
-    let size: tauri::Size = {
-        let (width, height) =
-            pet_window_logical_size(get_pet_size_percent(app), pet_window_aspect(app));
-        tauri::LogicalSize::new(width, height).into()
-    };
+    let (width, height) =
+        pet_window_logical_size(get_pet_size_percent(app), pet_window_aspect(app));
+    let size = tauri::LogicalSize::new(width, height);
     let _ = window.set_size(size);
 }
 
@@ -407,7 +325,7 @@ pub fn move_pet_window<R: Runtime>(
     delta_y: i32,
 ) -> Result<(), String> {
     let window = app
-        .get_webview_window(PET_WINDOW_LABEL)
+        .get_window(PET_WINDOW_LABEL)
         .ok_or_else(|| "PET_WINDOW_NOT_FOUND: pet window has not been created".to_string())?;
     let current = window.outer_position().map_err(|error| {
         format!("PET_WINDOW_POSITION_FAILED: failed to read pet window position: {error}")
@@ -532,7 +450,7 @@ pub fn move_pet_window<R: Runtime>(
 /// `src/pet/hooks/use-pet-window-clamp.ts` 与 `src/hooks/use-window-draggable.ts`）。
 pub fn persist_pet_window_position<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let window = app
-        .get_webview_window(PET_WINDOW_LABEL)
+        .get_window(PET_WINDOW_LABEL)
         .ok_or_else(|| "PET_WINDOW_NOT_FOUND: pet window has not been created".to_string())?;
     let current = window.outer_position().map_err(|error| {
         format!("PET_WINDOW_POSITION_FAILED: failed to read pet window position: {error}")
@@ -561,13 +479,8 @@ pub fn persist_pet_window_position<R: Runtime>(app: &AppHandle<R>) -> Result<(),
 /// 幂等：已注册时直接复用返回；不存在（首次启用，或上次收起时已被销毁）时
 /// 创建 `pet` 窗口并恢复上一次保存的位置（无记录则默认定位在主屏右下角略偏上，
 /// 避免遮挡主工作区）。
-///
-/// 创建窗口只能来自 app setup 或异步运行时的命令任务：`WebviewWindowBuilder::build()`
-/// 经 channel 等主线程事件循环回包，主线程调用会死锁；销毁窗口则**绝不能**在主线程
-/// 调用（`WindowMessage::Destroy` 在主线程直接 panic）。两条约束都由
-/// `bridge::pet::defer_pet_window_op` 统一保证。
-pub fn ensure_pet_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
-    if let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) {
+pub fn ensure_pet_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Window<R>> {
+    if let Some(window) = app.get_window(PET_WINDOW_LABEL) {
         return Ok(window);
     }
     if !crate::pet_overlay_supported_env() {
@@ -580,9 +493,7 @@ pub fn ensure_pet_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Webvie
     let app_handle = app.clone();
     let (width, height) =
         pet_window_logical_size(get_pet_size_percent(app), pet_window_aspect(app));
-    // 非 Windows 平台在此前加入注入脚本时再赋值，故需要 mut；Windows 下保持只读。
-    #[allow(unused_mut)]
-    let mut builder =
+    let builder =
         WebviewWindowBuilder::new(app, PET_WINDOW_LABEL, WebviewUrl::App("pet.html".into()))
             .title("Deepseek Harness Pet")
             .inner_size(width, height)
@@ -596,30 +507,7 @@ pub fn ensure_pet_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Webvie
             .accept_first_mouse(true)
             .visible(false);
 
-    // 非 Windows 平台经 initialization script 让 dsh 容器的桥/兼容注入生效，
-    // 与主窗口保持一致（桌宠页同样可能加载共享的前端模块）。
-    #[cfg(not(windows))]
-    {
-        builder = builder
-            .initialization_script_for_all_frames(crate::desktop::compat::ABORT_SIGNAL_ANY_SHIM_JS)
-            .initialization_script_for_all_frames(crate::desktop::compat::ITERATOR_HELPERS_SHIM_JS)
-            .initialization_script_for_all_frames(
-                crate::desktop::notification::NOTIFICATION_SHIM_JS,
-            )
-            .initialization_script_for_all_frames(crate::desktop::paste::PASTE_SHIM_JS)
-            .initialization_script_for_all_frames(
-                crate::desktop::plugin_boot::PLUGIN_BOOT_RELOAD_JS,
-            );
-    }
-
-    let window = builder.build()?;
-    // Linux：`inner_size` 按 GTK 缩放系数解释，与页面缩放不同口径（XWayland + 分数缩放），
-    // 建好后立刻按页面缩放改成物理尺寸，后续默认定位也按这个尺寸算。
-    #[cfg(target_os = "linux")]
-    {
-        let (width, height) = pet_window_physical_size(app, window.scale_factor().unwrap_or(1.0));
-        let _ = window.set_size(tauri::PhysicalSize::new(width, height));
-    }
+    let window = builder.build()?.as_ref().window();
     let app_for_pos = app_handle.clone();
     let saved = get_pet_window_position(&app_for_pos);
     #[cfg(target_os = "macos")]
@@ -643,7 +531,7 @@ pub fn ensure_pet_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Webvie
 }
 
 fn position_on_any_monitor<R: Runtime>(
-    window: &WebviewWindow<R>,
+    window: &Window<R>,
     position: tauri::Position,
 ) -> bool {
     let app = window.app_handle();
@@ -651,7 +539,6 @@ fn position_on_any_monitor<R: Runtime>(
         return false;
     };
     let scale = window.scale_factor().unwrap_or(1.0);
-    #[cfg(not(target_os = "linux"))]
     let (lw, lh) = pet_window_logical_size(get_pet_size_percent(app), pet_window_aspect(app));
     #[cfg(target_os = "macos")]
     {
@@ -671,12 +558,6 @@ fn position_on_any_monitor<R: Runtime>(
     {
         let position = position.to_physical::<i32>(scale);
         let (x, y) = (position.x, position.y);
-        #[cfg(target_os = "linux")]
-        let (w, h) = {
-            let (w, h) = pet_window_physical_size(app, scale);
-            (w as i32, h as i32)
-        };
-        #[cfg(not(target_os = "linux"))]
         let (w, h) = ((lw * scale) as i32, (lh * scale) as i32);
         monitors.iter().any(|monitor| {
             let pos = monitor.position();
@@ -690,12 +571,11 @@ fn position_on_any_monitor<R: Runtime>(
 }
 
 /// 把桌宠窗口放到主工作区右下角略偏上（主屏内、避开底部任务栏高度）。
-fn place_pet_at_default<R: Runtime>(window: &WebviewWindow<R>) {
+fn place_pet_at_default<R: Runtime>(window: &Window<R>) {
     let app = window.app_handle();
     let Some(monitor) = app.primary_monitor().ok().flatten() else {
         return;
     };
-    #[cfg(not(target_os = "linux"))]
     let (lw, lh) = pet_window_logical_size(get_pet_size_percent(app), pet_window_aspect(app));
     #[cfg(target_os = "macos")]
     {
@@ -709,12 +589,6 @@ fn place_pet_at_default<R: Runtime>(window: &WebviewWindow<R>) {
     {
         let mon_pos = monitor.position();
         let mon_size = monitor.size();
-        #[cfg(target_os = "linux")]
-        let (w, h) = {
-            let (w, h) = pet_window_physical_size(app, monitor.scale_factor());
-            (w as i32, h as i32)
-        };
-        #[cfg(not(target_os = "linux"))]
         let (w, h) = (
             (lw * monitor.scale_factor()) as i32,
             (lh * monitor.scale_factor()) as i32,
@@ -726,30 +600,9 @@ fn place_pet_at_default<R: Runtime>(window: &WebviewWindow<R>) {
 }
 
 /// 显示或关闭桌宠窗口。
-///
-/// # 隐藏 = 销毁窗口实例（issue #469）
-///
-/// 这里**不做 hide**：隐藏只是把窗口从屏幕上撤下，WebView 进程与页面都还在，桌宠的
-/// 双 `<video>` 会继续解码播放——Chromium/WebView2 对「播放中（未暂停）的 video」
-/// 无条件持有 Video Wake Lock，屏幕因此永远无法息屏，还白占 CPU（用户报告：收起宠物
-/// 后仍无法黑屏）。销毁窗口才是真正「收起」：webview 进程随窗口一起消失，视频暂停、
-/// 唤醒锁释放、CPU 归零。代价是重新显示要重建 webview（页面前端挂载时用
-/// `get_pet_status` 拉取状态，不依赖创建时的事件投递）。
-///
-/// # 线程约束（务必读完再改）
-///
-/// `tauri-runtime-wry` 对主线程上的窗口生命周期消息是「创建会死锁、销毁会 panic」：
-///
-/// - **销毁**走 `WindowMessage::Destroy`，主线程调用直接
-///   `panic!("cannot handle \`WindowMessage::Destroy\` on the main thread")`
-///   （tauri-runtime-wry 2.11.4 lib.rs:3494）。command handler 在主线程执行，所以
-///   收起命令必须经 `bridge::pet::defer_pet_window_op` 丢到异步运行时再调本函数。
-/// - **创建**（`ensure_pet_window` → `WebviewWindowBuilder::build()`）经 channel 等
-///   主线程事件循环回包，仅允许 app setup 或异步运行时任务调用（app setup 在事件
-///   循环初始化前、不与回包竞争，是唯一的主线程例外）。
 pub fn set_pet_window_visible<R: Runtime>(app: &AppHandle<R>, visible: bool) -> Result<(), String> {
     if !visible {
-        if let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) {
+        if let Some(window) = app.get_window(PET_WINDOW_LABEL) {
             if let Err(error) = persist_pet_window_position(app) {
                 log::warn!("[pet] PET_POSITION_PERSIST_FAILED: {error}");
             }
@@ -773,12 +626,8 @@ pub fn set_pet_window_visible<R: Runtime>(app: &AppHandle<R>, visible: bool) -> 
 /// webview 都不该存在（隐藏窗口同样会加载 pet.html、播放动画）。窗口此后由
 /// [`set_pet_window_visible`] 按需创建/销毁。
 pub fn init_pet_window<R: Runtime>(app: &AppHandle<R>) {
-    // setup 跑在主线程：趁此缓存页面额外缩放，之后异步建窗时也能用。
-    #[cfg(target_os = "linux")]
-    refresh_page_extra_scale();
     if !crate::config::get_store_dat_setting(app).pet_enabled {
-        // 全新安装默认不启用桌宠：不预创建窗口（也顺带不触发 Linux 未 realize
-        // 窗口的穿透请求路径）。
+        // 全新安装默认不启用桌宠：不预创建窗口.
         return;
     }
     if let Err(error) = set_pet_window_visible(app, true) {
@@ -1037,23 +886,5 @@ mod tests {
             (0, 0),
             "窗口大于显示器时应贴齐显示器左上角"
         );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_page_extra_scale_matches_measured_webkitgtk_ratios() {
-        let dpi = |value: f64| (value * 1024.0) as i32;
-        // XWayland + KDE 150%：Xft.dpi=144 → 页面 1.5。
-        assert!((linux_page_extra_scale(true, dpi(144.0), None) - 1.5).abs() < 1e-9);
-        // 再叠 GDK_DPI_SCALE（实测 0.8333 → 1.25、1.3333 → 2）。
-        assert!((linux_page_extra_scale(true, dpi(144.0), Some("0.8333")) - 1.25).abs() < 1e-3);
-        assert!((linux_page_extra_scale(true, dpi(144.0), Some("1.3333")) - 2.0).abs() < 1e-3);
-        // 120% / 125% 等任意 DPI 按比例。
-        assert!((linux_page_extra_scale(true, dpi(120.0), None) - 1.25).abs() < 1e-9);
-        // 未设置 / 非法值回落 1。
-        assert_eq!(linux_page_extra_scale(true, -1, Some("abc")), 1.0);
-        assert_eq!(linux_page_extra_scale(true, dpi(96.0), Some("0")), 1.0);
-        // 原生 Wayland：页面缩放只等于 GTK 缩放系数，Xft.dpi 不参与。
-        assert_eq!(linux_page_extra_scale(false, dpi(144.0), Some("1.5")), 1.0);
     }
 }

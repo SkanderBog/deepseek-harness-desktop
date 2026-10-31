@@ -5,6 +5,7 @@
 //! `service/workflow/win_spawn` 的隐藏控制台方案并额外跟踪进程句柄以等待退出；
 //! Unix 上直接以管道捕获标准输出/错误。
 
+use crate::{Window};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -13,7 +14,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Manager, WebviewWindow};
+use tauri::{Emitter, Manager};
 
 use crate::utils::decode_process_line;
 
@@ -433,7 +434,7 @@ pub(crate) async fn run_plugin_process(
     args: &[OsString],
     cwd: &Path,
     envs: &HashMap<String, String>,
-    window: &WebviewWindow,
+    window: &Window,
     owner: ProcessOwner,
 ) -> Result<(i32, String), String> {
     let profile = crate::service::profile::active_profile(window.app_handle());
@@ -536,7 +537,7 @@ pub(super) fn drain_captured(captured: Arc<Mutex<String>>) -> String {
 /// 使用静态泛型约束 `R: Read + Send + 'static` 避免动态派发（Box<dyn Read>）堆分配。
 fn spawn_line_emitter<R: Read + Send + 'static>(
     reader: R,
-    window: WebviewWindow,
+    window: Window,
     captured: Arc<Mutex<String>>,
 ) {
     std::thread::spawn(move || {

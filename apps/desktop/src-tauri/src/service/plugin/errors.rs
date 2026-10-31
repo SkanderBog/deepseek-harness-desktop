@@ -1,19 +1,9 @@
-//! 插件错误记录（持久化）。
-//!
-//! 记录来源：
-//! - 安装/升级/卸载失败（本应用操作可确定，见 [`super::install`]）；
-//! - 页面运行期异常——内嵌 dsh 页面（或 dsh-tauri 桥）经
-//!   `report_plugin_error` 命令上报（见 desktop 的 iframe 消息桥）。
-//!
-//! 记录保存在桌面端数据目录 `plugin-errors.json`，与 `$DSH_HOME`（官方数据）
-//! 分离：这是桌面端自己的诊断信息，不属于 dsh profile 数据。
-//! 插件安装/升级/卸载成功时清除对应记录。
 
 use crate::config;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 /// 单条插件错误
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

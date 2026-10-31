@@ -40,7 +40,7 @@ pub fn apply_at(core_dir: &Path) -> Result<(), String> {
     patch_core_file(core_dir, CONVERSATION_CLIENT_JS, patch_source)
 }
 
-pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
+pub fn apply(app_handle: &crate::AppHandle) -> Result<(), String> {
     patch_dsh(app_handle, CONVERSATION_CLIENT_JS, patch_source)
 }
 

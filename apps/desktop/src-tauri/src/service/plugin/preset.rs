@@ -3,10 +3,11 @@
 //! 运行时合并为统一结构供安装、展示与自愈逻辑使用。
 //! 清单缺失/损坏时报错并回落为空清单，不阻断启动。
 
+use crate::AppHandle;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 
 use crate::config;
 use crate::config::manifest::{Manifest, PluginEntry, PluginVersion};
@@ -103,6 +104,8 @@ struct DevPluginCandidate {
 #[cfg(debug_assertions)]
 fn dev_plugins_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
         .join("..")
         .join("packages")
 }
@@ -297,8 +300,14 @@ pub(crate) fn bundled_plugin_dir(app_handle: &AppHandle, id: &str) -> Option<Pat
 
 pub(crate) fn bundled_plugin_dir_from(resources: Option<&Path>, id: &str) -> Option<PathBuf> {
     #[cfg(debug_assertions)]
-    if let Some(dir) = dev_plugin_dir(id) {
-        return Some(dir);
+    {
+        if let Some(dir) = dev_plugin_dir(id) {
+            return Some(dir);
+        }
+        let installed = dev_plugins_root().with_file_name("node_modules").join(id);
+        if installed.join("package.json").is_file() {
+            return Some(installed);
+        }
     }
     if let Some(candidate) = resources.and_then(|root| find_bundled_in_root(root, id)) {
         return Some(candidate);
@@ -707,6 +716,14 @@ mod tests {
         assert!(!plugins.is_empty());
         assert!(plugins.iter().all(|plugin| plugin.internal));
         assert!(plugins.iter().any(|plugin| plugin.id == "dsh-tauri"));
+        assert!(plugins.iter().any(|plugin| plugin.id == "dsh-taiwind"));
+        #[cfg(debug_assertions)]
+        assert!(
+            bundled_plugin_dir_from(None, "dsh-taiwind")
+                .unwrap()
+                .join("dist/index.js")
+                .is_file()
+        );
         assert!(!load_presets_for_test().iter().any(|plugin| plugin.internal));
     }
 
@@ -1257,12 +1274,7 @@ mod tests {
     fn every_builtin_plugin_package_declares_a_description() {
         let missing: Vec<String> = load_internal_for_test()
             .into_iter()
-            .filter(|plugin| {
-                dev_plugin_dir(&plugin.id)
-                    .and_then(|dir| std::fs::read_to_string(dir.join("package.json")).ok())
-                    .and_then(|raw| package_json_description(&raw))
-                    .is_none()
-            })
+            .filter(|plugin| bundled_plugin_description(None, &plugin.id).is_none())
             .map(|plugin| plugin.id)
             .collect();
         assert!(

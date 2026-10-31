@@ -6,15 +6,12 @@
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm -w build:plugins && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
     "security": {
-      "assetProtocol": {
-        "enable": true,
-        "scope": []
-      }
+      "assetProtocol": { "enable": true, "scope": [] }
     }
   },
   "plugins": {
@@ -38,7 +35,8 @@
       "icons/icon.png"
     ],
     "resources": {
-      "target/electron": "runtime"
+      "target/electron": "runtime",
+      "resources": "resources"
     },
     "licenseFile": "licenses/INSTALLER-LICENSE.txt",
     "category": "DeveloperTool",
@@ -61,14 +59,7 @@
       }
     },
     "linux": {
-      "appimage": {
-        "bundleMediaFramework": false
-      },
       "deb": {
-        "depends": [
-          "gstreamer1.0-plugins-good",
-          "gstreamer1.0-plugins-bad"
-        ],
         "conflicts": [
           "deepseek-harness-desktop"
         ],

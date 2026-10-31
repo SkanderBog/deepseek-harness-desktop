@@ -196,7 +196,7 @@ fn resolve_heal_port(configured: u16, heal_target: u16, heal_target_free: bool) 
 }
 
 /// 检测并启动 Harness 服务
-pub async fn start(app_handle: tauri::AppHandle) -> Result<(), String> {
+pub async fn start(app_handle: crate::AppHandle) -> Result<(), String> {
     super::early::wait_preparation().await?;
     let setting = config::get_store_dat_setting(&app_handle);
     let node_binary_path = config::get_node_binary_path(&app_handle);
@@ -246,7 +246,7 @@ pub async fn start(app_handle: tauri::AppHandle) -> Result<(), String> {
 }
 
 /// 重启 Harness 服务
-pub async fn restart(app_handle: tauri::AppHandle) -> Result<(), String> {
+pub async fn restart(app_handle: crate::AppHandle) -> Result<(), String> {
     log::info!("Restarting Harness service");
 
     // 1. 停止现有服务
@@ -475,7 +475,7 @@ fn supervise_harness(
 }
 
 /// 启动 Harness 服务进程
-pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
+pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
     super::early::wait_preparation().await?;
     // 启动分段计时（issue #766）：只写日志，不改控制流。每段一行 `STARTUP_PHASE`，
     // `ms` 是本段耗时、`total` 是本次 launch 的累计耗时。启动慢的归因过去只能靠
@@ -715,9 +715,6 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::service::patch::scroll_follow::apply(&app_handle) {
         log::warn!("Scroll follow reduced-motion patch skipped: {e}");
     }
-    if let Err(e) = crate::service::patch::chat_follow_anchor::apply(&app_handle) {
-        log::warn!("Chat follow anchor patch skipped: {e}");
-    }
     if let Err(e) = crate::service::patch::mobile_composer::apply(&app_handle) {
         log::warn!("mobile composer patch failed: {e}");
     }
@@ -743,15 +740,6 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::service::patch::pi_ai_thinking::apply(&app_handle) {
         log::warn!("pi-ai thinking-as-text patch failed: {e}");
     }
-    // WKWebView 点击 `<button>` 不转移焦点：模型座位的 portal 菜单在 mousedown 阶段收到
-    // `relatedTarget` 为 null 的 blur 就直接 close()，菜单在 click 之前卸载，鼠标选择
-    // 模型 / 推理等级变成空操作（键盘 Enter 正常、浏览器正常）。补丁放行该 blur，菜单外的
-    // 点击仍由组件自身的文档级 mousedown 处理器关闭。最佳努力且幂等：锚点缺失时安全跳过。
-    if let Err(e) = crate::service::patch::model_selection::apply(&app_handle) {
-        log::warn!("model selection mouse click patch failed: {e}");
-    }
-    // worktree 会话以隔离 cwd 执行，但产品归属仍是源 Workspace；放宽上游显式
-    // attach 的 cwd 相等约束，其他 cwd 有效性校验保持不变。最佳努力且幂等。
     if let Err(e) = crate::service::patch::workspace::apply(&app_handle) {
         log::warn!("workspace worktree membership patch failed: {e}");
     }
@@ -774,14 +762,13 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::service::plugin::ensure_profile_npmrc(&app_handle) {
         log::warn!("ensure profile .npmrc failed: {e}");
     }
-    // 内置插件自愈：随包分发的内置插件（dsh-tauri 等）必须在服务进程加载插件
-    // 前就绪——核对「已安装 + 安装路径指向当前捆绑目录」，未安装、路径不正确
-    // 或用户卸载后重启，一律强制重装（见 service::plugin::internal）。普通
-    // 失败只告警，不阻断启动（核心功能缺失是发布缺陷，由 build:plugins 报错）；
-    // 但进程清理/协调器失败意味着前一次 pnpm 去向未确认，必须终止本次启动。
     if let Err(e) = crate::service::plugin::ensure_internal_plugins(&app_handle).await {
-        if crate::service::plugin::is_process_cleanup_failure(&e) {
-            log::error!("ensure internal plugins blocked by unconfirmed process cleanup: {e}");
+        if crate::service::plugin::is_process_cleanup_failure(&e)
+            || e.starts_with("INTERNAL_PLUGIN_SOURCE_MISSING:")
+            || e.starts_with("INTERNAL_PLUGIN_INSTALL_TIMEOUT:")
+            || e.starts_with("INTERNAL_PLUGIN_INSTALL_CANCELLED:")
+        {
+            log::error!("ensure internal plugins blocked startup: {e}");
             return Err(e);
         }
         log::warn!("ensure internal plugins failed: {e}");
@@ -857,7 +844,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
 pub(super) async fn launch_prepared(
     plan: LaunchPlan,
     guards: (LaunchGuard, tokio::sync::OwnedMutexGuard<()>),
-    notifications: Arc<OnceLock<tauri::AppHandle>>,
+    notifications: Arc<OnceLock<crate::AppHandle>>,
     #[cfg(windows)] job: Option<Arc<super::win_spawn::ProcessJob>>,
 ) -> Result<(), String> {
     let prepared_started = std::time::Instant::now();
@@ -987,10 +974,6 @@ pub(super) async fn launch_prepared(
     // 最佳努力：空值返回空 map，不覆盖用户已有的同名环境变量。
     envs.extend(config::proxy::proxy_child_env(&setting.proxy_url));
 
-    // 内嵌 WebView 是 `tauri.localhost` 下的跨源沙箱 iframe，`SameSite=Strict` 的
-    // browser-session Cookie 不会被携带。载体标记交给 dsh-tauri 插件（载体鉴权适配）：
-    // 只有该标记在场时它才覆写 connection 的鉴权闸门，因此同一 profile 下独立运行
-    // 的 `dsh web` 不受影响（取代原先对核心 JS 打的 `--skip-auth` 磁盘补丁）。
     envs.insert("DSH_TAURI_EMBEDDED".to_string(), "1".to_string());
 
     // issue #1064：AppImage 的旧库不能泄漏给 Harness 启动的宿主目录选择器。

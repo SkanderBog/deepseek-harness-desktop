@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use super::env;
 use super::fs_ops::{self, CopyProgress, TreeStats};
@@ -173,7 +173,7 @@ pub(super) fn run(
         return Err(error);
     }
     // 本进程立刻生效：后续 get_dsh_data_path / shim 生成 / 拉起的 Harness 都读新值
-    std::env::set_var(env::DATA_DIR_ENV, &text);
+    unsafe { std::env::set_var(env::DATA_DIR_ENV, &text); }
     refresh_shims(app_handle, target);
 
     emit(step("migrate", "done", copied.files, copied.bytes, expected.files, expected.bytes));
@@ -258,13 +258,13 @@ pub(super) fn rollback(
         if back_to_default {
             let cleared = env::clear_user_home();
             if cleared.is_ok() {
-                std::env::remove_var(env::DATA_DIR_ENV);
+                unsafe { std::env::remove_var(env::DATA_DIR_ENV); }
             }
             cleared
         } else {
             let written = env::write_user_home(text);
             if written.is_ok() {
-                std::env::set_var(env::DATA_DIR_ENV, text);
+                unsafe { std::env::set_var(env::DATA_DIR_ENV, text); }
             }
             written
         }

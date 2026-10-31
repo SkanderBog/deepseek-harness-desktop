@@ -294,7 +294,7 @@ pub fn verify_sha256(buffer: &[u8], expected: &str) -> Result<(), String> {
 }
 
 /// 从 Node.js 官方同版本 SHASUMS256.txt 中读取当前平台包的摘要。
-pub async fn fetch_node_sha256(app_handle: &tauri::AppHandle, download_url: &str) -> Result<String, String> {
+pub async fn fetch_node_sha256(app_handle: &crate::AppHandle, download_url: &str) -> Result<String, String> {
     let (base, filename) = download_url.rsplit_once('/').ok_or_else(|| {
         "INTEGRITY_METADATA_INVALID: Node.js download URL has no filename".to_string()
     })?;

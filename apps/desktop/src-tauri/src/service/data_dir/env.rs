@@ -41,7 +41,7 @@ pub(super) fn read_user_home() -> Result<Option<String>, String> {
 #[cfg(windows)]
 pub(super) fn restore_process_env(persisted: Result<Option<String>, String>) {
     match persisted {
-        Ok(Some(value)) => std::env::set_var(DATA_DIR_ENV, crate::service::cli::expand_env(&value)),
+        Ok(Some(value)) => unsafe { std::env::set_var(DATA_DIR_ENV, crate::service::cli::expand_env(&value)) },
         Ok(None) => {}
         Err(error) => log::warn!("DATA_DIR_ENV_READ: {error}"),
     }
@@ -251,7 +251,7 @@ mod tests {
         };
         let migrated = "E:\\DSH 数据\\DSHHome";
         let inherited = "D:\\Old Home";
-        std::env::set_var("DSH_TEST_EXPAND_ROOT", "E:\\DSH 数据");
+        unsafe { std::env::set_var("DSH_TEST_EXPAND_ROOT", "E:\\DSH 数据"); }
         let persisted = match mode.as_str() {
             "missing" | "stale" => Ok(Some(migrated.to_string())),
             "expanded" => Ok(Some("%DSH_TEST_EXPAND_ROOT%\\DSHHome".to_string())),
@@ -262,9 +262,9 @@ mod tests {
             _ => panic!("unknown home restoration mode: {mode}"),
         };
         if mode == "expanded" {
-            std::env::set_var(DATA_DIR_ENV, migrated);
+            unsafe { std::env::set_var(DATA_DIR_ENV, migrated); }
         } else if mode != "missing" && mode != "default" {
-            std::env::set_var(DATA_DIR_ENV, inherited);
+            unsafe { std::env::set_var(DATA_DIR_ENV, inherited); }
         }
         restore_process_env(persisted);
         let expected = match mode.as_str() {

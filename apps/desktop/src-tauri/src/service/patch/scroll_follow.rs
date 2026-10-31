@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
+use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
 
 const CLIENT: &str = "node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js";
 const CLASS: &str = "var ScrollFollow = class ScrollFollow {";
@@ -72,7 +72,7 @@ pub fn apply_at(core_dir: &Path) -> Result<(), String> {
     patch_core_file(core_dir, CLIENT, patch_source)
 }
 
-pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
+pub fn apply(app_handle: &crate::AppHandle) -> Result<(), String> {
     patch_dsh(app_handle, CLIENT, patch_source)
 }
 
@@ -82,7 +82,7 @@ mod tests {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
-    const FIXTURE: &str = include_str!("../../../../test/fixtures/scroll-follow-alpha5.txt");
+    const FIXTURE: &str = include_str!("../../../../tests/fixtures/scroll-follow-alpha5.txt");
 
     #[test]
     fn patches_the_released_class_once() {
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&target).unwrap(), first);
 
         let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../test/fixtures/scroll-follow-contract.mjs");
+            .join("../tests/fixtures/scroll-follow-contract.mjs");
         let mut child = Command::new("node")
             .arg(script)
             .arg(&target)

@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use crate::AppHandle;
 
 pub mod migrate;
 

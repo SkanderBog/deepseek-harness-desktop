@@ -7,10 +7,11 @@
 //! - [`registry`]：Windows 注册表辅助（仅 Windows）
 //! - [`rc`]：Unix shell rc 幂等块注入/移除（仅 Unix）
 
+use crate::{AppHandle};
 #[cfg(not(windows))]
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::{ Manager};
 
 #[cfg(windows)]
 use super::shim::SHIM_CMD_NAME;

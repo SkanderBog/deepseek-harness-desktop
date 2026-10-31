@@ -45,7 +45,7 @@ pub fn distro_managed() -> bool {
 ///
 /// 唯一真值是设置页「自动更新」开关：关闭后只剩用户显式发起的链路（「检查更新」
 /// 与对话框里的「立即更新」），退出时不会拿已下载的安装包替换本应用（issue #1132）。
-pub(super) fn auto_update_enabled(app_handle: &tauri::AppHandle) -> bool {
+pub(super) fn auto_update_enabled(app_handle: &crate::AppHandle) -> bool {
     crate::config::get_store_dat_setting(app_handle).auto_update
 }
 
@@ -53,7 +53,7 @@ pub(super) fn auto_update_enabled(app_handle: &tauri::AppHandle) -> bool {
 ///
 /// 只在退出时按当前设置判断还不够：用户关掉开关、退出前又打开，旧的已下载安装包
 /// 会立刻重新变成「退出即安装」——那正是开关要避免的未经确认替换。
-pub fn clear_pending_installer(app_handle: &tauri::AppHandle) {
+pub fn clear_pending_installer(app_handle: &crate::AppHandle) {
     pending::set(app_handle, None);
 }
 

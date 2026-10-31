@@ -10,7 +10,7 @@ use crate::service::cli;
 use crate::service::core;
 use crate::service::download::{self, Installable};
 use crate::service::workflow;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 /// 并发安装互斥：状态位守卫进程的“是否正在安装”判断
 /// （status::Status::Installing 会被失败路径/其它流程改写，不能作为互斥依据），
@@ -79,7 +79,7 @@ fn sync_cli_link(app_handle: &AppHandle) {
 /// 启动逻辑由前端显式调用 `launch_harness` 完成，避免重复拉起进程。
 #[tauri::command]
 pub async fn install_dependencies(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<bool, String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
@@ -364,7 +364,7 @@ pub async fn check_dsh_update(
 /// 启动 Harness 服务
 #[tauri::command]
 pub async fn launch_harness(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
@@ -377,7 +377,7 @@ pub async fn launch_harness(
 /// 停止 Harness 服务
 #[tauri::command]
 pub async fn shutdown_harness(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
@@ -391,7 +391,7 @@ pub async fn shutdown_harness(
 /// 重启 Harness 服务
 #[tauri::command]
 pub async fn restart_harness(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<(), String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
@@ -423,7 +423,7 @@ pub async fn restart_harness(
 /// 而不是假装已恢复。
 #[tauri::command]
 pub async fn enter_safe_mode(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<crate::service::plugin::PatchQuarantineReport, String> {
     let _transition = crate::service::workflow::acquire_core_transition().await?;
@@ -463,7 +463,7 @@ pub async fn enter_safe_mode(
 /// 会立刻回到同一个解析失败。
 #[tauri::command]
 pub async fn quarantine_broken_patch_layers(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<crate::service::plugin::PatchQuarantineReport, String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
@@ -488,7 +488,7 @@ pub async fn quarantine_broken_patch_layers(
 /// 移除的正是预检报出的那批条目；没有可移除项时返回空报告，前端照常重启。
 #[tauri::command]
 pub async fn strip_unresolved_patch_entries(
-    window: tauri::WebviewWindow,
+    window: crate::Window,
     app_handle: AppHandle,
 ) -> Result<crate::service::plugin::PatchEntryStripReport, String> {
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
@@ -502,7 +502,7 @@ pub async fn strip_unresolved_patch_entries(
 #[tauri::command]
 pub fn get_dsh_status(
     app_handle: AppHandle,
-    window: tauri::WebviewWindow,
+    window: crate::Window,
 ) -> workflow::status::Status {
     let profile = workflow::instances::window_profile(&app_handle, window.label());
     workflow::instances::scope_sync(profile, workflow::status::get_status)

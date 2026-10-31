@@ -87,7 +87,7 @@ pub fn profiles() -> Vec<String> {
         .collect()
 }
 
-pub fn window_profile(app: &tauri::AppHandle, label: &str) -> String {
+pub fn window_profile(app: &crate::AppHandle, label: &str) -> String {
     let mut registry = registry().lock().unwrap_or_else(|error| error.into_inner());
     registry
         .windows
@@ -169,7 +169,7 @@ pub fn is_attached(profile: &str) -> bool {
 }
 
 pub fn emit<R: tauri::Runtime, S: serde::Serialize + Clone>(
-    app: &tauri::AppHandle<R>,
+    app: &crate::AppHandle<R>,
     event: &str,
     payload: S,
 ) {
@@ -195,7 +195,7 @@ pub fn emit<R: tauri::Runtime, S: serde::Serialize + Clone>(
     }
 }
 
-pub fn port(app: &tauri::AppHandle) -> u16 {
+pub fn port(app: &crate::AppHandle) -> u16 {
     instance()
         .port
         .lock()

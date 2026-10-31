@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use serde_yaml::{Mapping, Value};
 

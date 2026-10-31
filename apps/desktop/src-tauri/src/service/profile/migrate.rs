@@ -15,7 +15,7 @@ use std::path::Path;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
-use tauri::AppHandle;
+use crate::AppHandle;
 
 use crate::config;
 use crate::service::fs_guard;

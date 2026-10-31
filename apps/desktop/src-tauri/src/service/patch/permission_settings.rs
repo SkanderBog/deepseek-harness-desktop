@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::utils::{patch_core_file, patch_dsh, PatchOutcome};
+use crate::utils::{PatchOutcome, patch_core_file, patch_dsh};
 
 const PERMISSION_CLIENT_JS: &str =
     "node_modules/@deepseek-ai/dsh-client-ui-permission-presets/lib/client.js";
@@ -72,7 +72,7 @@ pub fn apply_at(core_dir: &Path) -> Result<(), String> {
     patch_core_file(core_dir, PERMISSION_CLIENT_JS, patch_source)
 }
 
-pub fn apply(app_handle: &tauri::AppHandle) -> Result<(), String> {
+pub fn apply(app_handle: &crate::AppHandle) -> Result<(), String> {
     patch_dsh(app_handle, PERMISSION_CLIENT_JS, patch_source)
 }
 
@@ -81,7 +81,7 @@ mod tests {
     use super::*;
 
     const LEGACY_CONTROLLER: &str =
-        include_str!("../../../../test/fixtures/permission-settings-rc2.txt");
+        include_str!("../../../../tests/fixtures/permission-settings-rc2.txt");
 
     #[test]
     fn patches_real_controller_and_upgrades_v1_once() {
