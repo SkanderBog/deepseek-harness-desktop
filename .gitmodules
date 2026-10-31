@@ -10,3 +10,6 @@
 [submodule "source/v1"]
 	path = source/v1
 	url = https://github.com/dsh-tauri/deepseek-harness-desktop
+[submodule "source/deepseek-harness"]
+	path = source/deepseek-harness
+	url = https://github.com/deepseek-ai/deepseek-harness
