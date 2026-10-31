@@ -68,9 +68,11 @@ pub use install::{
     allow_policy_versions, allow_version_exemptions, inspect_specs, install, install_specs,
     remove_many, update_many, IncompatibleVersion, PolicyBlockedVersion,
 };
+#[cfg(any(windows, test))]
+pub(crate) use installed::ensure_npmrc_at;
 pub(crate) use installed::{
-    declared_packages, ensure_npmrc_at, ensure_profile_npmrc, installed_name, list_installed,
-    profile_dir, ProfilePackageJson,
+    declared_packages, ensure_profile_npmrc, installed_name, list_installed, profile_dir,
+    ProfilePackageJson,
 };
 pub use installed::{list, PreinstallPlugin};
 pub(crate) use internal::cancel as cancel_internal_plugins;
@@ -86,9 +88,11 @@ pub(crate) use patch_guard::{
 };
 pub(crate) use patch_yaml::{parse_patch_layer, render_patch_layer};
 pub use preset::repo_url_of;
+#[cfg(any(windows, test))]
+pub(crate) use preset::{bundled_plugin_dir_from, presets_from_manifest};
 pub(crate) use preset::{
-    bundled_plugin_dir, bundled_plugin_dir_from, current_preset_hash, load_presets,
-    preinstall_pending, presets_from_manifest, remove_legacy_bundled_plugins,
+    bundled_plugin_dir, current_preset_hash, load_presets, preinstall_pending,
+    remove_legacy_bundled_plugins,
 };
 pub(crate) use process::{
     acquire_operation_lock, is_internal_plugin_startup_failure, is_process_cleanup_failure,
