@@ -125,7 +125,7 @@ jobs:
         run: pnpm run typecheck:native
 
       - name: Native unit test
-        run: node node_modules/vitest/vitest.mjs run --config config/vitest.native.config.ts
+        run: pnpm run test:native
 
   unit:
     name: Unit Tests (vitest)
@@ -149,6 +149,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Test workspace release versioning and immutable source guards
+        run: node .github/scripts/check-mobile-release.mjs
 
       - name: Test iOS signing and Beta review guards without credentials
         run: python3 -m unittest discover -s .github/scripts -p 'test_ios_*.py' -v
@@ -322,11 +325,36 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/next' }}
 
       # dist 必须存在：缺失时 debug 构建回落到 devUrl，页面为空、选择器全部落空。
+      - name: Build bundled plugins
+        run: pnpm run build:plugins
+
       - name: Build renderer
         run: pnpm --filter dsh-desktop build
 
       - name: Build debug binary
         run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --features tauri/custom-protocol
+
+      - name: Runtime IPC readiness regression
+        shell: bash
+        run: |
+          root=$(node -p 'process.cwd().split(String.fromCharCode(92)).join(String.fromCharCode(47))')
+          config=(--manifest-path crates/tauri-runtime-electron/Cargo.toml --features tauri
+            --config "patch.crates-io.tauri-runtime.path=\"$root/apps/desktop/src-tauri/vendor/tauri-runtime\""
+            --config "patch.\"https://github.com/hairyf/electron-rs.git\".electron-rs.path=\"$root/crates/electron-rs\"")
+          cp apps/desktop/src-tauri/Cargo.lock crates/tauri-runtime-electron/Cargo.lock
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          cargo metadata "${config[@]}" --offline --filter-platform "$host" --format-version 1 > /dev/null
+          args=(cargo test "${config[@]}" --target-dir apps/desktop/src-tauri/target --locked --offline --lib ipc_readiness_)
+          listing=$("${args[@]}" -- --list)
+          if [[ "$listing" != *"runtime::tests::ipc_readiness_waits_for_manager_across_iterations: test"* ]]; then
+            echo "Runtime IPC readiness regression was not collected"
+            exit 1
+          fi
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            xvfb-run --auto-servernum "${args[@]}"
+          else
+            "${args[@]}"
+          fi
 
       - name: Desktop E2E (Linux, headless)
         if: runner.os == 'Linux'

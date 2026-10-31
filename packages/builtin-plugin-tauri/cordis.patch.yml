@@ -1,5 +1,5 @@
 - id: ui-sidebar-browser
-  disabled: true
+  disabled: false
 - insert:
     - id: dsh-tauri
       name: dsh-tauri

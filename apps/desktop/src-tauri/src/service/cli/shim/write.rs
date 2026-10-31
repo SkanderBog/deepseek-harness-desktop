@@ -12,9 +12,11 @@ use tauri::{ Runtime};
 use super::build::build_sh_shim;
 #[allow(unused_imports)] // 构建函数在 debug 构建/异平台下由 cfg 裁剪，测试仍引用
 use super::build::{
-    build_cmd_shim, build_npm_cmd_shim, build_npm_ps1_shim, build_npx_cmd_shim, build_npx_ps1_shim,
+    build_cmd_shim, build_npm_cmd_shim, build_npx_cmd_shim,
     build_pnpm_cmd_shim, build_pnpm_ps1_shim, build_pnpm_sh_shim, build_ps1_shim, ShimPaths,
 };
+#[cfg(windows)]
+use super::build::{build_npm_ps1_shim, build_npx_ps1_shim};
 #[cfg(all(windows, not(debug_assertions)))]
 use super::SHIM_PS1_NAME;
 #[cfg(windows)]
@@ -252,6 +254,7 @@ pub fn write_shims<R: Runtime>(app_handle: &AppHandle<R>, bin_dir: &Path) -> Res
 mod tests {
     use super::super::test_util::{sample_dsh_home, sample_shim_paths, shim_paths_for};
     use super::*;
+    #[cfg(windows)]
     use tauri::test::{mock_builder, mock_context, noop_assets};
 
     #[test]

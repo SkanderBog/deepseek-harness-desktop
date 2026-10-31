@@ -81,7 +81,7 @@ set "DSH_TELEMETRY_DISABLED=1"
 {node_resolve}
 :launch
 if not exist "%DSH_BIN%" goto :no_cli
-"%NODE%" "%DSH_BIN%" %*
+"%NODE%" --input-type=module "{carrier}" "%DSH_BIN%" %*
 exit /b %ERRORLEVEL%
 
 :no_cli
@@ -97,6 +97,7 @@ exit /b 1
         git_dir = portable_path_cmd(&paths.git_dir()),
         dsh_bin = portable_path_cmd(&paths.dsh_bin),
         dsh_home = portable_path_cmd(dsh_home),
+        carrier = crate::service::profile::carrier_node_args(false)[1].to_string_lossy(),
         user_dsh = CMD_USER_DSH_PRECEDENCE,
         node_resolve = CMD_NODE_RESOLVE,
     ))
@@ -131,13 +132,16 @@ if (-not (Test-Path -LiteralPath $dshBin)) {{
     exit 1
 }}
 $env:DSH_HOME = $dshHome
-& $node $dshBin @args
+& $node --input-type=module '{carrier}' $dshBin @args
 exit $LASTEXITCODE
 "#,
         node_bin = escape_path_ps1(&paths.node_bin),
         node_dir = escape_path_ps1(&paths.node_dir()),
         git_dir = escape_path_ps1(&paths.git_dir()),
         dsh_bin = escape_path_ps1(&paths.dsh_bin),
+        carrier = crate::service::profile::carrier_node_args(false)[1]
+            .to_string_lossy()
+            .replace('\'', "''"),
         user_dsh = PS1_USER_DSH_PRECEDENCE,
         node_resolve = PS1_NODE_RESOLVE,
         dsh_home = escape_path_ps1(dsh_home),
@@ -163,11 +167,14 @@ if [ ! -f "$DSH_BIN" ]; then
   echo "[dsh] Harness CLI not found. Please run DeepSeek Harness Desktop to install it first." >&2
   exit 1
 fi
-exec "$NODE" "$DSH_BIN" "$@"
+exec "$NODE" --input-type=module '{carrier}' "$DSH_BIN" "$@"
 "#,
         node_bin = escape_path_sh(&paths.node_bin),
         node_dir = escape_path_sh(&paths.node_dir()),
         dsh_bin = escape_path_sh(&paths.dsh_bin),
+        carrier = crate::service::profile::carrier_node_args(false)[1]
+            .to_string_lossy()
+            .replace('\'', "'\"'\"'"),
         user_dsh = SH_USER_DSH_PRECEDENCE,
         dsh_home = escape_path_sh(dsh_home),
         node_resolve = SH_NODE_RESOLVE,
@@ -625,6 +632,7 @@ pub fn build_npm_cmd_shim(paths: &ShimPaths) -> String {
     )
 }
 
+#[cfg(windows)]
 fn build_npm_cli_ps1_shim(
     paths: &ShimPaths,
     shim_name: &str,
@@ -715,7 +723,7 @@ exit $LASTEXITCODE
 }
 
 /// Windows `npx.ps1` 内容（见 npx/npm shim 段注释）。
-#[cfg_attr(all(not(windows), not(test)), allow(dead_code))]
+#[cfg(windows)]
 pub fn build_npx_ps1_shim(paths: &ShimPaths) -> String {
     build_npm_cli_ps1_shim(
         paths,
@@ -731,7 +739,7 @@ pub fn build_npx_ps1_shim(paths: &ShimPaths) -> String {
 }
 
 /// Windows `npm.ps1` 内容（见 npx/npm shim 段注释）。
-#[cfg_attr(all(not(windows), not(test)), allow(dead_code))]
+#[cfg(windows)]
 pub fn build_npm_ps1_shim(paths: &ShimPaths) -> String {
     build_npm_cli_ps1_shim(
         paths,
@@ -927,7 +935,7 @@ mod tests {
         let node = dir.join("fake-node.cmd");
         std::fs::write(
             &node,
-            "@echo off\r\nif \"%~2\"==\"--print-git-dir\" echo GIT_DIR=[%GIT_DIR%]\r\nexit /b 0\r\n",
+            "@echo off\r\necho GIT_DIR=[%GIT_DIR%]\r\nexit /b 0\r\n",
         )
         .unwrap();
 

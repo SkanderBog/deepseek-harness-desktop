@@ -138,7 +138,7 @@ export function relativeSpecifiers(source: string): string[] {
   return moduleSpecifiers(source).filter(specifier => specifier.startsWith('.'))
 }
 
-function moduleSpecifiers(source: string): string[] {
+function moduleSpecifiers(source: string, optionalRequire?: string): string[] {
   const specifiers: string[] = []
   const file = ts.createSourceFile('runtime.js', source, ts.ScriptTarget.Latest, false, ts.ScriptKind.JS)
   ts.forEachChild(file, visit)
@@ -156,6 +156,9 @@ function moduleSpecifiers(source: string): string[] {
       target = node.arguments[0]
     }
     if (target && ts.isStringLiteralLike(target)) {
+      if (target.text === optionalRequire && ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        return
+      }
       specifiers.push(target.text)
     }
     ts.forEachChild(node, visit)
@@ -501,7 +504,10 @@ function verifyRelativeSpecifiers(root: string): number {
       if (!RUNTIME_FILE_PATTERN.test(file)) {
         continue
       }
-      for (const specifier of moduleSpecifiers(readFileSync(file, 'utf8'))) {
+      const optionalRequire = index.manifests.get(dir)?.name === '@tailwindcss/oxide' && file === join(dir, 'index.js')
+        ? './tailwindcss-oxide.wasi.cjs'
+        : undefined
+      for (const specifier of moduleSpecifiers(readFileSync(file, 'utf8'), optionalRequire)) {
         if (specifier === 'dsh-h3/genapi' || specifier.startsWith('dsh-h3/genapi/')) {
           throw new Error(`PLUGIN_DEPLOY_BUILD_TOOL_REQUIRED: ${relative(root, file)} -> ${specifier}`)
         }

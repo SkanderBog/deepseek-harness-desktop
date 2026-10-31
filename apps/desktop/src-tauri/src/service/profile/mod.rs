@@ -1,59 +1,32 @@
-//! 档案管理。
-//!
-//! 档案 = `$DSH_HOME/profiles/<id>` 目录，与官方 dsh CLI 的 profile 语义一致
-//! （`dsh --profile <id>` 启动 / `dsh plugin --profile <id>` 管理插件）。
-//! 桌面端把「当前使用哪个档案」持久化在自己的 store 设置（`active_profile`，
-//! 默认 `web`），服务启动、插件安装/升级/卸载全部以它为准——不再写死 web。
-//!
-//! 首装防御：桌面端首次安装（本进程启动前 store 文件不存在）时，在任何 dsh
-//! 启动/插件操作之前自动新建独立的引导档案并切换过去（见
-//! `migrate_desktop_profile_name`）。此前装过 dsh CLI 并装了大量插件/补丁的
-//! 用户启用桌面端时，旧数据不再涌入桌面端所用档案，防御性规避加载异常。
-//!
-//! 档案改名（官方核心 0.1.5）：引导档案原名 `desktop`，该名自 0.1.5 起被官方
-//! 核心保留给 Electron 应用（`--profile desktop` 直接报错），因此启动迁移把
-//! 老用户的 `profiles/desktop` 目录与清单名改到 `tauri` 并改指 `active_profile`
-//! （见 [`migrate_desktop_profile_name`]），否则升级后服务再也起不来。
-//!
-//! 新建档案时按官方 `dsh-app-boot` 的 `initProfile` 形态初始化目录：
-//! `package.json`（含 web 模板 bundles）+ `cordis.patch.yml` + `pnpm-workspace.yaml`，
-//! 与 CLI 侧产物完全一致，两边可互相操作。
-//!
-//! 核心 bundle 层自愈（issue #452）：`dsh.profile.bundles` 必须始终带
-//! `@deepseek-ai/dsh-base` + `@deepseek-ai/dsh-web-app`（顺序即补丁层应用顺序）。
-//! 目录「已存在」不等于「档案已就绪」——CLI 侧 `dsh plugin add` 对没有
-//! `package.json` 的目录会用 `DEFAULT_PROFILE_BUNDLES`（**只有 dsh-base**）初始化，
-//! 中断的首次初始化、外部 mkdir、用户手工编辑清单都会留下缺 web 层的档案。此时
-//! 宿主不会提供 webServer/connection/webRuntime，内置插件与市场插件全部停在
-//! pending，服务启动必然失败。因此 [`init_profile_dir`] 与 spawn 前自愈
-//! （[`ensure_active_profile_core_bundles`]）都会补齐核心层，并禁用与内置调度冲突的
-//! 历史官方实验调度 bundle；依赖与其它插件条目保留。
-
 use crate::config;
 use crate::service::fs_guard;
+use crate::AppHandle;
+use base64::Engine;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::AppHandle;
 
 pub mod migrate;
 
 /// 桌面端默认档案（内置，不可删除）
-pub const DEFAULT_PROFILE: &str = "web";
+pub const DEFAULT_PROFILE: &str = "desktop";
 
-/// 桌面端引导档案 id：桌面端首次安装时自动新建并切换为当前档案（与 CLI 用户
-/// 既有档案隔离；用户新建同 id 档案被 `PROFILE_EXISTS` 拦截，此名仅由本引导
-/// 占用）。选 `tauri` 而非 `desktop`：官方核心 0.1.5 起把 `desktop` 档案名
-/// 保留给 Electron 应用（`rejectElectronProfile` 对 `--profile desktop`
-/// 直接报错，大小写不敏感），桌面端若继续用它，服务启动与 `dsh plugin
-/// --profile desktop …` 全部失败。老用户的 `profiles/desktop` 由启动迁移
-/// （[`migrate_desktop_profile_name`]）改名到本 id。
-pub const DESKTOP_PROFILE: &str = "tauri";
+pub const DESKTOP_PROFILE: &str = DEFAULT_PROFILE;
 
-/// 迁移前的引导档案 id（官方核心把它保留给 Electron 应用，见 [`DESKTOP_PROFILE`]）。
-const LEGACY_DESKTOP_PROFILE: &str = "desktop";
+const LEGACY_DESKTOP_PROFILE: &str = "tauri";
+
+pub(crate) fn carrier_node_args(desktop_host: bool) -> [std::ffi::OsString; 2] {
+    let source = base64::engine::general_purpose::STANDARD.encode(include_str!("carrier.mjs"));
+    [
+        "--input-type=module".into(),
+        format!(
+            "--eval=import('data:text/javascript;base64,{source}').then(m=>m.main({desktop_host}))"
+        )
+        .into(),
+    ]
+}
 
 /// 安全模式档案：仅加载 web 模板核心 bundles、不带任何用户插件/补丁层。
 /// 错误界面「安全模式」按钮切到此档案重启（`--profile safe`），隔离问题插件
@@ -91,14 +64,14 @@ pub struct Profile {
     pub id: String,
     /// 展示名（manifest.name 去 `dsh-profile-` 前缀，缺失回落 id）
     pub name: String,
-    /// 是否桌面端内置默认档案（web）
+    /// 是否桌面端内置默认档案（Desktop）
     pub default: bool,
     /// 是否当前使用中的档案
     pub active: bool,
 }
 
 /// 指定档案的目录（`$DSH_HOME/profiles/<id>`）
-pub fn profile_dir_of(app_handle: &AppHandle, id: &str) -> PathBuf {
+pub fn profile_dir_of<R: tauri::Runtime>(app_handle: &AppHandle<R>, id: &str) -> PathBuf {
     config::get_dsh_data_path(app_handle)
         .join("profiles")
         .join(id)
@@ -310,12 +283,12 @@ pub(crate) fn release_age_excludes_at(dir: &Path, entries: &[String]) -> Result<
 
 /// 当前使用的档案 id。
 ///
-/// 读取桌面端持久化的 `active_profile`；若记录的档案目录已不存在（被删除/外部
-/// 清理），回退默认 web。全新机器上 `profiles/` 尚未初始化时同样回退 web
-/// （web 由 dsh 启动/插件操作时按需初始化）。
-pub fn active_profile(app_handle: &AppHandle) -> String {
+pub fn active_profile<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> String {
     if let Some(profile) = crate::service::workflow::instances::current_profile() {
         return profile;
+    }
+    if crate::service::workflow::instances::safe_mode() {
+        return SAFE_PROFILE.to_string();
     }
     let stored = config::get_store_dat_setting(app_handle).active_profile;
     if !stored.is_empty()
@@ -354,8 +327,8 @@ fn manifest_display_name(dir: &Path, id: &str) -> String {
     }
 }
 
-/// 档案列表（含 active/default 标记）。web 未初始化（全新安装）时也展示默认档案。
-pub fn list(app_handle: &AppHandle) -> Vec<Profile> {
+/// 档案列表（含 active/default 标记）。
+pub fn list<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> Vec<Profile> {
     let active = active_profile(app_handle);
     let profiles_root = config::get_dsh_data_path(app_handle).join("profiles");
     let mut out: Vec<Profile> = Vec::new();
@@ -383,7 +356,7 @@ pub fn list(app_handle: &AppHandle) -> Vec<Profile> {
     if !out.iter().any(|p| p.id == DEFAULT_PROFILE) {
         out.push(Profile {
             id: DEFAULT_PROFILE.to_string(),
-            name: "Web".to_string(),
+            name: "Desktop".to_string(),
             default: true,
             active: active == DEFAULT_PROFILE,
         });
@@ -450,7 +423,7 @@ pub fn create(app_handle: &AppHandle, name: &str) -> Result<Profile, String> {
 }
 
 /// 校验档案可切换并返回它在列表中的镜像，但不写入下次启动档案。
-pub fn select(app_handle: &AppHandle, id: &str) -> Result<Profile, String> {
+pub fn select<R: tauri::Runtime>(app_handle: &AppHandle<R>, id: &str) -> Result<Profile, String> {
     ensure_selectable(app_handle, id)?;
     list(app_handle)
         .into_iter()
@@ -459,18 +432,19 @@ pub fn select(app_handle: &AppHandle, id: &str) -> Result<Profile, String> {
 }
 
 /// 切换当前使用中的档案（持久化到桌面端 store，即下次启动的主窗口档案）。
-pub fn set_active(app_handle: &AppHandle, id: &str) -> Result<Profile, String> {
+pub fn set_active<R: tauri::Runtime>(app_handle: &AppHandle<R>, id: &str) -> Result<Profile, String> {
     ensure_selectable(app_handle, id)?;
-    let mut setting = config::get_store_dat_setting(app_handle);
-    setting.active_profile = id.to_string();
-    config::set_store_dat_setting(app_handle, setting);
+    config::update_store_dat_setting(app_handle, |setting| {
+        setting.active_profile = id.to_string();
+    });
+    crate::service::workflow::instances::set_safe_mode(false);
     select(app_handle, id)
 }
 
 // 路径安全：拒绝 `..`、绝对路径、分隔符（防御式——id 理论上来自
 // normalize 产物，但 CLI/配置可能把任意字符串塞进设置），并用
 // fs_guard::join_safe 组装档案根目录下的目标路径。
-fn ensure_selectable(app_handle: &AppHandle, id: &str) -> Result<(), String> {
+fn ensure_selectable<R: tauri::Runtime>(app_handle: &AppHandle<R>, id: &str) -> Result<(), String> {
     let profiles_root = config::get_dsh_data_path(app_handle).join("profiles");
     let dir = fs_guard::join_safe(&profiles_root, id)?;
     if id != DEFAULT_PROFILE && !dir.is_dir() {
@@ -490,42 +464,16 @@ fn ensure_desktop_profile_with_root(profiles_root: &Path) -> Result<(), String> 
     init_profile_dir(&profiles_root.join(DESKTOP_PROFILE), DESKTOP_PROFILE)
 }
 
-/// 启动迁移 + 首装档案引导：把引导档案归一到 `tauri` 并使其成为当前档案。
-///
-/// **为什么必须改名**：官方核心 0.1.5 起对 `--profile desktop` 直接报错
-/// （`rejectElectronProfile`，大小写不敏感），沿用旧名的用户升级后每次启动
-/// 都会失败（服务 spawn 与 `dsh plugin --profile desktop …` 全挂）。
-///
-/// **为什么不能只改常量**：老用户的档案目录叫 `profiles/desktop`、清单
-/// `name` 是 `dsh-profile-desktop`、store 里 `active_profile` 是 `desktop`，
-/// 三处都要跟着改名，否则服务找不到档案（或 `active_profile` 落回 `web`，
-/// 用户的插件/补丁层就此「消失」）。
-///
-/// 改名路径都在此收口（调用方：desktop::setup 与 workflow::launch spawn 前），
-/// 具体步骤见 [`adopt_tauri_profile_dir`] 与 [`migrate_desktop_profile_in_root`]：
-/// 1. 改名：`profiles/desktop` 存在而 `profiles/tauri` 不存在时整体 `rename`
-///    （同卷原子，profile 内的 node_modules 链接无损随树移动；跨卷失败则留给
-///    下次启动重试，绝不半途合并）；
-/// 2. 清单名：档案清单 `name` 仍是 `dsh-profile-desktop` 时改写为
-///    `dsh-profile-<id>`（幂等，仅在确实为旧名时写盘）；
-/// 3. 档案就绪：`ensure_desktop_profile_with_root` 新建/补齐 `tauri` 档案
-///    （含 issue #452 的半初始化补齐），保证改名失败时启动仍有可用档案；
-/// 4. 当前档案：store 里 `active_profile` 还指着旧名时改写为新名。
-///
-/// 之后做首装引导：首次安装（store 尚不存在）时把 `tauri` 设为当前档案。
-///
-/// 老用户（store 已存在）绝不在未迁移时被切档案：仅在首装或 `active_profile`
-/// 本来指着旧名时才切到 `tauri`。
-///
-/// 幂等 + 最佳努力：首次安装走 `desktop_profile_ready` 标记，改名路径靠
-/// 「旧目录/旧名是否还在」判定；任何一步失败只告警，绝不阻断启动。
 pub fn migrate_desktop_profile_name(app_handle: &AppHandle) {
     let profiles_root = config::get_dsh_data_path(app_handle).join("profiles");
-    migrate_desktop_profile_in_root(app_handle, &profiles_root);
+    if !migrate_desktop_profile_in_root(app_handle, &profiles_root) {
+        return;
+    }
 
     // 首装引导：在窗口/服务可用之前把新档案设为当前档案（老用户不动其选择）
     if config::is_first_install()
         && !config::get_store_dat_setting(app_handle).desktop_profile_ready
+        && config::get_store_dat_setting(app_handle).active_profile == DESKTOP_PROFILE
     {
         if let Err(e) = set_active(app_handle, DESKTOP_PROFILE) {
             log::warn!("first-run Desktop profile switch failed: {e}");
@@ -542,34 +490,41 @@ pub fn migrate_desktop_profile_name(app_handle: &AppHandle) {
 
 /// 迁移实现（以 `profiles_root` 注入，便于单测）：改名目录、清单名与 store 里的
 /// 当前档案名。任何一步失败只告警，绝不阻断启动（下次启动重试）。
-fn migrate_desktop_profile_in_root(app_handle: &AppHandle, profiles_root: &Path) {
-    // 1) 目录名 + 2) 清单名（纯文件系统部分，见 [`adopt_tauri_profile_dir`]）
-    if adopt_tauri_profile_dir(profiles_root) == ProfileDirAdoption::Failed {
+fn migrate_desktop_profile_in_root<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    profiles_root: &Path,
+) -> bool {
+    // 1) 目录名 + 2) 清单名（纯文件系统部分，见 [`adopt_desktop_profile_dir`]）
+    let adoption = adopt_desktop_profile_dir(profiles_root);
+    if adoption == ProfileDirAdoption::Blocked {
+        return true;
+    }
+    if adoption == ProfileDirAdoption::Failed {
         // 改名失败（目标缺失，例如文件被占用、权限、跨卷）时绝不继续：否则第 3 步
         // 会新建出第二个空档案、第 4 步把 `active_profile` 改指过去，用户会话从
         // 「旧档案（当前不可用）」变成「一无所有的空档案」，且下轮启动看到两目录
         // 并存会拒绝再改名。旧档案原样保留，下次启动重试改名。
         log::warn!("Desktop profile rename failed; keeping {LEGACY_DESKTOP_PROFILE} and retrying next start");
-        return;
+        return false;
     }
 
-    // 3) 档案就绪：新建/补齐 `tauri` 档案（含核心 web bundle 层）。必须在第 4 步
-    // 之前：`set_active` 要求档案目录存在。
     if let Err(e) = ensure_desktop_profile_with_root(profiles_root) {
         log::warn!("Desktop profile init failed: {e}");
+        return false;
     }
 
     // 4) 当前档案：store 里还指着旧名 → 改指新名（用户插件/补丁层随之延续）
     let stored = config::get_store_dat_setting(app_handle).active_profile;
-    if stored == LEGACY_DESKTOP_PROFILE {
+    if stored == LEGACY_DESKTOP_PROFILE && adoption == ProfileDirAdoption::Adopted {
         config::update_store_dat_setting(app_handle, |setting| {
             setting.active_profile = DESKTOP_PROFILE.to_string();
         });
         log::info!("Active profile switched: {LEGACY_DESKTOP_PROFILE} -> {DESKTOP_PROFILE}");
     }
+    true
 }
 
-/// `adopt_tauri_profile_dir` 的结果：只有 [`Adopted`](Self::Adopted) 才允许把
+/// `adopt_desktop_profile_dir` 的结果：只有 [`Adopted`](Self::Adopted) 才允许把
 /// `active_profile` 改指新名。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProfileDirAdoption {
@@ -581,26 +536,19 @@ pub(crate) enum ProfileDirAdoption {
     Failed,
 }
 
-/// 档案目录与清单的改名（纯路径，便于单测），返回改名结果供调用方决定是否继续：
-/// - `profiles/desktop` 存在而 `profiles/tauri` 不存在 → 整体 `rename`（同卷原子，
-///   档案内的 node_modules 链接无损随树移动；失败返回 [`ProfileDirAdoption::Failed`]，
-///   由调用方中止本次迁移、留给下次启动重试，绝不半途合并）；
-/// - 目标已存在 → 绝不覆盖/合并，旧目录原样留在磁盘上等人工处理（`Blocked`）；
-/// - 档案清单 `name` 还写着 `dsh-profile-desktop` → 改写为 `dsh-profile-<新 id>`
-///   （幂等，仅在确实为旧名时写盘；中断后重启即补齐，见 `Failed` 早退后的重入）。
-fn adopt_tauri_profile_dir(profiles_root: &Path) -> ProfileDirAdoption {
+fn adopt_desktop_profile_dir(profiles_root: &Path) -> ProfileDirAdoption {
     let old_dir = profiles_root.join(LEGACY_DESKTOP_PROFILE);
     let new_dir = profiles_root.join(DESKTOP_PROFILE);
 
     let mut adoption = ProfileDirAdoption::Adopted;
     if old_dir.is_dir() {
         if new_dir.exists() {
-            adoption = ProfileDirAdoption::Blocked;
             log::warn!(
                 "Both {} and {} exist; leaving the legacy profile untouched",
                 old_dir.display(),
                 new_dir.display()
             );
+            return ProfileDirAdoption::Blocked;
         } else {
             match fs::rename(&old_dir, &new_dir) {
                 Ok(()) => log::info!(
@@ -1431,21 +1379,19 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// 引导档案：初始化产物与官方 initProfile 形态一致，且已存在时绝不覆盖。
-    /// 档案 id 必须是 `tauri`——官方核心 0.1.5 起把 `desktop` 保留给 Electron 应用。
     #[test]
     fn desktop_bootstrap_creates_official_shape_once() {
-        let tmp = std::env::temp_dir().join(format!("dsh-profile-desktop-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("dsh-profile-tauri-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let root = tmp.join("profiles");
 
         ensure_desktop_profile_with_root(&root).unwrap();
-        assert_eq!(DESKTOP_PROFILE, "tauri");
+        assert_eq!(DESKTOP_PROFILE, "desktop");
         let dir = root.join(DESKTOP_PROFILE);
         let manifest: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join("package.json")).unwrap())
                 .unwrap();
-        assert_eq!(manifest["name"], "dsh-profile-tauri");
+        assert_eq!(manifest["name"], "dsh-profile-desktop");
         assert_eq!(
             manifest["dsh"]["profile"]["bundles"],
             serde_json::json!(["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"])
@@ -1466,25 +1412,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// 一次性的临时 `profiles` 根目录（测试内自行清理）。
     fn temp_profiles_root(tag: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("dsh-profile-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         root
     }
 
-    /// 在临时根上跑一遍改名迁移的纯文件系统部分（目录改名 + 清单名改写），并补出
-    /// `tauri` 档案就绪态：老用户升级后 store 里的 `active_profile` 由
-    /// `migrate_desktop_profile_in_root` 改指新名（需真实 AppHandle，见启动路径）。
     fn run_migration(root: &Path) {
-        let _ = adopt_tauri_profile_dir(root);
+        let _ = adopt_desktop_profile_dir(root);
         ensure_desktop_profile_with_root(root).unwrap();
     }
 
-    /// 官方核心 0.1.5 起 `--profile desktop` 直接报错（保留给 Electron 应用）：
-    /// 老用户的 `profiles/desktop` 必须在启动时改名为 `profiles/tauri`。
     #[test]
-    fn legacy_desktop_profile_dir_renamed_to_tauri() {
+    fn legacy_tauri_profile_dir_renamed_to_desktop() {
         let tmp = temp_profiles_root("rename");
         let root = tmp.join("profiles");
         let legacy = root.join(LEGACY_DESKTOP_PROFILE);
@@ -1492,14 +1432,14 @@ mod tests {
         // 用户数据（插件依赖与补丁层）必须随目录改名原样保留
         std::fs::write(
             legacy.join("package.json"),
-            r#"{"name":"dsh-profile-desktop","private":true,"dependencies":{"dsh-tauri":"link:/a"},"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base","@deepseek-ai/dsh-web-app"]}}}"#,
+            r#"{"name":"dsh-profile-tauri","private":true,"dependencies":{"dsh-tauri":"link:/a"},"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base","@deepseek-ai/dsh-web-app"]}}}"#,
         )
         .unwrap();
         std::fs::write(legacy.join("cordis.patch.yml"), "# user edit\n[]\n").unwrap();
 
         run_migration(&root);
 
-        assert!(!legacy.exists(), "legacy desktop dir must be gone");
+        assert!(!legacy.exists(), "legacy tauri dir must be gone");
         let renamed = root.join(DESKTOP_PROFILE);
         assert!(
             renamed.is_dir(),
@@ -1508,7 +1448,7 @@ mod tests {
         let manifest: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(renamed.join("package.json")).unwrap())
                 .unwrap();
-        assert_eq!(manifest["name"], "dsh-profile-tauri");
+        assert_eq!(manifest["name"], "dsh-profile-desktop");
         assert_eq!(manifest["dependencies"]["dsh-tauri"], "link:/a");
         assert_eq!(
             std::fs::read_to_string(renamed.join("cordis.patch.yml")).unwrap(),
@@ -1520,13 +1460,11 @@ mod tests {
         let again: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(renamed.join("package.json")).unwrap())
                 .unwrap();
-        assert_eq!(again["name"], "dsh-profile-tauri");
+        assert_eq!(again["name"], "dsh-profile-desktop");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// 改名中断（目录已在新位置、清单名还是旧 id）的重入路径：清单名必须补齐，
-    /// 档案文件照旧建出。临时目录 tag 必须与既有用例（`...-partial-<pid>`）区分。
     #[test]
     fn interrupted_desktop_profile_rename_finishes_on_next_start() {
         let tmp = temp_profiles_root("rename-resume");
@@ -1535,7 +1473,7 @@ mod tests {
         std::fs::create_dir_all(&renamed).unwrap();
         std::fs::write(
             renamed.join("package.json"),
-            r#"{"name":"dsh-profile-desktop","private":true,"dependencies":{},"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base"]}}}"#,
+            r#"{"name":"dsh-profile-tauri","private":true,"dependencies":{},"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base"]}}}"#,
         )
         .unwrap();
 
@@ -1544,7 +1482,7 @@ mod tests {
         let manifest: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(renamed.join("package.json")).unwrap())
                 .unwrap();
-        assert_eq!(manifest["name"], "dsh-profile-tauri");
+        assert_eq!(manifest["name"], "dsh-profile-desktop");
         // 缺 web 层的老档案同时被补齐（issue #452 形态）
         assert_eq!(
             manifest["dsh"]["profile"]["bundles"],
@@ -1556,10 +1494,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// `profiles/desktop` 与 `profiles/tauri` 同时存在时绝不合并/覆盖：两边都原样
-    /// 留在磁盘上（旧目录等人工处理，新目录优先使用）。
     #[test]
-    fn legacy_desktop_profile_never_overwrites_existing_tauri_profile() {
+    fn legacy_tauri_profile_never_overwrites_existing_desktop_profile() {
         let tmp = temp_profiles_root("conflict");
         let root = tmp.join("profiles");
         let legacy = root.join(LEGACY_DESKTOP_PROFILE);
@@ -1579,7 +1515,7 @@ mod tests {
         .unwrap();
 
         // 只跑改名（不跑就绪补齐），确保目标清单逐字节未被触碰
-        let adoption = adopt_tauri_profile_dir(&root);
+        let adoption = adopt_desktop_profile_dir(&root);
         assert_eq!(adoption, ProfileDirAdoption::Blocked);
 
         assert!(legacy.join("package.json").is_file(), "old dir must stay");
@@ -1596,33 +1532,92 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// CodeRabbit 复审：改名成功（或旧目录本就不存在）才返回 `Adopted`——调用方据此
-    /// 才允许把 `active_profile` 改指新名。幂等重入同样必须是 `Adopted`。
+    #[test]
+    fn migration_persists_only_adopted_legacy_selection() {
+        use tauri::utils::config::AppDirectoriesOverride;
+        for (selected, conflict) in [
+            ("tauri", false),
+            ("custom", false),
+            ("tauri", true),
+            ("desktop", true),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let profiles = root.path().join("profiles");
+            init_profile_dir(
+                &profiles.join(LEGACY_DESKTOP_PROFILE),
+                LEGACY_DESKTOP_PROFILE,
+            )
+            .unwrap();
+            if conflict {
+                init_profile_dir(&profiles.join(DESKTOP_PROFILE), DESKTOP_PROFILE).unwrap();
+                fs::write(
+                    profiles.join(DESKTOP_PROFILE).join("package.json"),
+                    r#"{"name":"dsh-profile-tauri","private":true}"#,
+                )
+                .unwrap();
+            }
+            let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+            context.config_mut().app.app_directories_override =
+                Some(AppDirectoriesOverride::Root(root.path().join("store")));
+            let app = tauri::test::mock_builder()
+                .plugin(tauri_plugin_store::Builder::default().build())
+                .build(context)
+                .unwrap();
+            config::update_store_dat_setting(app.handle(), |setting| {
+                setting.active_profile = selected.into()
+            });
+            let target_before = fs::read(profiles.join(DESKTOP_PROFILE).join("package.json")).ok();
+            assert!(migrate_desktop_profile_in_root(app.handle(), &profiles));
+            assert_eq!(
+                config::get_store_dat_setting(app.handle()).active_profile,
+                if selected == LEGACY_DESKTOP_PROFILE && !conflict {
+                    DESKTOP_PROFILE
+                } else {
+                    selected
+                }
+            );
+            assert_eq!(profiles.join(LEGACY_DESKTOP_PROFILE).exists(), conflict);
+            if conflict {
+                assert_eq!(
+                    fs::read(profiles.join(DESKTOP_PROFILE).join("package.json")).unwrap(),
+                    target_before.unwrap()
+                );
+            }
+            assert!(migrate_desktop_profile_in_root(app.handle(), &profiles));
+        }
+    }
+
     #[test]
     fn adoption_reports_success_and_is_idempotent() {
         let tmp = temp_profiles_root("adopt-idempotent");
         let root = tmp.join("profiles");
 
         // 旧目录不存在（全新安装 / 已迁移完成）→ 无需改名即视为就绪
-        assert_eq!(adopt_tauri_profile_dir(&root), ProfileDirAdoption::Adopted);
+        assert_eq!(
+            adopt_desktop_profile_dir(&root),
+            ProfileDirAdoption::Adopted
+        );
 
         let legacy = root.join(LEGACY_DESKTOP_PROFILE);
         std::fs::create_dir_all(&legacy).unwrap();
         std::fs::write(
             legacy.join("package.json"),
-            r#"{"name":"dsh-profile-desktop","private":true}"#,
+            r#"{"name":"dsh-profile-tauri","private":true}"#,
         )
         .unwrap();
-        assert_eq!(adopt_tauri_profile_dir(&root), ProfileDirAdoption::Adopted);
+        assert_eq!(
+            adopt_desktop_profile_dir(&root),
+            ProfileDirAdoption::Adopted
+        );
         // 再跑一次：旧目录已不存在，仍为 Adopted（幂等，不阻断 active_profile 改写）
-        assert_eq!(adopt_tauri_profile_dir(&root), ProfileDirAdoption::Adopted);
+        assert_eq!(
+            adopt_desktop_profile_dir(&root),
+            ProfileDirAdoption::Adopted
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// CodeRabbit 复审（Major）：改名失败必须显式返回 `Failed` 而不是无声继续——
-    /// `migrate_desktop_profile_in_root` 见到 `Failed` 会中止本次迁移（不建第二个
-    /// 档案、不改 `active_profile`），旧档案原样保留给下次启动重试。
     #[test]
     fn failed_rename_is_reported_for_retry() {
         let tmp = temp_profiles_root("rename-fail");
@@ -1631,7 +1626,7 @@ mod tests {
         std::fs::create_dir_all(&legacy).unwrap();
         std::fs::write(
             legacy.join("package.json"),
-            r#"{"name":"dsh-profile-desktop","private":true}"#,
+            r#"{"name":"dsh-profile-tauri","private":true}"#,
         )
         .unwrap();
         // 新档案路径被一个普通文件占住 → rename 必然失败（且不是「目标已存在」的
@@ -1639,7 +1634,7 @@ mod tests {
         std::fs::write(root.join(DESKTOP_PROFILE), "not a dir").unwrap();
 
         // 失败被上报而非静默吞掉（本机/CI 的 rename 失败码不同，只断言行为不依赖具体码）
-        let adoption = adopt_tauri_profile_dir(&root);
+        let adoption = adopt_desktop_profile_dir(&root);
         assert!(
             adoption == ProfileDirAdoption::Failed || adoption == ProfileDirAdoption::Blocked,
             "rename failure must be reported, got {adoption:?}"
@@ -1650,20 +1645,21 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(legacy.join("package.json")).unwrap(),
-            r#"{"name":"dsh-profile-desktop","private":true}"#,
+            r#"{"name":"dsh-profile-tauri","private":true}"#,
             "legacy profile manifest must stay untouched"
         );
 
         // 放开占位文件后下次启动改名成功（重试路径）
         std::fs::remove_file(root.join(DESKTOP_PROFILE)).unwrap();
-        assert_eq!(adopt_tauri_profile_dir(&root), ProfileDirAdoption::Adopted);
+        assert_eq!(
+            adopt_desktop_profile_dir(&root),
+            ProfileDirAdoption::Adopted
+        );
         assert!(!legacy.exists(), "retry must finish the rename");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// 清单名改写必须原子替换：中断不会留下截断/空的 `package.json`，
-    /// 且临时文件不残留（失败路径见 `atomic_write` 的清理）。
     #[test]
     fn manifest_name_rewrite_is_atomic_and_leaves_no_temp_file() {
         let dir = std::env::temp_dir().join(format!("dsh-profile-atomic-{}", std::process::id()));
@@ -1671,7 +1667,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("package.json"),
-            r#"{"name":"dsh-profile-desktop","private":true,"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base","@deepseek-ai/dsh-web-app"]}}}"#,
+            r#"{"name":"dsh-profile-tauri","private":true,"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base","@deepseek-ai/dsh-web-app"]}}}"#,
         )
         .unwrap();
 
@@ -1680,7 +1676,7 @@ mod tests {
         let manifest: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join("package.json")).unwrap())
                 .unwrap();
-        assert_eq!(manifest["name"], "dsh-profile-tauri");
+        assert_eq!(manifest["name"], "dsh-profile-desktop");
         // 其余字段逐字节保留（其它插件/补丁条目不受影响）
         assert_eq!(
             manifest["dsh"]["profile"]["bundles"],

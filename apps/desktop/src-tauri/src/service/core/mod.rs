@@ -28,9 +28,10 @@ mod version;
 
 pub use local::{local_core_package_dir, update_local_core};
 // 以下重导出为对外公开 API（部分项当前链路未直接引用，属有意保留，见模块头）。
+pub(crate) use runtime::prepare_active_runtime;
+#[cfg(any(windows, test))]
 pub(crate) use runtime::{
-    prepare_active_runtime, prepare_active_runtime_at, RuntimePreparation, RuntimePreparationPaths,
-    RuntimeRequiredPlugin,
+    prepare_active_runtime_at, RuntimePreparation, RuntimePreparationPaths, RuntimeRequiredPlugin,
 };
 #[allow(unused_imports)]
 pub use source::{

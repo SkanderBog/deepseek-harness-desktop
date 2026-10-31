@@ -16,7 +16,7 @@ export function useNotificationClicked(handler: (event: NotificationClickEvent) 
     let listener: PluginListener | undefined
     let disposed = false
 
-    void onNotificationClicked(data => {
+    void onNotificationClicked((data) => {
       handlerRef.current((data as unknown as NotificationClickEvent | null) ?? {})
     }).then((unlisten) => {
       if (disposed)

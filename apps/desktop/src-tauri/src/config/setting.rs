@@ -1,8 +1,8 @@
-use crate::{AppHandle};
 use super::constants::*;
+use crate::AppHandle;
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, OnceLock};
-use tauri::{ Emitter, Manager, Runtime};
+use tauri::{Emitter, Manager, Runtime};
 use tauri_plugin_store::StoreExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,13 +41,10 @@ pub struct Setting {
     /// 内容有变更 → 重新进入预设引导。`None` = 老用户升级（无基线）→ 弹一次建立基线。
     #[serde(default)]
     pub preset_hash: Option<String>,
-    /// 当前使用的档案 id（`$DSH_HOME/profiles/<id>`，默认 web）。
-    /// 桌面端启动服务与插件管理都以它为准（见 service::profile）。
-    /// 老用户 store 里可能仍是旧引导档案名 `desktop`：启动迁移
-    /// （`service::profile::migrate_desktop_profile_name`）会把它改指 `tauri`。
+    /// 当前档案 id（`$DSH_HOME/profiles/<id>`），旧 tauri 档案无冲突时迁移至 desktop。
     #[serde(default = "default_active_profile")]
     pub active_profile: String,
-    /// 首装档案引导是否已完成：桌面端首次安装时自动新建引导档案（`tauri`）并
+    /// 首装档案引导是否已完成：桌面端首次安装时自动新建引导档案（`desktop`）并
     /// 切换为当前档案（见 service::profile::migrate_desktop_profile_name），成功
     /// 后置位，之后启动不再重做（一次性幂等标记）。
     #[serde(default)]
@@ -115,9 +112,8 @@ pub fn normalize_harness_max_heap_mb(value: Option<u32>) -> Option<u32> {
     value.filter(|mb| (HARNESS_HEAP_MIN_MB..=HARNESS_HEAP_MAX_MB).contains(mb))
 }
 
-/// 默认档案：桌面端内置的 web 档案
 fn default_active_profile() -> String {
-    "web".to_string()
+    crate::service::profile::DEFAULT_PROFILE.to_string()
 }
 
 /// 命令行集成默认开启（开发者工具场景，安装完成即可用）
@@ -353,6 +349,7 @@ fn emit_setting<R: Runtime>(app_handle: &AppHandle<R>, value: &serde_json::Value
 }
 
 fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Setting {
+    replacement.active_profile.clone_from(&current.active_profile);
     replacement.active_core.clone_from(&current.active_core);
     replacement.proxy_url.clone_from(&current.proxy_url);
     replacement.appearance.clone_from(&current.appearance);
@@ -431,10 +428,9 @@ pub fn set_dsh_pkg_identity(app_handle: &AppHandle, commit: String, tag: String)
 mod tests {
     use super::{
         default_close_action, default_zoom_factor, normalize_close_action, normalize_setting,
-        normalize_zoom_factor,
-        preserve_persisted_fields, resolve_e2e_app_data_dir, resolve_store_dat_file,
-        setting_from_value, unwrap_json_value, Setting, STORE_DAT_DEV_FILE, STORE_DAT_FILE,
-        STORE_DAT_TEST_FILE, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
+        normalize_zoom_factor, preserve_persisted_fields, resolve_e2e_app_data_dir,
+        resolve_store_dat_file, setting_from_value, unwrap_json_value, Setting, STORE_DAT_DEV_FILE,
+        STORE_DAT_FILE, STORE_DAT_TEST_FILE, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
     };
 
     #[test]
@@ -612,7 +608,7 @@ mod tests {
             assert_eq!(setting.harness_max_heap_mb, None);
             assert_eq!(setting.close_action, "tray");
             assert_eq!(setting.backup_retention_count, 10);
-            assert_eq!(setting.active_profile, "web");
+            assert_eq!(setting.active_profile, "desktop");
         }
     }
 
@@ -634,7 +630,7 @@ mod tests {
             let setting = setting_from_value(Some(value));
             assert!(!setting.installed);
             assert_eq!(setting.language, "zh-CN");
-            assert_eq!(setting.active_profile, "web");
+            assert_eq!(setting.active_profile, "desktop");
             assert_eq!(setting.close_action, "tray");
         }
         assert_eq!(setting_from_value(None).language, "zh-CN");
@@ -815,6 +811,25 @@ mod tests {
             merged.local_plugin_hmr,
             "整对象写入不得覆盖最新的本地插件热重载开关"
         );
+    }
+
+    #[test]
+    fn wholesale_setting_writes_cannot_pin_the_safe_profile_as_startup_profile() {
+        let current = Setting {
+            active_profile: "custom".into(),
+            ..Default::default()
+        };
+        let stale = Setting {
+            active_profile: "safe".into(),
+            language: "en-US".into(),
+            ..Default::default()
+        };
+        let merged = preserve_persisted_fields(stale, &current);
+        assert_eq!(
+            merged.active_profile, "custom",
+            "安全模式是临时档案，整对象写入不得把它落成下次启动档案"
+        );
+        assert_eq!(merged.language, "en-US");
     }
 
     #[test]

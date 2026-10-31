@@ -2,6 +2,7 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(any(windows, target_os = "macos"))]
 use std::sync::OnceLock;
 use tauri::{Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, ipc::Invoke};
 use tauri_runtime_electron::ElectronRuntime;
@@ -623,7 +624,12 @@ pub fn sync_view_menu(
         }
     }
     #[cfg(not(target_os = "macos"))]
-    let _ = (window, entries);
+    {
+        let _ = window;
+        for entry in entries {
+            let _ = (entry.id, entry.enabled, entry.shortcut);
+        }
+    }
     Ok(())
 }
 
@@ -1176,6 +1182,10 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
     let handler: fn(Invoke<ElectronRuntime>) -> bool = tauri::generate_handler![
         crate::desktop::window::prepare_harness_webview,
         crate::desktop::window::release_harness_webview,
+        crate::desktop::window::update_harness_webview,
+        crate::desktop::window::capture_harness_webview,
+        crate::desktop::window::acquire_browser_guest,
+        crate::desktop::window::release_browser_guest,
         crate::bridge::install_dependencies,
         crate::bridge::check_dsh_update,
         crate::bridge::launch_harness,
@@ -1324,6 +1334,8 @@ fn guest_command_allowed(command: &str) -> bool {
     matches!(
         command,
         "is_dev_build"
+            | "acquire_browser_guest"
+            | "release_browser_guest"
             | "open_external_url"
             | "get_pet_status"
             | "get_pet_overlay_supported"
@@ -1355,12 +1367,15 @@ fn guest_command_allowed(command: &str) -> bool {
 #[test]
 fn guest_command_scope_preserves_plugin_actions_and_blocks_shell_control() {
     assert!(guest_command_allowed("create_app_window"));
+    assert!(guest_command_allowed("acquire_browser_guest"));
+    assert!(guest_command_allowed("release_browser_guest"));
     assert!(guest_command_allowed("read_clipboard_text"));
     assert!(guest_command_allowed("write_clipboard_text"));
     assert!(guest_command_allowed("report_plugin_error"));
     for command in [
         "prepare_harness_webview",
         "release_harness_webview",
+        "update_harness_webview",
         "install_dependencies",
         "quit_app",
         "set_local_plugin_hmr",
@@ -1530,6 +1545,7 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
                 let _ = window.hide();
             }
             tauri::WindowEvent::Destroyed => {
+                crate::desktop::window::forget_harness_documents(window.app_handle(), window.label());
                 if let Some(profile) =
                     crate::service::workflow::instances::release_window(window.label())
                 {

@@ -23,7 +23,7 @@ export function useNotificationAction(handler: (event: NotificationActionEvent) 
     let listener: PluginListener | undefined
     let disposed = false
 
-    void onAction(payload => {
+    void onAction((payload) => {
       handlerRef.current((payload as unknown as NotificationActionEvent | null) ?? {})
     }).then((unlisten) => {
       if (disposed)

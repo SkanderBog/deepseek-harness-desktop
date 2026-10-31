@@ -8,6 +8,7 @@ import { useAppearance } from './use-appearance'
 const mocks = vi.hoisted(() => ({
   setting: {} as any,
   platform: 'linux',
+  scheme: 'dark',
   setEffects: vi.fn(() => Promise.resolve()),
   clearEffects: vi.fn(() => Promise.resolve()),
   emit: vi.fn(),
@@ -28,12 +29,14 @@ vi.mock('@tauri-apps/api/event', () => ({
   },
 }))
 vi.mock('@tauri-apps/plugin-os', () => ({ type: () => mocks.platform }))
-vi.mock('./use-dsh-style', () => ({ useDshStyle: () => [{ colorScheme: 'dark' }] }))
+vi.mock('./use-dsh-style', () => ({ useDshStyle: () => [{ colorScheme: mocks.scheme }] }))
 vi.mock('./use-listen', () => ({
   useListen: (event: string, handler: (event: { event: string, id: number, payload: unknown }) => void) => {
     useEffect(() => {
       mocks.listeners.set(event, handler)
-      return () => { mocks.listeners.delete(event) }
+      return () => {
+        mocks.listeners.delete(event)
+      }
     }, [event, handler])
   },
 }))
@@ -44,6 +47,7 @@ afterEach(() => {
   document.head.replaceChildren()
   delete (window as any).__DSH_TRANSPARENT__
   mocks.platform = 'linux'
+  mocks.scheme = 'dark'
   vi.clearAllMocks()
   vi.restoreAllMocks()
 })
@@ -65,6 +69,17 @@ function setup(transparent: boolean, hydrated = true) {
 }
 
 describe('desktop appearance projection', () => {
+  it('recomputes shell colors and resends appearance when the embedded color scheme changes', () => {
+    const { hook, ready, emit } = setup(false)
+    ready()
+    emit.mockClear()
+    mocks.scheme = 'light'
+    hook.rerender()
+    expect(hook.result.current).toContain('--color-canvas:#eceff4')
+    expect(hook.result.current).toContain('[data-testid="dsh-navbar-root"]{background:#e5e9f0!important')
+    expect(emit).toHaveBeenCalledExactlyOnceWith('dsh://appearance', { appearance: expect.objectContaining({ palette: 'nord', opacity: 100 }) })
+  })
+
   it('keeps the canvas opaque until the native window has restarted with transparency enabled', () => {
     const { emit, ready, hook } = setup(false)
     ready()

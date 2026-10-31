@@ -403,6 +403,9 @@ pub async fn restart_harness(
 
 /// 进入安全模式：确保安全档案存在并切换为当前档案（不重启，由前端走标准重启链路）。
 ///
+/// 安全模式只是本次运行的临时档案：不写入 store 的 `active_profile`，退出应用后
+/// 下次启动回到用户原本的档案，不会把「安全模式」带进下一次运行。
+///
 /// 错误界面「安全模式」按钮的入口：安全档案只含 web 模板核心 bundles、不带
 /// 用户插件/补丁层，启动失败的插件（如 pending waiting for service）被隔离，
 /// 应用先恢复可用；用户在档案列表切回原档案即退出安全模式。
@@ -441,7 +444,7 @@ pub async fn enter_safe_mode(
             return Err(crate::service::plugin::quarantine_failure_message(&report));
         }
         let old = crate::service::profile::active_profile(&app_handle);
-        crate::service::profile::set_active(&app_handle, crate::service::profile::SAFE_PROFILE)?;
+        crate::service::workflow::instances::set_safe_mode(true);
         crate::service::workflow::instances::bind_window(
             window.label(),
             crate::service::profile::SAFE_PROFILE,

@@ -116,6 +116,9 @@ fn build_harness_args(
         directory,
         filename,
     ]);
+    if profile == crate::service::profile::DESKTOP_PROFILE {
+        args.extend(crate::service::profile::carrier_node_args(true));
+    }
     args.extend([
         dsh_binary.as_os_str().to_os_string(),
         OsString::from("--profile"),
@@ -1380,6 +1383,38 @@ mod tests {
                 "--port".to_string(),
                 "3080".to_string(),
                 "--no-open".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn desktop_carrier_keeps_original_entry_and_host_arguments() {
+        let bin = Path::new("D:/core/lib/bin.js");
+        let args = build_harness_args(
+            bin,
+            "desktop",
+            Some(Path::new("D:/patch.yml")),
+            3080,
+            Some(4096),
+            Path::new("D:/fatal.json"),
+        );
+        let text = text_args(&args);
+        assert_eq!(text[0], "--max-old-space-size=4096");
+        assert_eq!(
+            &args[4..6],
+            &crate::service::profile::carrier_node_args(true)
+        );
+        assert_eq!(
+            &text[6..],
+            [
+                "D:/core/lib/bin.js",
+                "--profile",
+                "desktop",
+                "--patch",
+                "D:/patch.yml",
+                "--port",
+                "3080",
+                "--no-open"
             ]
         );
     }

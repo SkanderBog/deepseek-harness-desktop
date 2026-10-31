@@ -23,14 +23,15 @@ use super::cancel::terminate_owned_install;
 use super::install::install_internal;
 use super::installed::{installed_name, profile_dir, ProfilePackageJson};
 use super::preset::{
-    bundled_dep_spec, bundled_plugin_dir, bundled_plugin_dir_from, load_presets,
-    presets_from_manifest, PreinstallPluginInfo,
+    bundled_dep_spec, bundled_plugin_dir, load_presets, PreinstallPluginInfo,
 };
 use super::process::{new_process_owner, PreinstallLogPayload, ProcessOwner, PREINSTALL_LOG_EVENT};
 use crate::config;
+#[cfg(any(windows, test))]
+use super::preset::{bundled_plugin_dir_from, presets_from_manifest};
 
 use manifest::{
-    collect_dangling_local_link_deps, dedupe_profile_bundles, dep_matches_spec, is_local_link_dep,
+    collect_dangling_local_link_deps, dedupe_profile_bundles, dep_matches_spec,
     remove_duplicate_bundle_entries_from_patch, remove_internal_plugins_from_manifest,
     remove_stale_plugin_entry, write_profile_manifest,
 };
@@ -523,7 +524,7 @@ async fn receive_flight_result(
 pub(crate) async fn cancel() -> Result<(), String> {
     let mut result = {
         let profile =
-            crate::service::workflow::instances::current_profile().unwrap_or_else(|| "web".into());
+            crate::service::workflow::instances::current_profile().unwrap_or_else(|| crate::service::profile::DEFAULT_PROFILE.into());
         let lock = ensure_lock(&profile);
         let mut coordinator = lock.lock().await;
         let Some(active) = &coordinator.active else {
@@ -630,6 +631,7 @@ fn emit_phase(
 
 struct InternalPluginCheck {
     manifest: Option<serde_json::Value>,
+    #[cfg(any(windows, test))]
     parsed: Option<ProfilePackageJson>,
     need: Vec<(String, String, PathBuf)>,
     orphans: Vec<String>,
@@ -739,6 +741,7 @@ fn prepare_internal_plugins(
             }
         }
     }
+    #[cfg(any(windows, test))]
     let parsed = manifest
         .as_ref()
         .map(|value| serde_json::from_value::<ProfilePackageJson>(value.clone()))
@@ -748,6 +751,7 @@ fn prepare_internal_plugins(
     orphans.dedup();
     Ok(InternalPluginCheck {
         manifest,
+        #[cfg(any(windows, test))]
         parsed,
         need,
         orphans,
@@ -782,12 +786,14 @@ fn require_running_plugins_ready(
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EarlyPluginState {
     Ready,
     Defer,
 }
 
+#[cfg(any(windows, test))]
 pub(crate) fn prepare_early_plugins(
     profile: &Path,
     dsh_home: &Path,
@@ -804,6 +810,7 @@ pub(crate) fn prepare_early_plugins(
     })
 }
 
+#[cfg(any(windows, test))]
 fn prepare_early_plugins_from(
     profile: &Path,
     dsh_home: &Path,

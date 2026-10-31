@@ -30,6 +30,9 @@ export const APP_TITLE = 'DeepSeek Harness'
 
 export const SHELL_ROOT = '[data-testid="dsh-shell-root"]'
 export const SHELL_WEBVIEW = '[data-testid="dsh-shell-webview"]'
+export const HARNESS_WEBVIEW = '[data-testid="dsh-harness-webview"]'
+export const NAVBAR_MENU_CONFIG = '[data-testid="dsh-navbar-menu-config"]'
+export const NAVBAR_MENU_POPOVER = '[data-testid="dsh-navbar-menu-popover"]'
 export const SETUP_ERROR = '[data-testid="dsh-setup-error"]'
 export const SETUP_PREINSTALL_SKIP = '[data-testid="dsh-setup-preinstall-skip"]'
 
@@ -168,8 +171,9 @@ export async function diagnose(app: ShellApp): Promise<string> {
 }
 
 export async function startShellApp(options: { downloadCacheDir?: string } = {}): Promise<ShellApp> {
-  const binary = BINARIES.map(candidate => path.join(ROOT, candidate)).find(existsSync)
-  expect(binary, `缺少 debug 产物：${BINARIES.join(' 或 ')}；先执行 pnpm --filter dsh-desktop build 与 cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml`).toBeTruthy()
+  const candidates = process.env.DSH_E2E_BINARY ? [process.env.DSH_E2E_BINARY] : BINARIES
+  const binary = candidates.map(candidate => path.resolve(ROOT, candidate)).find(existsSync)
+  expect(binary, `缺少 debug 产物：${candidates.join(' 或 ')}；先执行 pnpm --filter dsh-desktop build 与 cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml`).toBeTruthy()
 
   const home = await mkdtemp(path.join(tmpdir(), 'dsh-e2e-desktop-'))
   const appData = path.join(home, 'app-data')

@@ -5,7 +5,7 @@
 //! `service/workflow/win_spawn` 的隐藏控制台方案并额外跟踪进程句柄以等待退出；
 //! Unix 上直接以管道捕获标准输出/错误。
 
-use crate::{Window};
+use crate::Window;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -469,6 +469,19 @@ pub(crate) async fn run_plugin_process(
     owner: ProcessOwner,
 ) -> Result<(i32, String), String> {
     let profile = crate::service::profile::active_profile(window.app_handle());
+    let mut carrier_args = Vec::new();
+    let args = if args.get(1).is_some_and(|arg| arg == "plugin")
+        && args.get(2).is_some_and(|arg| arg == "--profile")
+        && args
+            .get(3)
+            .is_some_and(|arg| arg == crate::service::profile::DESKTOP_PROFILE)
+    {
+        carrier_args.extend(crate::service::profile::carrier_node_args(false));
+        carrier_args.extend_from_slice(args);
+        carrier_args.as_slice()
+    } else {
+        args
+    };
     let process_guard = acquire_process_lock().await?;
     let captured = Arc::new(Mutex::new(String::new()));
 

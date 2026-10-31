@@ -12,7 +12,7 @@
     "build:ios": "expo export --platform ios --output-dir ../../.temp/native-ios-export",
     "prebuild": "expo prebuild --platform android --no-install",
     "prebuild:ios": "expo prebuild --platform ios --no-install",
-    "test": "vitest run --config vitest.config.ts",
+    "test": "vitest run --config ../../config/vitest.native.config.ts",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {

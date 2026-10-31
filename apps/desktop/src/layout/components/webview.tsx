@@ -1,4 +1,6 @@
 import type { DshShortcutRow, DshViewCommand } from '@/hooks/use-dsh-shortcuts'
+import type { NotificationActionEvent } from '@/hooks/use-notification-action'
+import type { NotificationClickEvent } from '@/hooks/use-notification-clicked'
 import { useOverlay } from '@overlastic/react'
 import { useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
@@ -13,12 +15,10 @@ import { DSH_VIEW_COMMANDS, shortcutHint, useDshShortcuts } from '@/hooks/use-ds
 import { useDshStyle } from '@/hooks/use-dsh-style'
 import { useListen } from '@/hooks/use-listen'
 import { useNotificationAction } from '@/hooks/use-notification-action'
-import type { NotificationActionEvent } from '@/hooks/use-notification-action'
 import { useNotificationClicked } from '@/hooks/use-notification-clicked'
-import type { NotificationClickEvent } from '@/hooks/use-notification-clicked'
 import { store } from '@/store'
-import { Recovery } from '@/ui/plugin/recovery'
 import { ConfigDialog } from '@/ui/dialog/config'
+import { Recovery } from '@/ui/plugin/recovery'
 import { FullSidebarNavbar } from './full-sidebar-navbar'
 import { HarnessWebview } from './harness-webview'
 import { Navbar } from './navbar'
@@ -42,7 +42,9 @@ export function Webview() {
   const [dshStyle, setDshStyle] = useDshStyle()
   const openConfigDialog = useOverlay(ConfigDialog)
   useListen<Parameters<typeof setDshStyle>[0]>('dsh://style', ({ payload }) => setDshStyle(payload))
-  useListen('dsh://desktop-settings:open', () => { void openConfigDialog() })
+  useListen('dsh://desktop-settings:open', () => {
+    void openConfigDialog()
+  })
   const [{ rows: shortcutRows }, setDshShortcuts] = useDshShortcuts()
 
   const { status, serviceHealthy, serviceRunning, webviewKey, webviewLoaded, webviewAlive, webviewError, startupPhase, busyAction } = useStore(store.harness)
@@ -164,7 +166,9 @@ export function Webview() {
     setDshShortcuts({ rows: parseShortcutRows(payload.rows) })
   })
   useListen<void>('dsh://full-sidebar:ready', () => setFullSidebarRevealed(true))
-  useListen<void>('dsh://window:close', () => { void getCurrentWindow().close() })
+  useListen<void>('dsh://window:close', () => {
+    void getCurrentWindow().close()
+  })
   useListen<void>('dsh://appearance:ready', () => {
     const pending = pendingSettingsTabRef.current
     if (pending !== null) {

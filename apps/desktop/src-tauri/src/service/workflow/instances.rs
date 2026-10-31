@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::status::Status;
@@ -54,6 +55,16 @@ pub fn current_profile() -> Option<String> {
     PROFILE.try_with(Clone::clone).ok()
 }
 
+static SAFE_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn safe_mode() -> bool {
+    SAFE_MODE.load(Ordering::Relaxed)
+}
+
+pub fn set_safe_mode(active: bool) {
+    SAFE_MODE.store(active, Ordering::Relaxed);
+}
+
 pub async fn scope<T>(profile: String, future: impl Future<Output = T>) -> T {
     PROFILE.scope(profile, future).await
 }
@@ -63,7 +74,8 @@ pub fn scope_sync<T>(profile: String, operation: impl FnOnce() -> T) -> T {
 }
 
 pub(super) fn instance() -> Arc<Instance> {
-    let profile = current_profile().unwrap_or_else(|| "web".into());
+    let profile =
+        current_profile().unwrap_or_else(|| crate::service::profile::DEFAULT_PROFILE.into());
     instance_of(&profile)
 }
 
@@ -129,7 +141,8 @@ pub fn attached_elsewhere(profile: &str, label: &str) -> bool {
 }
 
 pub fn require_exclusive_profile() -> Result<(), String> {
-    let profile = current_profile().unwrap_or_else(|| "web".into());
+    let profile =
+        current_profile().unwrap_or_else(|| crate::service::profile::DEFAULT_PROFILE.into());
     let _gate = registration_gate()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -195,7 +208,7 @@ pub fn emit<R: tauri::Runtime, S: serde::Serialize + Clone>(
     }
 }
 
-pub fn port(app: &crate::AppHandle) -> u16 {
+pub fn port<R: tauri::Runtime>(app: &crate::AppHandle<R>) -> u16 {
     instance()
         .port
         .lock()
@@ -213,6 +226,24 @@ pub fn set_port(port: u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn safe_mode_is_a_session_flag_and_never_a_persisted_profile() {
+        assert!(!safe_mode());
+        set_safe_mode(true);
+        assert!(safe_mode());
+        set_safe_mode(false);
+        assert!(!safe_mode());
+    }
+
+    #[test]
+    fn unscoped_instance_uses_desktop_default() {
+        assert!(Arc::ptr_eq(
+            &instance(),
+            &instance_of(crate::service::profile::DEFAULT_PROFILE)
+        ));
+        assert!(!Arc::ptr_eq(&instance(), &instance_of("web")));
+    }
 
     #[tokio::test]
     async fn profile_instances_reuse_and_isolate_runtime_state() {

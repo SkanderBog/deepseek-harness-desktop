@@ -8,7 +8,7 @@ const GATE_EFFECT = `${PLUGIN_ID}: gate`
 const ACCOUNT_EFFECT = `${PLUGIN_ID}: account desktop marker`
 const ROUTES_EFFECT = `${PLUGIN_ID}: routes`
 
-const ACCOUNT_MARKER_SCRIPT = 'if (new URLSearchParams(location.search).has(\'dshDesktop\')) globalThis.dshDesktop = { protocolVersion: 1, deviceInfo: async () => navigator.userAgent };'
+const ACCOUNT_MARKER_SCRIPT = 'if (!globalThis.dshDesktop && new URLSearchParams(location.search).has(\'dshDesktop\')) globalThis.dshDesktop = { protocolVersion: 1, deviceInfo: async () => navigator.userAgent };'
 
 export function apply(ctx: HostContext): void {
   ctx.effect(() => gate.attach(ctx as unknown as ConnectionHost), GATE_EFFECT)

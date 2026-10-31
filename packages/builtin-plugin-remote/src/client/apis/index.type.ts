@@ -25,8 +25,8 @@ export interface GetApiTauriRemoteAccessResponse {
   listening: false | true
   listen: { address: string, port: number }
   port: number
-  auth: { enabled: false | true, scope: 'public_only' | 'all', hasToken?: false | true, token?: string }
-  addresses: { address: string, family: 'ipv4' | 'ipv6', interface: string, scope: 'loopback' | 'private' | 'public' | 'link-local', score: number, recommended: false | true }[]
+  auth: { enabled: false | true, scope: 'all' | 'public_only', hasToken?: false | true, token?: string }
+  addresses: { address: string, family: 'ipv4' | 'ipv6', interface: string, scope: 'public' | 'private' | 'loopback' | 'link-local', score: number, recommended: false | true }[]
   recommended?: string
   link?: string
   maskLink?: string
@@ -48,8 +48,8 @@ export type PostApiTauriRemoteAccessResponse
     listening: false | true
     listen: { address: string, port: number }
     port: number
-    auth: { enabled: false | true, scope: 'public_only' | 'all', hasToken?: false | true, token?: string }
-    addresses: { address: string, family: 'ipv4' | 'ipv6', interface: string, scope: 'loopback' | 'private' | 'public' | 'link-local', score: number, recommended: false | true }[]
+    auth: { enabled: false | true, scope: 'all' | 'public_only', hasToken?: false | true, token?: string }
+    addresses: { address: string, family: 'ipv4' | 'ipv6', interface: string, scope: 'public' | 'private' | 'loopback' | 'link-local', score: number, recommended: false | true }[]
     recommended?: string
     link?: string
     maskLink?: string
@@ -71,8 +71,8 @@ export type PostApiTauriRemoteAccessTunnelResponse
     listening: false | true
     listen: { address: string, port: number }
     port: number
-    auth: { enabled: false | true, scope: 'public_only' | 'all', hasToken?: false | true, token?: string }
-    addresses: { address: string, family: 'ipv4' | 'ipv6', interface: string, scope: 'loopback' | 'private' | 'public' | 'link-local', score: number, recommended: false | true }[]
+    auth: { enabled: false | true, scope: 'all' | 'public_only', hasToken?: false | true, token?: string }
+    addresses: { address: string, family: 'ipv4' | 'ipv6', interface: string, scope: 'public' | 'private' | 'loopback' | 'link-local', score: number, recommended: false | true }[]
     recommended?: string
     link?: string
     maskLink?: string
@@ -94,8 +94,8 @@ export type DeleteApiTauriRemoteAccessTunnelResponse
     listening: false | true
     listen: { address: string, port: number }
     port: number
-    auth: { enabled: false | true, scope: 'public_only' | 'all', hasToken?: false | true, token?: string }
-    addresses: { address: string, family: 'ipv4' | 'ipv6', interface: string, scope: 'loopback' | 'private' | 'public' | 'link-local', score: number, recommended: false | true }[]
+    auth: { enabled: false | true, scope: 'all' | 'public_only', hasToken?: false | true, token?: string }
+    addresses: { address: string, family: 'ipv4' | 'ipv6', interface: string, scope: 'public' | 'private' | 'loopback' | 'link-local', score: number, recommended: false | true }[]
     recommended?: string
     link?: string
     maskLink?: string
@@ -143,7 +143,7 @@ export interface PostApiTauriRemoteAccessBody {
   address?: string
   port?: number
   authEnabled?: false | true
-  scope?: 'public_only' | 'all'
+  scope?: 'all' | 'public_only'
 }
 export interface PostApiTauriRemoteAccessTunnelBody {
   mode?: 'quick' | 'token'

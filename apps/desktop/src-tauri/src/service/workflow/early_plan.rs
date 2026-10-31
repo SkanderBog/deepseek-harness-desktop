@@ -79,7 +79,7 @@ fn resolve(app_data: &Path, resources: &Path) -> Option<Inputs> {
         return None;
     }
     let profiles = dsh_home.join("profiles");
-    if profiles.join("desktop").try_exists().ok()? {
+    if profiles.join("tauri").try_exists().ok()? {
         return None;
     }
     let package = read_json(
@@ -88,7 +88,7 @@ fn resolve(app_data: &Path, resources: &Path) -> Option<Inputs> {
             .join("package.json"),
     )?;
     if !package.is_object()
-        || package.get("name").and_then(|value| value.as_str()) == Some("dsh-profile-desktop")
+        || package.get("name").and_then(|value| value.as_str()) == Some("dsh-profile-tauri")
     {
         return None;
     }
@@ -379,7 +379,7 @@ mod tests {
             ("active_core", json!(null)),
             ("active_core", json!("local")),
             ("active_profile", json!("safe")),
-            ("active_profile", json!("desktop")),
+            ("active_profile", json!("tauri")),
             ("active_profile", json!("custom")),
             ("active_profile", json!("web")),
             ("active_profile", json!("../web")),
