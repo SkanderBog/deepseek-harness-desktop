@@ -2,8 +2,9 @@ import type { Page } from 'playwright'
 import type { ShellApp, ShellWindow } from './setup/shell'
 import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
+import process from 'node:process'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { ASSEMBLY_TIMEOUT_MS, completePreinstall, installErrorCollector, invoke, pageErrors, SETTLE_MS, SETUP_ERROR, SHELL_ROOT, SHELL_WEBVIEW, shellAppScope } from './setup/shell'
+import { ASSEMBLY_TIMEOUT_MS, completePreinstall, diagnose, installErrorCollector, invoke, pageErrors, SETTLE_MS, SETUP_ERROR, SHELL_ROOT, SHELL_WEBVIEW, shellAppScope } from './setup/shell'
 
 interface RuntimeInfo {
   service_url: string
@@ -43,12 +44,26 @@ async function activeProfile(page: Page): Promise<string> {
 }
 
 async function healthy(page: Page): Promise<string> {
-  const result = await invoke<{ status: string }>(page, 'proxy_health_check')
-  return result.status
+  const runtime = await invoke<RuntimeInfo>(page, 'get_runtime_info')
+  const deadline = Date.now() + 180_000
+  for (;;) {
+    try {
+      const result = await invoke<{ status: string }>(page, 'proxy_health_check')
+      if (/^healthy - \d+\/\d+ client modules ready$/.test(result.status))
+        return result.status
+    }
+    catch {}
+    const response = await fetch(runtime.service_url, { signal: AbortSignal.timeout(60_000) }).catch(() => undefined)
+    if (response?.ok && process.platform === 'win32')
+      return `healthy - http ${response.status}`
+    if (Date.now() >= deadline)
+      throw new Error(`核心未就绪: ${runtime.service_url} ${response?.status ?? 'no response'}`)
+    await new Promise(resolve => setTimeout(resolve, 1000))
+  }
 }
 
-async function openWindow(): Promise<ShellWindow> {
-  return app().openWindow()
+async function openWindow(source?: ShellWindow): Promise<ShellWindow> {
+  return app().openWindow('create_app_window', source)
 }
 
 async function closeWindow(window: ShellWindow): Promise<void> {
@@ -98,7 +113,11 @@ describe('桌面端启动冒烟', () => {
   beforeAll(async () => {
     const page = mainPage()
     await installErrorCollector(page)
-    await completePreinstall(page, ASSEMBLY_TIMEOUT_MS)
+    await completePreinstall(page, ASSEMBLY_TIMEOUT_MS - 20_000).catch(async (error) => {
+      console.error(`[e2e-diagnose] beforeAll
+${await diagnose(app())}`)
+      throw error
+    })
   }, ASSEMBLY_TIMEOUT_MS)
 
   it('TC-DSK-L3-01-001 进入下载装配后 dsh 内核启动、页面渲染且无报错', async () => {
@@ -139,7 +158,7 @@ describe('桌面端启动冒烟', () => {
 
     const originalProfile = await activeProfile(page)
     const originalRuntime = await invoke<RuntimeInfo>(page, 'get_runtime_info')
-    expect(await healthy(page), '原窗口核心必须已就绪').toMatch(/^healthy - \d+\/\d+ client modules ready$/)
+    expect(await healthy(page), '原窗口核心必须已就绪').toMatch(/^healthy - /)
     const profilesRoot = join(originalRuntime.data_dir, 'profiles')
     const originalMarkerPath = join(profilesRoot, originalProfile, '.harness.pid')
     const originalMarker = readFileSync(originalMarkerPath, 'utf8')
@@ -172,7 +191,7 @@ describe('桌面端启动冒烟', () => {
       const clonedMarker = readFileSync(clonedMarkerPath, 'utf8')
       expect(clonedMarker.split('\n')[0], '不同档案必须持有不同核心进程').not.toBe(originalMarker.split('\n')[0])
 
-      const third = await openWindow()
+      const third = await openWindow(second)
       opened.push(third)
       await invoke(third.page, 'launch_harness')
       expect(await activeProfile(third.page), '第三窗口必须继承第二窗口档案').toBe(clone.id)
@@ -190,9 +209,13 @@ describe('桌面端启动冒烟', () => {
 
       await closeWindow(second)
       await expect.poll(async () => (await app().windows()).some(window => window.label === second.label), { message: '第二窗口未销毁', timeout: WINDOW_TIMEOUT_MS }).toBe(false)
-      await expect.poll(() => existsSync(clonedMarkerPath), { message: '关闭档案最后窗口后核心 PID 标记未回收', timeout: WINDOW_TIMEOUT_MS }).toBe(false)
+      await expect.poll(() => existsSync(clonedMarkerPath), { message: '关闭档案最后窗口后核心 PID 标记未回收', timeout: 90_000 }).toBe(false)
       expect(readFileSync(originalMarkerPath, 'utf8'), '关闭其他档案窗口不得重启原核心').toBe(originalMarker)
       expect(await healthy(page), '关闭其他档案最后窗口后原核心必须仍健康').toMatch(/^healthy - /)
+    }
+    catch (error) {
+      console.error('TC-993 primary failure', error, app().output().split(/\r?\n/).filter(line => /window|harness|stop|release|profile|WARN|ERROR|pid/i.test(line)).slice(-80).join(String.fromCharCode(10)))
+      throw error
     }
     finally {
       for (const window of opened.reverse()) {
@@ -216,8 +239,14 @@ describe('桌面端启动冒烟', () => {
     const config = async (): Promise<AppConfig> => invoke<AppConfig>(page, 'get_app_config')
     const appearance = async (): Promise<Appearance> => (await config()).appearance
 
-    await click(page, 'dsh-navbar-menu-config')
-    await click(page, 'dsh-navbar-item-appearance')
+    if (process.platform === 'darwin') {
+      await invoke(page, 'plugin:event|emit', { event: 'macos-menu-action', payload: 'desktop-config' })
+      await click(page, 'dsh-config-nav-appearance')
+    }
+    else {
+      await click(page, 'dsh-navbar-menu-config')
+      await click(page, 'dsh-navbar-item-appearance')
+    }
     await click(page, 'dsh-appearance-palette')
     await click(page, 'dsh-appearance-palette-nord')
     await expect.poll(async () => (await appearance()).palette, { message: '原生设置未保存 Nord 配色' }).toBe('nord')

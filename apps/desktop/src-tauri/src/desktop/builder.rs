@@ -779,6 +779,7 @@ where
 #[cfg(all(test, target_os = "macos"))]
 mod macos_titlebar_tests {
     use super::{MACOS_TITLEBAR_SYNC_PENDING, on_macos_titlebar_event, sync_macos_titlebars};
+    use crate::WebviewWindow;
     use std::cell::Cell;
     use std::sync::atomic::Ordering;
     use tauri::{PhysicalPosition, PhysicalSize, Theme, WindowEvent};
@@ -1524,14 +1525,18 @@ pub fn builder() -> tauri::Builder<tauri_runtime_electron::ElectronRuntime> {
                 let _ = window.hide();
             }
             tauri::WindowEvent::Destroyed => {
+                log::info!("[window] destroyed label={}", window.label());
                 if let Some(profile) =
                     crate::service::workflow::instances::release_window(window.label())
                 {
+                    log::info!("[window] last window of profile={profile} closed, stopping core");
                     let app = window.app_handle().clone();
                     tauri::async_runtime::spawn(async move {
-                        if let Ok(_transition) =
-                            crate::service::workflow::acquire_core_transition().await
-                        {
+                        let transition = crate::service::workflow::acquire_core_transition().await;
+                        if let Err(error) = &transition {
+                            log::warn!("[window] core transition unavailable: {error}");
+                        }
+                        if let Ok(_transition) = transition {
                             if !crate::service::workflow::instances::is_attached(&profile) {
                                 let _ = crate::service::workflow::instances::scope(
                                     profile,

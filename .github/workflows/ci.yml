@@ -175,9 +175,12 @@ jobs:
 
       - name: Unit test (changed)
         if: ${{ needs.changes.outputs.full != '1' && needs.changes.outputs.unit == '1' }}
+        run: node node_modules/vitest/vitest.mjs run --project unit --changed "${{ needs.changes.outputs.base }}"
+
       - name: Unit test (not selected)
         if: ${{ needs.changes.outputs.full != '1' && needs.changes.outputs.unit != '1' }}
-        run: echo "unit tests not selected: ${{ needs.changes.outputs.reason }}"
+        run: |
+          echo "unit tests not selected: ${{ needs.changes.outputs.reason }}"
 
   rust-test:
     name: Rust tests
@@ -186,7 +189,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-14, windows-latest]
+        os: [ubuntu-22.04, macos-15, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Scope
@@ -253,7 +256,7 @@ jobs:
       fail-fast: false
       # Electron 运行时不再受 WebView2 限制，按发布平台各跑一次。
       matrix:
-        os: [windows-latest, macos-14, ubuntu-22.04]
+        os: [windows-latest, macos-15, ubuntu-22.04]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
@@ -269,6 +272,20 @@ jobs:
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
+        with:
+          standalone: 'true'
+
+      - name: Expose pnpm.exe (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "$env:USERPROFILE\setup-pnpm" -Recurse -Filter pnpm.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) {
+            npm install --no-save --prefix "$env:RUNNER_TEMP\pnpm-exe" '@pnpm/exe'
+            $exe = Get-ChildItem "$env:RUNNER_TEMP\pnpm-exe" -Recurse -Filter pnpm.exe | Select-Object -First 1
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $exe.DirectoryName
+          Write-Host "pnpm.exe: $($exe.FullName)"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -283,6 +300,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+
+      - name: Setup Xcode
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/setup-xcode
 
       - name: Cache Electron distribution
         uses: actions/cache@v4
@@ -304,7 +325,7 @@ jobs:
         run: pnpm --filter dsh-desktop build
 
       - name: Build debug binary
-        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml
+        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --features tauri/custom-protocol
 
       - name: Desktop E2E (Linux, headless)
         if: runner.os == 'Linux'

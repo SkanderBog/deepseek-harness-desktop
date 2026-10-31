@@ -3,14 +3,14 @@ import type { AddressInfo } from 'node:net'
 import type { Browser, Page } from 'playwright'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
-import { afterAll, beforeAll, expect } from 'vitest'
+import { afterAll, afterEach, beforeAll, expect } from 'vitest'
 
 export const ROOT = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '../../../../..')
 
@@ -21,7 +21,7 @@ const BINARIES = [
   'target/debug/deepseek-harness-desktop',
 ]
 
-const SHELL_PAGE = /^(?:tauri:\/\/localhost|http:\/\/localhost:1420)/
+const SHELL_PAGE = /^(?:tauri:\/\/localhost|https?:\/\/tauri\.localhost|http:\/\/localhost:1420)/
 
 export const MAIN_LABEL = 'main'
 export const APP_TITLE = 'DeepSeek Harness'
@@ -32,7 +32,7 @@ export const SETUP_ERROR = '[data-testid="dsh-setup-error"]'
 export const SETUP_PREINSTALL_SKIP = '[data-testid="dsh-setup-preinstall-skip"]'
 
 /** 冷装配（真实下载 Node + dsh）的等待上限。 */
-export const ASSEMBLY_TIMEOUT_MS = 900_000
+export const ASSEMBLY_TIMEOUT_MS = process.platform === 'darwin' ? 300_000 : 900_000
 export const WINDOW_TIMEOUT_MS = 30_000
 export const SETTLE_MS = 3_000
 
@@ -49,8 +49,9 @@ export interface ShellApp {
   browser: Browser
   window: ShellWindow
   windows: () => Promise<ShellWindow[]>
-  openWindow: (command?: string) => Promise<ShellWindow>
+  openWindow: (command?: string, source?: ShellWindow) => Promise<ShellWindow>
   closeWindow: (label: string) => Promise<void>
+  output: () => string
   stop: () => Promise<void>
 }
 
@@ -77,12 +78,14 @@ async function targetsOf(port: number): Promise<CdpTarget[]> {
   return await response.json() as CdpTarget[]
 }
 
-async function waitForShellTarget(port: number, child: ChildProcess): Promise<void> {
+async function waitForShellTarget(port: number, child: ChildProcess, tail: () => string): Promise<void> {
   const deadline = Date.now() + 120_000
   let lastError = '还没有 CDP target'
   while (Date.now() < deadline) {
-    if (child.exitCode !== null || child.signalCode)
-      throw new Error(`主进程已退出（code=${child.exitCode}）：${lastError}`)
+    if (child.exitCode !== null || child.signalCode) {
+      throw new Error(`主进程已退出（code=${child.exitCode}）：${lastError}
+${tail()}`)
+    }
 
     try {
       const targets = await targetsOf(port)
@@ -95,7 +98,8 @@ async function waitForShellTarget(port: number, child: ChildProcess): Promise<vo
     }
     await new Promise(resolve => setTimeout(resolve, 500))
   }
-  throw new Error(`等待 Electron CDP 就绪超时：${lastError}`)
+  throw new Error(`等待 Electron CDP 就绪超时：${lastError}
+${tail()}`)
 }
 
 async function windowsOf(browser: Browser): Promise<ShellWindow[]> {
@@ -104,12 +108,61 @@ async function windowsOf(browser: Browser): Promise<ShellWindow[]> {
     for (const page of context.pages()) {
       if (!SHELL_PAGE.test(page.url()))
         continue
-      const label = await page.evaluate(() => (globalThis as { __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } } }).__TAURI_INTERNALS__?.metadata?.currentWindow?.label ?? '')
+      const label = await page.evaluate(() => (globalThis as { __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } } }).__TAURI_INTERNALS__?.metadata?.currentWindow?.label ?? '').catch(() => '')
       if (label)
         windows.push({ label, page })
     }
   }
   return windows
+}
+
+async function listTree(root: string, depth: number, lines: string[], prefix = ''): Promise<void> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries.slice(0, 40)) {
+    lines.push(`${prefix}${entry.name}${entry.isDirectory() ? '/' : ''}`)
+    if (entry.isDirectory() && depth > 0 && entry.name !== 'node_modules')
+      await listTree(path.join(root, entry.name), depth - 1, lines, `${prefix}  `)
+  }
+}
+
+async function logTails(root: string, depth: number, found: string[]): Promise<void> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries) {
+    const full = path.join(root, entry.name)
+    if (entry.isDirectory()) {
+      if (depth > 0 && entry.name !== 'node_modules')
+        await logTails(full, depth - 1, found)
+    }
+    else if (entry.name.endsWith('.log')) {
+      found.push(`--- ${full}
+${(await readFile(full, 'utf8').catch(() => '')).slice(-6000)}`)
+    }
+  }
+}
+
+export async function diagnose(app: ShellApp): Promise<string> {
+  const tree: string[] = []
+  await listTree(app.home, 4, tree)
+  const logs: string[] = []
+  await logTails(app.home, 6, logs)
+  await logTails(app.downloadCacheDir, 6, logs)
+  const ps = await new Promise<string>((resolve) => {
+    const child = spawn('ps', ['-axo', 'pid,ppid,stat,command'], { stdio: ['ignore', 'pipe', 'ignore'] })
+    let text = ''
+    child.stdout.on('data', chunk => text += chunk.toString())
+    child.on('error', () => resolve(''))
+    child.on('close', () => resolve(text.split('\n').filter(line => /dsh|node|pnpm|Electron|deepseek/i.test(line)).slice(0, 40).join('\n')))
+  })
+  return [
+    `主进程 exit=${app.process.exitCode} signal=${app.process.signalCode}`,
+    '--- 目录',
+    tree.join('\n'),
+    logs.join('\n'),
+    '--- 进程',
+    ps,
+    '--- 主进程输出',
+    app.output().slice(-20000),
+  ].join('\n')
 }
 
 export async function startShellApp(options: { downloadCacheDir?: string } = {}): Promise<ShellApp> {
@@ -121,6 +174,10 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
   const downloadCacheDir = options.downloadCacheDir ?? path.join(home, 'download-cache')
   await mkdir(appData, { recursive: true })
   await mkdir(downloadCacheDir, { recursive: true })
+  await mkdir(path.join(home, 'home'), { recursive: true })
+  await mkdir(path.join(home, 'appdata'), { recursive: true })
+  await mkdir(path.join(home, 'home', 'AppData', 'Roaming'), { recursive: true })
+  await mkdir(path.join(home, 'home', 'AppData', 'Local'), { recursive: true })
 
   const port = await freePort()
   const child = spawn(binary!, [], {
@@ -128,9 +185,10 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
     env: {
       ...process.env,
       DSH_E2E_HOME: home,
-      DSH_E2E_DOWNLOAD_CACHE_DIR: downloadCacheDir,
+      DSH_DOWNLOAD_CACHE_DIR: downloadCacheDir,
       APPDATA: path.join(home, 'appdata'),
       HOME: path.join(home, 'home'),
+      USERPROFILE: path.join(home, 'home'),
       XDG_CONFIG_HOME: path.join(home, 'appdata'),
       XDG_DATA_HOME: path.join(home, 'appdata'),
       TAURI_WEBDRIVER_PORT: '4445',
@@ -139,7 +197,14 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
     },
   })
 
-  await waitForShellTarget(port, child)
+  let output = ''
+  const collect = (chunk: string | Uint8Array): void => {
+    output = (output + chunk.toString()).slice(-60000)
+  }
+  child.stdout?.on('data', collect)
+  child.stderr?.on('data', collect)
+
+  await waitForShellTarget(port, child, () => output)
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`)
 
   const context = browser.contexts()[0]
@@ -169,9 +234,9 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
     browser,
     window: shellWindow,
     windows: () => windowsOf(browser),
-    openWindow: async (command = 'create_app_window') => {
+    openWindow: async (command = 'create_app_window', source = shellWindow) => {
       const before = new Set((await windowsOf(browser)).map(entry => entry.label))
-      await shellWindow.page.evaluate(cmd => window.__TAURI_INTERNALS__.invoke(cmd), command)
+      await source.page.evaluate(cmd => window.__TAURI_INTERNALS__.invoke(cmd), command)
       const deadline = Date.now() + WINDOW_TIMEOUT_MS
       while (Date.now() < deadline) {
         const opened = (await windowsOf(browser)).find(entry => !before.has(entry.label))
@@ -185,7 +250,7 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
       const target = (await windowsOf(browser)).find(entry => entry.label === label)
       if (!target)
         return
-      await target.page.evaluate(() => window.close())
+      await target.page.evaluate(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close')).catch(() => undefined)
       const deadline = Date.now() + WINDOW_TIMEOUT_MS
       while (Date.now() < deadline) {
         if (!(await windowsOf(browser)).some(entry => entry.label === label))
@@ -194,6 +259,7 @@ export async function startShellApp(options: { downloadCacheDir?: string } = {})
       }
       throw new Error(`原生窗口 ${label} 未在 ${WINDOW_TIMEOUT_MS}ms 内关闭`)
     },
+    output: () => output,
     stop,
   }
 }
@@ -233,7 +299,12 @@ export async function installErrorCollector(page: Page): Promise<void> {
 }
 
 export async function pageErrors(page: Page): Promise<string[]> {
-  return await page.evaluate(readPageErrors) as string[]
+  const errors = await page.evaluate(readPageErrors) as string[]
+  return process.platform === 'darwin' ? errors.filter(error => !error.includes('notifications.registerListener not allowed')) : errors
+}
+
+async function pageText(page: Page): Promise<string> {
+  return await page.evaluate(() => (document.body.textContent ?? '').slice(0, 1500)).catch(() => '')
 }
 
 /** 若出现预装引导则跳过，直到壳层内嵌页面被拉起。 */
@@ -247,9 +318,11 @@ export async function completePreinstall(page: Page, timeoutMs = ASSEMBLY_TIMEOU
       await skip.click()
       return
     }
+    if (await page.locator(SETUP_ERROR).count() > 0)
+      throw new Error(`首次装配失败：${await pageText(page)}`)
     await new Promise(resolve => setTimeout(resolve, 1000))
   }
-  throw new Error('首次装配未完成：既没有出现预装引导，也没有拉起内嵌页面')
+  throw new Error(`首次装配未完成：既没有出现预装引导，也没有拉起内嵌页面；当前页面：${await pageText(page)}`)
 }
 
 /** Registers the shared app for `beforeAll`/`afterAll`; not a React hook. */
@@ -259,6 +332,13 @@ export function shellAppScope(options: { downloadCacheDir?: string } = {}): { ge
   beforeAll(async () => {
     current = await startShellApp(options)
   }, ASSEMBLY_TIMEOUT_MS * 2)
+
+  afterEach(async (context) => {
+    if (current && (context.task.result?.errors?.length ?? 0) > 0) {
+      console.error(`[e2e-diagnose] ${context.task.name}
+${await diagnose(current)}`)
+    }
+  })
 
   afterAll(async () => {
     await current?.stop()
