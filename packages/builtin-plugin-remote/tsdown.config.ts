@@ -4,7 +4,7 @@ import { defineDshConfig } from '../builtin-plugin-config/src/index.ts'
 import { gatewayAuthHtml } from './src/host/service/gateway.auth.ts'
 
 export default async function () {
-  const dshEngine = (readManifest(fileURLToPath(new URL('../../apps/desktop', import.meta.url))).engines as { dsh: { recommend: string, minimum: string } }).dsh
+  const dshEngine = (readManifest(fileURLToPath(new URL('../../', import.meta.url))).engines as { dsh: { recommend: string, minimum: string } }).dsh
   return defineDshConfig({
     server: {
       noExternal: ['qrcode'],

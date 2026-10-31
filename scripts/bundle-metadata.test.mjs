@@ -1,8 +1,19 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { expect, it } from 'vitest'
-import { applyBundleManifest, readBuildConstants, readRecommendedDshVersion } from './bundle-metadata.mjs'
+import { fileURLToPath } from 'node:url'
+import { expect, it, vi } from 'vitest'
+import { applyBundleManifest, readBuildConstants, readManifest, readRecommendedDshVersion } from './bundle-metadata.mjs'
+
+vi.mock('../packages/builtin-plugin-remote/src/host/service/gateway.auth.ts', () => ({ gatewayAuthHtml: async () => '' }))
+
+it('loads remote build engine definitions from the repository manifest without building plugins', async () => {
+  const { default: configure } = await import('../packages/builtin-plugin-remote/tsdown.config.ts')
+  const [server] = await configure()
+  const { dsh } = readManifest(fileURLToPath(new URL('../', import.meta.url))).engines
+  expect(server.define.__REMOTE_DSH_RECOMMEND__).toBe(JSON.stringify(dsh.recommend))
+  expect(server.define.__REMOTE_DSH_MINIMUM__).toBe(JSON.stringify(dsh.minimum))
+})
 
 it('reads bundle metadata and rewrites bundled roots in the desktop workspace', () => {
   const repo = mkdtempSync(path.join(tmpdir(), 'bundle-metadata-'))

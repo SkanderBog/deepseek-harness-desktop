@@ -125,7 +125,7 @@ jobs:
         run: pnpm run typecheck:native
 
       - name: Native unit test
-        run: node node_modules/vitest/vitest.mjs run --config config/vitest.native.config.ts
+        run: pnpm run test:native
 
   unit:
     name: Unit Tests (vitest)
