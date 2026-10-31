@@ -101,7 +101,7 @@ jobs:
           if [ "$manual" = true ] && [ "$(git rev-parse HEAD)" != "$tag_commit" ]; then
             fail "tag $tag points at $tag_commit but this run is dispatched from $(git rev-parse HEAD); dispatch this workflow from the $tag ref"
           fi
-          if ! git cat-file -e "${tag_commit}:app.json" 2>/dev/null; then
+          if ! git cat-file -e "${tag_commit}:apps/native/app.json" 2>/dev/null; then
             fail "tag $tag points at $tag_commit, which predates the native Android pipeline"
           fi
 

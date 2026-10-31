@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       source_ref:
-        description: Immutable upstream main-ancestor commit SHA to release
+        description: Immutable upstream next-ancestor commit SHA to release
         required: true
         type: string
     secrets:
@@ -35,7 +35,7 @@ jobs:
   release:
     if: >-
       github.repository == 'dsh-tauri/deepseek-harness-desktop' &&
-      (inputs.source_ref != '' || github.ref == 'refs/heads/main')
+      (inputs.source_ref != '' || github.ref == 'refs/heads/next')
     name: Sign and upload iOS TestFlight
     runs-on: macos-26
     timeout-minutes: 120
@@ -47,11 +47,11 @@ jobs:
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
     steps:
-      - name: Checkout trusted upstream main
+      - name: Checkout trusted upstream next
         uses: actions/checkout@v7
         with:
           repository: dsh-tauri/deepseek-harness-desktop
-          ref: main
+          ref: next
           fetch-depth: 0
           persist-credentials: false
 
@@ -68,7 +68,7 @@ jobs:
           fi
           [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::source_ref must be a full immutable commit SHA'; exit 1; }
           [[ "$(git cat-file -t "$SOURCE_REF")" == commit ]]
-          git merge-base --is-ancestor "$SOURCE_REF" refs/remotes/origin/main
+          git merge-base --is-ancestor "$SOURCE_REF" refs/remotes/origin/next
           git checkout --detach "$SOURCE_REF"
           [[ "$(git rev-parse HEAD)" == "$SOURCE_REF" ]]
           echo "SOURCE_SHA=$SOURCE_REF" >> "$GITHUB_ENV"
@@ -103,29 +103,28 @@ jobs:
           PY
           )"
           export BUILD_NUMBER
-          node --input-type=commonjs <<'NODE'
-          const fs = require('node:fs');
-          const semver = require('semver');
-          const app = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-          const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { parseSemver } from './scripts/release-identity.mjs';
+          const app = JSON.parse(fs.readFileSync('apps/native/app.json', 'utf8'));
+          const version = JSON.parse(fs.readFileSync('apps/native/package.json', 'utf8')).version;
           if (app.expo.version !== version) throw new Error('app.json and package.json versions must match');
-          const parsed = semver.parse(version);
-          if (!parsed || `${parsed.version}${parsed.build.length ? '+' + parsed.build.join('.') : ''}` !== version) throw new Error('Version must be canonical SemVer');
+          parseSemver(version);
           if (app.expo.ios?.bundleIdentifier !== 'com.dshtauri.dshbridge') throw new Error('Unexpected iOS bundle ID');
-          const marketing = `${parsed.major}.${parsed.minor}.${parsed.patch}`;
+          const marketing = version.split(/[-+]/)[0];
           app.expo.version = marketing;
           app.expo.ios.buildNumber = process.env.BUILD_NUMBER;
-          fs.writeFileSync('app.json', `${JSON.stringify(app, null, 2)}\n`);
+          fs.writeFileSync('apps/native/app.json', `${JSON.stringify(app, null, 2)}\n`);
           fs.appendFileSync(process.env.GITHUB_ENV, `VERSION=${version}\nIOS_VERSION=${marketing}\nBUILD_NUMBER=${process.env.BUILD_NUMBER}\n`);
           NODE
           echo 'Build number: 10-second ticks since 2020-01-01 UTC, split 4.2.2; serialized jobs hold a full tick for reruns (valid through 2051-09-09).' >> "$GITHUB_STEP_SUMMARY"
           sleep 10
 
       - name: Generate iOS project
-        run: pnpm exec expo prebuild --platform ios --no-install
+        run: pnpm run prebuild:ios
 
       - name: Install CocoaPods dependencies
-        working-directory: ios
+        working-directory: apps/native/ios
         run: |
           set -euo pipefail
           pod install
@@ -149,7 +148,7 @@ jobs:
           ruby <<'RUBY'
           gem 'xcodeproj', '= 1.27.0'
           require 'xcodeproj'
-          projects = Dir.glob('ios/*.xcodeproj')
+          projects = Dir.glob('apps/native/ios/*.xcodeproj')
           abort 'Expected one generated app project' unless projects.length == 1
           project = Xcodeproj::Project.open(projects.first)
           targets = project.targets.select { |target| target.product_type == 'com.apple.product-type.application' }
@@ -169,7 +168,7 @@ jobs:
       - name: Archive signed device Release app once
         run: |
           set -euo pipefail
-          workspaces=(ios/*.xcworkspace)
+          workspaces=(apps/native/ios/*.xcworkspace)
           [[ ${#workspaces[@]} -eq 1 && -d "${workspaces[0]}" ]] || { echo '::error::Expected one generated workspace'; exit 1; }
           scheme="$(basename "${workspaces[0]}" .xcworkspace)"
           xcodebuild -workspace "${workspaces[0]}" -scheme "$scheme" \

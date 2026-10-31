@@ -150,6 +150,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Test workspace release versioning and immutable source guards
+        run: node .github/scripts/check-mobile-release.mjs
+
       - name: Test iOS signing and Beta review guards without credentials
         run: python3 -m unittest discover -s .github/scripts -p 'test_ios_*.py' -v
 
