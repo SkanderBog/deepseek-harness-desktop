@@ -119,6 +119,7 @@ afterEach(() => {
   cleanup()
   queryClient.clear()
   vi.useRealTimers()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
@@ -317,6 +318,7 @@ describe('remoteSwitcher 交互与降级', () => {
 
   it('隐藏时仍启动远端窗口目标并轮询，显示后保留同一视图，卸载停止请求', async () => {
     vi.useFakeTimers()
+    vi.stubGlobal('__TAURI_INTERNALS__', {})
     windowInfo.label = 'remote-m1'
     engineMachines = [machineOf({ name: 'alpha', state: 'connected', tunnelBaseUrl: 'http://127.0.0.1:4001', color: '#123456', tintBorder: true })]
     const { rerender, unmount } = renderSwitcher({ visible: false })

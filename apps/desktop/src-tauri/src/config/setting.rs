@@ -95,6 +95,8 @@ pub struct Setting {
     /// 需要该效果的用户显式开启。拖拽本身不受此字段影响。
     #[serde(default)]
     pub throw_enabled: bool,
+    #[serde(default)]
+    pub force_xwayland: bool,
     /// 本地插件热重载：把已挂载的本地路径插件源码目录交给核心 HMR 监听，
     /// 源码改动即时生效（无需重启服务）。没有本地插件时不产生任何补丁层。
     #[serde(default = "default_local_plugin_hmr")]
@@ -226,6 +228,7 @@ impl Default for Setting {
             active_pet: None,
             pet_size: None,
             throw_enabled: false,
+            force_xwayland: false,
             local_plugin_hmr: default_local_plugin_hmr(),
         }
     }
@@ -361,6 +364,7 @@ fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Set
     replacement.active_pet.clone_from(&current.active_pet);
     replacement.pet_size = current.pet_size;
     replacement.throw_enabled = current.throw_enabled;
+    replacement.force_xwayland = current.force_xwayland;
     replacement.local_plugin_hmr = current.local_plugin_hmr;
     replacement
 }
@@ -714,6 +718,33 @@ mod tests {
             !merged.auto_update,
             "整对象写入不得把用户显式关闭的自动更新翻回开启"
         );
+    }
+
+    #[test]
+    fn force_xwayland_survives_stale_replacement_and_store_reload() {
+        let mut legacy = serde_json::to_value(Setting::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("force_xwayland");
+        let stale: Setting = serde_json::from_value(legacy).unwrap();
+        assert!(!stale.force_xwayland);
+        for enabled in [true, false] {
+            let current = Setting {
+                force_xwayland: enabled,
+                ..Default::default()
+            };
+            let replacement = Setting {
+                force_xwayland: !enabled,
+                language: "en-US".into(),
+                ..stale.clone()
+            };
+            let merged = preserve_persisted_fields(replacement, &current);
+            let saved = serde_json::to_value(&merged).unwrap();
+            for raw in [saved.clone(), serde_json::Value::String(saved.to_string())] {
+                let loaded: Setting =
+                    serde_json::from_value(unwrap_json_value(&raw).into_owned()).unwrap();
+                assert_eq!(loaded.force_xwayland, enabled);
+                assert_eq!(loaded.language, "en-US");
+            }
+        }
     }
 
     #[test]

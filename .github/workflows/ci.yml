@@ -88,8 +88,8 @@ jobs:
                   .github/*|scripts/*) full=1; reason='shared CI or scripts changed; run all groups' ;;
                   crates/*|apps/desktop/src-tauri/*) rust=1; desktop=1 ;;
                   apps/desktop/src/*|packages/*) unit=1; desktop=1 ;;
+                  tests/e2e/*|apps/desktop/tests/e2e/*) desktop=1 ;;
                   apps/desktop/tests/unit/*|tests/*) unit=1 ;;
-                  apps/desktop/tests/e2e/*) desktop=1 ;;
                   apps/desktop/*) desktop=1 ;;
                   *) full=1; reason='unclassified path; run all groups' ;;
                 esac
@@ -125,7 +125,7 @@ jobs:
         run: pnpm run typecheck:native
 
       - name: Native unit test
-        run: pnpm run test:native
+        run: node node_modules/vitest/vitest.mjs run --config config/vitest.native.config.ts
 
   unit:
     name: Unit Tests (vitest)
@@ -202,10 +202,11 @@ jobs:
         with:
           submodules: true
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '22'
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'

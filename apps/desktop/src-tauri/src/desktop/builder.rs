@@ -1280,6 +1280,8 @@ pub fn handler() -> impl Fn(Invoke<ElectronRuntime>) -> bool + Send + Sync + 'st
         crate::bridge::pet_show_main_window,
         crate::bridge::pet_show_context_menu,
         crate::bridge::get_pet_overlay_supported,
+        crate::bridge::get_force_xwayland,
+        crate::bridge::set_force_xwayland,
         crate::bridge::set_pet_enabled,
         crate::bridge::set_active_pet,
         crate::bridge::set_pet_size,
@@ -1325,6 +1327,8 @@ fn guest_command_allowed(command: &str) -> bool {
             | "open_external_url"
             | "get_pet_status"
             | "get_pet_overlay_supported"
+            | "get_force_xwayland"
+            | "set_force_xwayland"
             | "set_pet_enabled"
             | "set_active_pet"
             | "set_pet_size"
@@ -1547,8 +1551,6 @@ pub fn builder() -> tauri::Builder<ElectronRuntime> {
             }
             tauri::WindowEvent::ScaleFactorChanged { .. } => {
                 if window.label() == crate::desktop::pet::PET_WINDOW_LABEL {
-                    #[cfg(target_os = "linux")]
-                    crate::desktop::pet::refresh_page_extra_scale();
                     crate::desktop::pet::apply_pet_size(window.app_handle());
                 }
             }

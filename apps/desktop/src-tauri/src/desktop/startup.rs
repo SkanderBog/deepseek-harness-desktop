@@ -1,3 +1,43 @@
+#[cfg(target_os = "linux")]
+pub(crate) fn prepare_force_xwayland() {
+    let setting = crate::logger::identifier_dir()
+        .and_then(|directory| {
+            std::fs::read(directory.join(crate::config::store_dat_file_name())).ok()
+        })
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .map(|store| crate::config::setting_from_value(store.get(crate::config::STORE_SETTING_KEY)))
+        .unwrap_or_default();
+    if setting.force_xwayland {
+        let args = std::env::var("TAURI_RUNTIME_ELECTRON_ARGS").unwrap_or_default();
+        unsafe {
+            std::env::set_var("TAURI_RUNTIME_ELECTRON_ARGS", force_xwayland_args(&args));
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn force_xwayland_args(args: &str) -> String {
+    format!("{args} --ozone-platform=x11")
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn pet_overlay_supported(wayland: bool, args: &str) -> bool {
+    let mut platform = None;
+    let mut args = args.split_whitespace();
+    while let Some(arg) = args.next() {
+        if arg == "--ozone-platform" {
+            platform = args.next();
+        } else if let Some(value) = arg.strip_prefix("--ozone-platform=") {
+            platform = Some(value);
+        }
+    }
+    match platform {
+        Some("x11") => true,
+        Some("wayland") => false,
+        _ => !wayland,
+    }
+}
+
 pub(crate) fn verify() -> Result<(), String> {
     crate::config::e2e_app_data_dir()?;
     #[cfg(windows)]
@@ -98,6 +138,26 @@ fn process_integrity_level() -> std::io::Result<u32> {
 mod tests {
     use super::*;
     use tauri::test::{mock_builder, mock_context, noop_assets};
+
+    #[test]
+    fn forced_x11_overrides_wayland_without_losing_other_electron_switches() {
+        let existing = "--remote-debugging-port=9123 --ozone-platform=wayland";
+        let forced = force_xwayland_args(existing);
+        assert_eq!(
+            forced,
+            "--remote-debugging-port=9123 --ozone-platform=wayland --ozone-platform=x11"
+        );
+        assert!(pet_overlay_supported(true, &forced));
+        assert!(!pet_overlay_supported(true, ""));
+        assert!(pet_overlay_supported(false, ""));
+        assert!(!pet_overlay_supported(false, existing));
+        assert!(!pet_overlay_supported(false, "--ozone-platform wayland"));
+        assert!(!pet_overlay_supported(
+            true,
+            "--ozone-platform=x11 --ozone-platform=wayland"
+        ));
+        assert!(pet_overlay_supported(true, "--ozone-platform x11"));
+    }
 
     fn initialize_http(
         cache: &std::path::Path,

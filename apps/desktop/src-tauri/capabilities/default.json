@@ -10,6 +10,7 @@
     "window-*"
   ],
   "permissions": [
+    "allow-shell-commands",
     "core:default",
     "core:event:allow-listen",
     "core:event:allow-unlisten",

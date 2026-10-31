@@ -68,6 +68,7 @@ pub fn restore(executable: &std::path::Path) -> Result<(), String> {
     if bytes.len() > 1_048_576 || bytes.contains(&0) || bytes.is_empty() {
         return Err("invalid login PATH helper output".into());
     }
-    std::env::set_var("PATH", OsString::from_vec(bytes));
+    // SAFETY: run() 在日志与运行时线程启动前恢复 PATH。
+    unsafe { std::env::set_var("PATH", OsString::from_vec(bytes)) };
     Ok(())
 }

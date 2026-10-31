@@ -18,8 +18,9 @@ export default defineProject({
   test: {
     name: 'unit',
     environment: 'node',
+    setupFiles: [source('./vitest.unit.setup.ts')],
     server: { deps: { inline: ['@deepseek-ai/dsh-client-ui-primitives', 'dsh-pet-component'] } },
-    include: ['apps/desktop/src/**/*.test.{ts,tsx}', 'tests/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
+    include: ['apps/desktop/src/**/*.test.{ts,tsx}', 'packages/**/src/**/*.test.ts', 'tests/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/target/**'],
     testTimeout: 30000,
     hookTimeout: 30000,

@@ -19,7 +19,7 @@ vi.mock('@tauri-apps/api/window', () => ({
   }),
 }))
 
-const frameCss = readFileSync(resolve(process.cwd(), 'src/styles/main.css'), 'utf8')
+const frameCss = readFileSync(resolve(import.meta.dirname, '../../styles/main.css'), 'utf8')
 
 afterEach(() => {
   cleanup()

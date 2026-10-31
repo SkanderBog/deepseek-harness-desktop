@@ -269,6 +269,22 @@ pub fn get_pet_overlay_supported() -> bool {
     crate::pet_overlay_supported_env()
 }
 
+#[tauri::command]
+pub fn get_force_xwayland(app: AppHandle) -> bool {
+    cfg!(target_os = "linux") && config::get_store_dat_setting(&app).force_xwayland
+}
+
+#[tauri::command]
+pub fn set_force_xwayland(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    if !cfg!(target_os = "linux") {
+        return Err("FORCE_XWAYLAND_UNSUPPORTED: only Linux supports Electron X11 mode".into());
+    }
+    Ok(config::update_store_dat_setting(&app, |setting| {
+        setting.force_xwayland = enabled;
+    })
+    .force_xwayland)
+}
+
 /// 启用/关闭桌宠（持久化）。侧栏入口、设置页与桌宠窗口自身的关闭请求都走这里。
 ///
 /// 关闭即销毁窗口实例（不是 hide，见 `desktop::pet::set_pet_window_visible`：隐藏窗口里

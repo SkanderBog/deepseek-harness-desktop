@@ -2,7 +2,7 @@
   "expo": {
     "name": "DSH Mobile",
     "slug": "dsh-bridge",
-    "version": "1.0.0-pre-alpha",
+    "version": "0.3.0-pre.alpha.0",
     "scheme": "dshbridge",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",

@@ -33,6 +33,8 @@ pub fn run() -> Result<(), String> {
     }
     desktop::startup::verify()?;
     #[cfg(target_os = "linux")]
+    desktop::startup::prepare_force_xwayland();
+    #[cfg(target_os = "linux")]
     config::proxy::prepare_inherited_proxy();
     // 初始化日志系统
     logger::init();
@@ -121,5 +123,13 @@ pub(crate) fn shell_window_opaque() -> bool {
 }
 
 pub(crate) fn pet_overlay_supported_env() -> bool {
-    !cfg!(target_os = "linux") || std::env::var_os("WAYLAND_DISPLAY").is_none()
+    #[cfg(target_os = "linux")]
+    {
+        return desktop::startup::pet_overlay_supported(
+            std::env::var_os("WAYLAND_DISPLAY").is_some(),
+            &std::env::var("TAURI_RUNTIME_ELECTRON_ARGS").unwrap_or_default(),
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    true
 }

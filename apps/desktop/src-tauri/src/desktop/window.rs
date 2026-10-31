@@ -142,20 +142,33 @@ pub async fn prepare_harness_webview(
         let _ = guest.close();
         return Err(error.to_string());
     }
-    let mut capability: serde_json::Value =
-        serde_json::from_str(include_str!("../../capabilities/default.json"))
-            .map_err(|error| error.to_string())?;
-    capability["identifier"] = label.clone().into();
-    capability["local"] = false.into();
-    capability["windows"] = serde_json::json!([]);
-    capability["webviews"] = serde_json::json!([label]);
-    capability["remote"] =
-        serde_json::json!({"urls": [format!("{}/*", url.origin().ascii_serialization())]});
+    let capability = harness_capability(&label, &url)?;
     if let Err(error) = app.add_capability(capability.to_string()) {
         let _ = guest.close();
         return Err(error.to_string());
     }
     Ok(label)
+}
+
+fn harness_capability(label: &str, url: &Url) -> Result<serde_json::Value, String> {
+    let mut capability: serde_json::Value =
+        serde_json::from_str(include_str!("../../capabilities/default.json"))
+            .map_err(|error| error.to_string())?;
+    capability["identifier"] = label.into();
+    capability["local"] = false.into();
+    capability["windows"] = serde_json::json!([]);
+    capability["webviews"] = serde_json::json!([label]);
+    capability["remote"] =
+        serde_json::json!({"urls": [format!("{}/*", url.origin().ascii_serialization())]});
+    for permission in capability["permissions"]
+        .as_array_mut()
+        .ok_or("HARNESS_CAPABILITY_INVALID")?
+    {
+        if permission.as_str() == Some("allow-shell-commands") {
+            *permission = "allow-harness-commands".into();
+        }
+    }
+    Ok(capability)
 }
 
 #[tauri::command]
@@ -177,6 +190,32 @@ pub async fn release_harness_webview(
     Ok(())
 }
 
+#[cfg(test)]
+#[test]
+fn application_capabilities_separate_shell_and_harness_commands() {
+    use tauri::ipc::Origin;
+
+    let mut context: tauri::Context<tauri_runtime_electron::ElectronRuntime> = tauri::generate_context!();
+    let authority = context.runtime_authority_mut();
+    let url = harness_guest_url("http://127.0.0.1:3080/?token=x").unwrap();
+    authority
+        .add_capability(harness_capability("harness-1", &url).unwrap().to_string())
+        .unwrap();
+    let allowed = |command: &str, webview: &str, origin: &Origin| {
+        authority.resolve_access(command, "main", webview, origin).is_some()
+    };
+    let guest = Origin::Remote { url };
+    let wrong_origin = Origin::Remote { url: Url::parse("http://127.0.0.1:3081/").unwrap() };
+    for command in ["get_dsh_theme", "get_runtime_info", "read_service_logs", "quit_app", "update_app_config", "prepare_harness_webview"] {
+        assert!(allowed(command, "main", &Origin::Local), "{command}");
+        assert!(!allowed(command, "harness-1", &guest), "{command}");
+    }
+    for command in ["open_external_url", "get_pet_status", "get_pet_overlay_supported", "get_force_xwayland", "set_force_xwayland", "set_pet_size", "read_clipboard_text", "write_clipboard_text"] {
+        assert!(allowed(command, "harness-1", &guest), "{command}");
+        assert!(!allowed(command, "harness-2", &guest), "{command}");
+        assert!(!allowed(command, "harness-1", &wrong_origin), "{command}");
+    }
+}
 #[cfg(test)]
 #[test]
 fn harness_guest_urls_require_an_explicit_loopback_port() {

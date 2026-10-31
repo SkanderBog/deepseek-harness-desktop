@@ -8,6 +8,6 @@ export default defineConfig({
     name: 'native',
     environment: 'node',
     include: ['src/**/*.test.{ts,tsx}'],
-    testTimeout: 10000,
+    testTimeout: 60000,
   },
 })

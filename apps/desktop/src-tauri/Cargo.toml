@@ -1,6 +1,6 @@
 [package]
 name = "deepseek-harness-desktop"
-version = "1.0.0-pre-alpha"
+version = "0.3.0-pre.alpha.0"
 description = "Desktop application for DeepSeek Harness (dsh)"
 authors = [ "deepseek-harness-desktop contributors" ]
 edition = "2024"
