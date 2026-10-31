@@ -127,7 +127,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm tauri build --target ${{ matrix.target }} --bundles app,dmg
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles app,dmg --config src-tauri/tauri.macos-bundle.conf.json
 
       - name: Verify signature and notarization
         if: steps.check.outputs.should_run == 'true'
@@ -138,6 +138,19 @@ jobs:
             echo '::error::Built macOS app bundle was not found'
             exit 1
           fi
+          inner_apps=("$app_path"/Contents/Resources/runtime/darwin-*/*.app)
+          [ "${#inner_apps[@]}" -eq 1 ]
+          inner_app="${inner_apps[0]}"
+          for framework in "Electron Framework" Mantle ReactiveObjC Squirrel; do
+            for link in "$framework" Resources Versions/Current; do
+              path="$inner_app/Contents/Frameworks/$framework.framework/$link"
+              if [ ! -L "$path" ]; then
+                echo "::error::Framework symlink was not preserved: $path"
+                exit 1
+              fi
+            done
+          done
+          codesign --verify --deep --strict --verbose=2 "$inner_app"
           codesign --verify --deep --strict --verbose=2 "$app_path"
           xcrun stapler validate "$app_path"
           spctl --assess --type execute --verbose=4 "$app_path"
