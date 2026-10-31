@@ -334,7 +334,12 @@ jobs:
       - name: Runtime IPC readiness regression
         shell: bash
         run: |
-          args=(cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --package tauri-runtime-electron --all-features --locked --lib runtime::tests::ipc_waits_for_manager_across_iterations -- --exact)
+          args=(cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --package tauri-runtime-electron --locked --lib ipc_readiness_)
+          listing=$("${args[@]}" -- --list)
+          if [[ "$listing" != *"runtime::tests::ipc_readiness_waits_for_manager_across_iterations: test"* ]]; then
+            echo "Runtime IPC readiness regression was not collected"
+            exit 1
+          fi
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             xvfb-run --auto-servernum "${args[@]}"
           else
