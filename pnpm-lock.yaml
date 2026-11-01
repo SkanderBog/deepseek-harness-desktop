@@ -66,8 +66,8 @@ catalogs:
       specifier: 0.2.1
       version: 0.2.1
     dsh-taiwind:
-      specifier: ^0.3.0
-      version: 0.3.0
+      specifier: ^0.3.2
+      version: 0.3.2
     fake-indexeddb:
       specifier: ^6.2.6
       version: 6.2.6
@@ -671,7 +671,7 @@ importers:
         version: 9.0.0
       dsh-taiwind:
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.3.2
       eslint:
         specifier: catalog:lint
         version: 10.8.1(jiti@2.7.0)
@@ -1019,7 +1019,7 @@ importers:
     dependencies:
       dsh-taiwind:
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.3.2
       dsh-tauri:
         specifier: workspace:*
         version: link:../builtin-plugin-tauri
@@ -5572,8 +5572,8 @@ packages:
     peerDependencies:
       react: ^19.0.0
 
-  dsh-taiwind@0.3.0:
-    resolution: {integrity: sha512-wQidHwN3Gdy1JtJPPL/62P5bytsh4ZvJ+2LB2eFSofyHFaNEpskAMnhYZd5YtSZtRFDjeNuyug2gVmCwku9lNA==}
+  dsh-taiwind@0.3.2:
+    resolution: {integrity: sha512-mD85oz1VMNudfSOL+WKE1LrbMcO4fXT7hAIhpMfl1vUUaZvsGn9ZnHbhuiQRVxRwbH3Tqo6vf82jdwN8G/rquw==}
     engines: {dsh: '>=0.2.1-alpha.1', node: '>=22.18.0'}
 
   dts-resolver@2.1.3:
@@ -13388,7 +13388,7 @@ snapshots:
       - sortablejs
       - universal-cookie
 
-  dsh-taiwind@0.3.0:
+  dsh-taiwind@0.3.2:
     dependencies:
       '@tailwindcss/oxide': 4.3.3
       postcss: 8.5.20

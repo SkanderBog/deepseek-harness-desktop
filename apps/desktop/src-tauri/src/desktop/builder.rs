@@ -59,7 +59,7 @@ pub fn setup(app_handle: crate::AppHandle) {
                 log::warn!("pnpm modules metadata self-heal skipped: {e}");
             }
 
-            crate::service::profile::migrate_desktop_profile_name(&app_handle);
+            crate::service::profile::ensure_desktop_profile(&app_handle);
         }
 
         crate::service::workflow::instances::window_profile(&app_handle, MAIN_WINDOW_LABEL);

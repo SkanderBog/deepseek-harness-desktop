@@ -377,16 +377,16 @@ export function ConfigProfile() {
               key={profile.id}
               onClick={() => onActivate(profile.id)}
               left={(
-                <>
+                <div className="flex min-w-0 items-baseline gap-1">
                   <Label className="min-w-0 truncate text-sm font-medium text-ink">
                     {profile.name}
                   </Label>
-                  <If cond={profile.default}>
+                  <If cond={profile.builtin}>
                     <Description className="min-w-0 text-xs text-muted">
                       <Ellipsis>{t('profiles.default_desc')}</Ellipsis>
                     </Description>
                   </If>
-                </>
+                </div>
               )}
               right={(
                 <>
@@ -433,14 +433,14 @@ export function ConfigProfile() {
                       event.stopPropagation()
                       if (busy)
                         return
-                      if (profile.default) {
+                      if (profile.builtin) {
                         onReset(profile.id)
                         return
                       }
                       onRemove(profile.id)
                     }}
                   >
-                    {profile.default ? t('profiles.reset') : t('profiles.remove')}
+                    {profile.builtin ? t('profiles.reset') : t('profiles.remove')}
                   </Chip>
                 </>
               )}

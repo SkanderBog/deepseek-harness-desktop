@@ -278,7 +278,7 @@
   "messages.logs_read_failed": "读取日志失败，请稍后重试",
   "app.help": "帮助",
   "profiles.title": "档案",
-  "profiles.tooltip": "档案是 dsh 中一组相互隔离的配置集合，包含各自的插件、补丁与设置。桌面端运行在默认的 web 档案中；新建档案可试用不同的插件组合而不影响当前配置。",
+  "profiles.tooltip": "档案是 dsh 中一组相互隔离的配置集合，包含各自的插件、补丁与设置。dsh 的默认档案是 web，桌面端的默认档案是 desktop；新建档案可试用不同的插件组合而不影响当前配置。",
   "profiles.default_desc": "默认档案",
   "profiles.new_profile": "新建档案",
   "profiles.name_placeholder": "档案名称",

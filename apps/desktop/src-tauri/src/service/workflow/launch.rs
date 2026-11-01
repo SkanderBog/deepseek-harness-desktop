@@ -656,10 +656,9 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
     // 错位可能只落在 `profiles` 或 `profiles/<id>` 上（安全模式要新建 `profiles/safe`，
     // 因此 `profiles` 不可写同样是致命状态）。
     //
-    // 先跑一次档案迁移 + 首装引导（幂等）：desktop::setup 的引导若失败（磁盘/权限
-    // 抖动）或本进程没进过 setup，这里兜底；改名必须早于可写性预检，否则预检拿到的
-    // 还是改名前的档案目录。最佳努力：失败只告警，不阻断启动。
-    crate::service::profile::migrate_desktop_profile_name(&app_handle);
+    // 先确保默认档案目录存在（幂等）：desktop::setup 的引导若失败（磁盘/权限抖动）
+    // 或本进程没进过 setup，这里兜底。最佳努力：失败只告警，不阻断启动。
+    crate::service::profile::ensure_desktop_profile(&app_handle);
 
     // 预检不创建目录，避免抢先建出半初始化档案（issue #452）。
     crate::service::perm::ensure_writable_path(

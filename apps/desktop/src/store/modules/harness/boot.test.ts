@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import i18next from 'i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { toast } from '@/utils/toast'
+import { recovery } from '../recovery'
 import { PLUGIN_INACTIVITY_TIMEOUT } from './constants'
 import { harness } from './store'
 
@@ -15,6 +16,29 @@ vi.mock('../plugins', () => import('../plugins/utils'))
 vi.mock('../preinstall', () => ({ preinstall: {} }))
 vi.mock('../recovery', () => ({ recovery: { clear: vi.fn(), reset: vi.fn(), reviewStartupRecovery: vi.fn() } }))
 vi.mock('../setting', () => ({ setting: { $state: { installed: true }, refresh: vi.fn() } }))
+
+it.each([3221225477, -1073741819, 1])('handles runtime exit %s without blaming stale plugin failures for native crashes', async (exitCode) => {
+  Object.assign(harness, { serviceHealthy: true, serviceRunning: true, busyAction: null })
+  const log = 'Error: failed to load plugin dsh-tauri'
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === 'proxy_health_check')
+      throw new Error('HARNESS_NOT_OWNED')
+    if (command === 'read_service_logs')
+      return log
+    throw new Error(`Unexpected command: ${command}`)
+  })
+  await harness.handleProcessExit({ pid: 44856, exitCode })
+  expect(harness.status).toBe('error')
+  expect(harness.serviceHealthy).toBe(false)
+  if (exitCode === 1) {
+    expect(recovery.reviewStartupRecovery).toHaveBeenCalledWith([log], expect.any(Function))
+  }
+  else {
+    expect(recovery.clear).toHaveBeenCalled()
+    expect(recovery.reviewStartupRecovery).not.toHaveBeenCalled()
+    expect(harness.errorMsg).toContain('errors.process_exited_native_crash')
+  }
+})
 
 let ensure: () => Promise<void>
 let cancel: () => Promise<void>
