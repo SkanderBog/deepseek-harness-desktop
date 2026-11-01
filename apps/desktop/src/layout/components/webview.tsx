@@ -185,7 +185,10 @@ export function Webview() {
     if (windowLabel === currentLabel)
       return true
     try {
-      const labels = (await getAllWindows()).map(window => window.label).filter(label => (label === 'main' || label.startsWith('window-') || label.startsWith('remote-')) && window.localStorage.getItem(`dsh-notification-source:${label}`) === sourceOrigin).sort()
+      const liveLabels = (await getAllWindows()).map(window => window.label)
+      if (windowLabel && liveLabels.includes(windowLabel) && !window.localStorage.getItem(`dsh-notification-source:${windowLabel}`))
+        return false
+      const labels = liveLabels.filter(label => (label === 'main' || label.startsWith('window-') || label.startsWith('remote-')) && window.localStorage.getItem(`dsh-notification-source:${label}`) === sourceOrigin).sort()
       return (labels.includes(windowLabel ?? '') ? windowLabel : labels[0]) === currentLabel
     }
     catch (error) {

@@ -37,7 +37,7 @@ vi.mock('@tauri-apps/api/event', () => ({
     return () => mocks.listeners.delete(event)
   },
   emitTo: (target: unknown, event: string, payload?: unknown) => {
-    expect(target).toEqual({ kind: 'Window', label: 'window-2' })
+    expect(target).toEqual({ kind: 'Window', label: mocks.window.label })
     return mocks.emit(event, payload)
   },
 }))
@@ -117,6 +117,7 @@ function navbar() {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  mocks.window.label = 'window-2'
   window.location.hash = ''
   window.localStorage.clear()
   window.localStorage.setItem('dsh-notification-source:window-3', 'http://127.0.0.1:3081')
@@ -243,6 +244,47 @@ it.each(['window-closed', undefined])('elects one live shell for notification ow
   })
   expect(mocks.window.show).not.toHaveBeenCalled()
   expect(mocks.emit).not.toHaveBeenCalled()
+})
+
+it.each(['click', 'action'])('waits for a live notification owner with unknown source before handling its cold %s once', async (kind) => {
+  window.localStorage.setItem('dsh-notification-source:window-3', '')
+  const metadata = { tag: 'owner-tag', sessionId: 'owner-session', windowLabel: 'window-3', sourceOrigin: 'http://127.0.0.1:3081' }
+  const otherShell = render(<Webview />)
+  await act(async () => {
+    if (kind === 'click')
+      await mocks.clicked!({ data: metadata })
+    else
+      await mocks.action!({ actionId: 'approve', extra: metadata })
+    await vi.advanceTimersByTimeAsync(250)
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: metadata.sourceOrigin } })
+  })
+  expect(mocks.window.show).not.toHaveBeenCalled()
+  expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
+  otherShell.unmount()
+  mocks.window.label = 'window-3'
+  mocks.harness.webviewSrc = ''
+  const ownerShell = render(<Webview />)
+  await act(async () => {
+    if (kind === 'click')
+      await mocks.clicked!({ data: metadata })
+    else
+      await mocks.action!({ actionId: 'approve', extra: metadata })
+  })
+  expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
+  await act(async () => {
+    mocks.harness.webviewSrc = metadata.sourceOrigin
+    ownerShell.rerender(<Webview />)
+  })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(250)
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: metadata.sourceOrigin } })
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: metadata.sourceOrigin } })
+  })
+  const payload = kind === 'click'
+    ? { tag: 'owner-tag', sessionId: 'owner-session', sourceOrigin: metadata.sourceOrigin }
+    : { tag: 'owner-tag', action: 'approve', inputValue: undefined, sourceOrigin: metadata.sourceOrigin }
+  expect(mocks.emit.mock.calls.filter(([event]) => event === 'dsh://notification-clicked')).toEqual([['dsh://notification-clicked', payload]])
+  expect(mocks.window.show).toHaveBeenCalledTimes(kind === 'click' ? 1 : 0)
 })
 
 it.each(['http://127.0.0.1:4000', undefined])('rejects a notification from incompatible or unknown source %s even for its owner', async (sourceOrigin) => {
