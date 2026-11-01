@@ -111,6 +111,7 @@ pub(crate) fn ensure_app_core_supported(
     baseline: Option<&str>,
 ) -> Result<(), String> {
     let version = config::dsh_version_at(&core_dir.join(config::DSH_MANIFEST_RELATIVE))
+        .filter(|version| semver::Version::parse(version).is_ok())
         .or_else(|| tag.and_then(parse_version_from_tag));
     if !core_supports_bundled_plugins(version.as_deref().unwrap_or_default(), baseline) {
         return Err(format!(
@@ -258,6 +259,13 @@ mod tests {
                 "name": "@deepseek-ai/dsh", "version": version,
             }).to_string()).unwrap();
             assert!(ensure_app_core_supported(root.path(), None, baseline).is_ok());
+        }
+        for version in [">=0.2.1-rc.1 <0.2.1", "unknown", ""] {
+            std::fs::write(&manifest, serde_json::json!({
+                "dependencies": {"@deepseek-ai/dsh": version},
+            }).to_string()).unwrap();
+            assert!(ensure_app_core_supported(root.path(), Some("dsh-0.2.0-123"), baseline).is_err());
+            assert!(ensure_app_core_supported(root.path(), Some("dsh-0.2.1-rc.5-123"), baseline).is_ok());
         }
         let installed = root.path().join("node_modules/@deepseek-ai/dsh/package.json");
         std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
