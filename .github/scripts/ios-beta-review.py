@@ -207,6 +207,13 @@ def submit(client, group_id, marketing, number, source_sha, check=False):
             'reviewSubmitted': submitted,
             'groupLinked': any(item['id'] == build_id for item in group_builds),
             'autoNotifyEnabled': detail['attributes'].get('autoNotifyEnabled'),
+            'otherBuildsInReview': [item['attributes']['version'] for item in client.collection(query('builds', **{
+                'filter[app]': app_id,
+                'filter[preReleaseVersion.version]': marketing,
+                'filter[preReleaseVersion.platform]': 'IOS',
+                'filter[betaAppReviewSubmission.betaReviewState]': 'WAITING_FOR_REVIEW,IN_REVIEW',
+                'limit': 200,
+            })) if item['id'] != build_id],
             'localizations': [{
                 'locale': item['attributes'].get('locale'),
                 'descriptionPresent': isinstance(item['attributes'].get('description'), str) and bool(item['attributes']['description'].strip()),

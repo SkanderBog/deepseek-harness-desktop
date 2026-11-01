@@ -38,6 +38,7 @@ class FakeApple:
         self.conflict = False
         self.raced_submission = False
         self.builds_override = None
+        self.review_builds = []
         self.beta_processing = []
 
     def pause(self, seconds):
@@ -90,6 +91,9 @@ class FakeApple:
         if route == '/v1/betaAppLocalizations':
             return {'data': [{'id': 'app-locale1', 'attributes': self.app_locale}]}
         if route == '/v1/builds':
+            if 'filter[betaAppReviewSubmission.betaReviewState]' in query:
+                assert query == {'filter[app]': ['app1'], 'filter[preReleaseVersion.version]': ['0.24.0'], 'filter[preReleaseVersion.platform]': ['IOS'], 'filter[betaAppReviewSubmission.betaReviewState]': ['WAITING_FOR_REVIEW,IN_REVIEW'], 'limit': ['200']}
+                return {'data': copy.deepcopy(self.review_builds)}
             assert query['filter[app]'] == ['app1']
             assert query['filter[version]'] == ['2140.81.36']
             assert query['filter[preReleaseVersion.version]'] == ['0.24.0']
@@ -251,6 +255,7 @@ class SubmitTests(unittest.TestCase):
         self.assertFalse(self.api.writes)
 
     def test_read_only_check_never_changes_apple_state(self):
+        self.api.review_builds = [{'id': 'older-build', 'attributes': {'version': '2140.81.35'}}]
         result = self.submit(check=True)
         self.assertIn('no Apple resources changed', result)
         status = json.loads(result.split('\n', 1)[1])
@@ -259,6 +264,7 @@ class SubmitTests(unittest.TestCase):
             'reviewSubmitted': False,
             'groupLinked': False,
             'autoNotifyEnabled': False,
+            'otherBuildsInReview': ['2140.81.35'],
             'localizations': [{'locale': 'zh-Hans', 'descriptionPresent': True, 'feedbackEmailPresent': True}],
         })
         self.assertNotIn('fixture@example.invalid', result)
