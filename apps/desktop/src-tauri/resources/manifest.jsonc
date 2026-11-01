@@ -167,7 +167,12 @@
         "repo": "https://github.com/HuanLinOTO/dsh-neartoken",
         "recommended": true,
         "checked": false,
-        "version": "latest"
+        "version": [
+          {
+            "version": "latest",
+            "dsh": "^0.2.1-alpha.5"
+          }
+        ]
       },
       {
         "id": "dsh-better-sidebar",

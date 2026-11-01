@@ -604,6 +604,8 @@ mod tests {
             first.repo_url,
             "https://github.com/HuanLinOTO/dsh-neartoken"
         );
+        assert!(!first.unsupported_on(Some("0.2.1-rc.4")));
+        assert!(first.unsupported_on(Some("0.1.7-rc.1")));
     }
 
     #[test]
