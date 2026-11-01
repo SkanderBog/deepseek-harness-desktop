@@ -523,6 +523,17 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
         log::error!("Harness not installed");
         return Err("HARNESS_NOT_FOUND: Harness not installed".to_string());
     }
+    if dsh_binary_path == config::get_dsh_binary_path(&app_handle) {
+        let core_dir = config::get_dsh_install_path(&app_handle);
+        let tag = (config::dependencies::bundled_core_dir(&app_handle).as_ref() != Some(&core_dir))
+            .then(|| config::get_dsh_pkg_tag(&app_handle))
+            .flatten();
+        crate::service::core::ensure_app_core_supported(
+            &core_dir,
+            tag.as_deref(),
+            config::manifest::minimum_dsh_version(&app_handle).as_deref(),
+        )?;
+    }
     mark_phase("resolve", &mut phase_started);
 
     // 从这里开始持有与核心切换共用的互斥锁：最终状态检查、启动守卫、残留清扫
@@ -708,9 +719,6 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
     // 退级策略禁用「未分组」入口并告警。最佳努力且幂等：锚点缺失安全跳过。
     if let Err(e) = crate::service::patch::composer::apply(&app_handle) {
         log::warn!("composer workspace-less patch failed: {e}");
-    }
-    if let Err(e) = crate::service::patch::conversation_draft::apply(&app_handle) {
-        log::warn!("conversation draft compatibility patch failed: {e}");
     }
     if let Err(e) = crate::service::patch::permission_settings::apply(&app_handle) {
         log::warn!("permission settings error patch failed: {e}");

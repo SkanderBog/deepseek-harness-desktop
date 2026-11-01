@@ -33,13 +33,13 @@ const localFixture: HarnessCore = {
   aboveRecommended: false,
   orphaned: false,
   bundled: false,
-  recommendedVersion: '0.2.1-rc.4',
+  recommendedVersion: '0.2.1-rc.5',
 }
 const managedFixture: HarnessCore = {
-  id: 'app-dsh-0.2.1-rc.5-40372188763',
+  id: 'app-dsh-0.2.1-rc.5-41234040595',
   source: 'app',
   version: '0.2.1-rc.5',
-  tag: 'dsh-0.2.1-rc.5-40372188763',
+  tag: 'dsh-0.2.1-rc.5-41234040595',
   path: '/fixture/managed',
   dir: '/fixture/managed',
   present: true,
@@ -49,7 +49,7 @@ const managedFixture: HarnessCore = {
   aboveRecommended: false,
   orphaned: false,
   bundled: false,
-  recommendedVersion: '0.2.1-rc.4',
+  recommendedVersion: '0.2.1-rc.5',
 }
 const clients = new Set<QueryClient>()
 let cores: HarnessCore[]

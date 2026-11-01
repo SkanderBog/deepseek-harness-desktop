@@ -105,6 +105,24 @@ pub(super) fn core_supports_bundled_plugins(version: &str, baseline: Option<&str
     }
 }
 
+pub(crate) fn ensure_app_core_supported(
+    core_dir: &std::path::Path,
+    tag: Option<&str>,
+    baseline: Option<&str>,
+) -> Result<(), String> {
+    let version = config::dsh_version_at(&core_dir.join(config::DSH_MANIFEST_RELATIVE))
+        .filter(|version| semver::Version::parse(version).is_ok())
+        .or_else(|| tag.and_then(parse_version_from_tag));
+    if !core_supports_bundled_plugins(version.as_deref().unwrap_or_default(), baseline) {
+        return Err(format!(
+            "CORE_APP_UNSUPPORTED: app dsh {} is below the minimum supported core {}; download and select a newer core in Settings > Core, or update the desktop app for a newer bundled core",
+            version.as_deref().unwrap_or_default(),
+            baseline.unwrap_or_default(),
+        ));
+    }
+    Ok(())
+}
+
 fn warn_unsupported_local_core(version: &str, baseline: Option<&str>) {
     if UNSUPPORTED_LOCAL_WARNED.set(()).is_err() {
         return;
@@ -215,6 +233,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn app_core_baseline_checks_disk_and_tag_without_blocking_unknown_versions() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = root.path().join(config::DSH_MANIFEST_RELATIVE);
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        let baseline = Some("0.2.1-rc.1");
+        assert!(ensure_app_core_supported(root.path(), None, baseline).is_ok());
+        assert!(ensure_app_core_supported(root.path(), Some("dsh-0.2.0-123"), baseline).is_err());
+        for package in [
+            serde_json::json!({"dependencies": {"@deepseek-ai/dsh": "^0.2.0"}}),
+            serde_json::json!({"name": "@deepseek-ai/dsh", "version": "0.2.0"}),
+        ] {
+            std::fs::write(&manifest, package.to_string()).unwrap();
+            let error = ensure_app_core_supported(
+                root.path(), Some("dsh-0.2.1-rc.1-123"), baseline,
+            ).unwrap_err();
+            assert!(error.starts_with("CORE_APP_UNSUPPORTED:"));
+            assert!(error.contains("0.2.0"));
+            assert!(error.contains("0.2.1-rc.1"));
+            assert!(error.contains("download and select a newer core"));
+            assert!(ensure_app_core_supported(root.path(), None, None).is_ok());
+        }
+        for version in ["0.2.1-rc.1", "0.2.1", "unknown", ""] {
+            std::fs::write(&manifest, serde_json::json!({
+                "name": "@deepseek-ai/dsh", "version": version,
+            }).to_string()).unwrap();
+            assert!(ensure_app_core_supported(root.path(), None, baseline).is_ok());
+        }
+        for version in [">=0.2.1-rc.1 <0.2.1", "unknown", ""] {
+            std::fs::write(&manifest, serde_json::json!({
+                "dependencies": {"@deepseek-ai/dsh": version},
+            }).to_string()).unwrap();
+            assert!(ensure_app_core_supported(root.path(), Some("dsh-0.2.0-123"), baseline).is_err());
+            assert!(ensure_app_core_supported(root.path(), Some("dsh-0.2.1-rc.5-123"), baseline).is_ok());
+        }
+        let installed = root.path().join("node_modules/@deepseek-ai/dsh/package.json");
+        std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        for (declared, actual, supported) in [
+            ("0.2.1-rc.5", "0.2.0", false),
+            ("0.2.0", "0.2.1-rc.5", true),
+            ("0.2.1-rc.5", "0.2.1-rc.1", true),
+            ("0.2.1-rc.5", "unknown", true),
+        ] {
+            std::fs::write(&manifest, serde_json::json!({
+                "dependencies": {"@deepseek-ai/dsh": declared},
+            }).to_string()).unwrap();
+            std::fs::write(&installed, serde_json::json!({
+                "name": "@deepseek-ai/dsh", "version": actual,
+            }).to_string()).unwrap();
+            assert_eq!(ensure_app_core_supported(root.path(), None, baseline).is_ok(), supported,
+                "declared={declared}, actual={actual}");
+        }
+        std::fs::remove_file(&manifest).unwrap();
+        std::fs::write(&installed, r#"{"name":"@deepseek-ai/dsh","version":"0.2.0"}"#).unwrap();
+        assert!(ensure_app_core_supported(root.path(), None, baseline).is_err());
+        std::fs::write(&manifest, r#"{"name":"@deepseek-ai/dsh","version":"0.2.1-rc.5"}"#).unwrap();
+        assert!(ensure_app_core_supported(root.path(), None, baseline).is_ok());
+    }
+
+    #[test]
     fn core_source_round_trips() {
         assert_eq!(CoreSource::parse("local"), Some(CoreSource::Local));
         assert_eq!(CoreSource::parse("app"), Some(CoreSource::App));
@@ -225,23 +302,23 @@ mod tests {
 
     #[test]
     fn baseline_gate_accepts_equal_or_newer_versions() {
-        let baseline = "0.1.7-rc.1";
-        for version in ["0.1.7-rc.1", "0.1.7-rc.2", "0.1.7", "0.2.1-rc.1"] {
+        let baseline = "0.2.1-rc.1";
+        for version in ["0.2.1-rc.1", "0.2.1-rc.2", "0.2.1", "0.3.0"] {
             assert!(meets_baseline(version, baseline), "version={version}");
         }
     }
 
     #[test]
     fn baseline_gate_rejects_older_versions() {
-        let baseline = "0.1.7-rc.1";
+        let baseline = "0.2.1-rc.1";
         for version in [
             "0.1.0-rc.7",
-            "0.1.5-rc.1",
-            "0.1.6-alpha.2",
-            "0.1.6",
-            "0.1.7-alpha.1",
-            "0.1.7-beta.1",
-            "0.1.7-rc.0",
+            "0.1.7-rc.1",
+            "0.2.0-alpha.2",
+            "0.2.0",
+            "0.2.1-alpha.1",
+            "0.2.1-beta.1",
+            "0.2.1-rc.0",
         ] {
             assert!(!meets_baseline(version, baseline), "version={version}");
         }
@@ -249,14 +326,14 @@ mod tests {
 
     #[test]
     fn baseline_gate_passes_unparsable_versions() {
-        assert!(meets_baseline("", "0.1.7-rc.1"));
-        assert!(meets_baseline("not-a-version", "0.1.7-rc.1"));
-        assert!(meets_baseline("0.1.7-rc.1", ""));
+        assert!(meets_baseline("", "0.2.1-rc.1"));
+        assert!(meets_baseline("not-a-version", "0.2.1-rc.1"));
+        assert!(meets_baseline("0.2.1-rc.1", ""));
     }
 
     #[test]
     fn missing_baseline_keeps_local_core_usable() {
         assert!(core_supports_bundled_plugins("0.1.6", None));
-        assert!(!core_supports_bundled_plugins("0.1.6", Some("0.1.7-rc.1")));
+        assert!(!core_supports_bundled_plugins("0.2.0", Some("0.2.1-rc.1")));
     }
 }

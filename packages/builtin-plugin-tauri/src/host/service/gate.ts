@@ -28,19 +28,12 @@ export const gate = defineService({
           : admission
       })
     }
-    else if (typeof connection.requestRejection === 'function') {
-      const rejection = connection.requestRejection
-      replace('requestRejection', function (this: ConnectionHost['connection'], request: IncomingMessage) {
-        const rejected = rejection.call(this, request)
-        return rejected === 401 ? undefined : rejected
-      })
-    }
 
     if (typeof connection.authorizeIndex === 'function')
       replace('authorizeIndex', () => true)
 
     if (restores.length === 0)
-      warn(ctx, 'connection 服务缺少 admit/requestRejection/authorizeIndex，桌面载体鉴权适配未生效')
+      warn(ctx, 'connection 服务缺少 admit/authorizeIndex，桌面载体鉴权适配未生效')
 
     return () => {
       for (const restore of restores.splice(0).reverse())

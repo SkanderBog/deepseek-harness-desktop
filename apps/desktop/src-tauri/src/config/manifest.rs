@@ -638,22 +638,22 @@ mod tests {
     #[test]
     fn shipped_manifest_keeps_recommendation_and_minimum_in_sync() {
         let manifest = shipped_manifest();
-        assert_eq!(manifest.engines.dsh.recommend, "0.2.1-rc.4");
-        assert_eq!(manifest.engines.dsh.minimum, "0.1.7-rc.1");
+        assert_eq!(manifest.engines.dsh.recommend, "0.2.1-rc.5");
+        assert_eq!(manifest.engines.dsh.minimum, "0.2.1-rc.1");
         let raw = std::fs::read_to_string(source_manifest_path()).unwrap();
         let value: serde_json::Value = serde_json::from_str(&strip_jsonc(&raw)).unwrap();
         assert_eq!(
             value["dependencies"]["dsh"]["engine"]["recommend"],
-            "0.2.1-rc.4"
+            "0.2.1-rc.5"
         );
         assert_eq!(
             value["dependencies"]["dsh"]["engine"]["minimum"],
-            "0.1.7-rc.1"
+            "0.2.1-rc.1"
         );
-        for (id, floor_req) in [
-            ("dsh-better-sidebar", "^0.21.1"),
-            ("dsh-rewind-plugin", "^0.14.0"),
-            ("@xmanrui/dsh-im", "^4.29.0"),
+        for id in [
+            "dsh-better-sidebar",
+            "dsh-rewind-plugin",
+            "@xmanrui/dsh-im",
         ] {
             let entry = manifest
                 .plugins
@@ -663,16 +663,11 @@ mod tests {
                 .unwrap();
             let matrix = entry.version.as_ref().unwrap();
             assert_eq!(
-                matrix.plugin_req_for_core(Some("0.1.7-rc.1")),
-                Some(floor_req),
-                "{id}"
-            );
-            assert_eq!(
                 matrix.plugin_req_for_core(Some("0.2.1-rc.1")),
                 Some("latest"),
                 "{id}"
             );
-            for core in ["0.1.5-rc.1", "0.1.6", "0.1.7-alpha.1", "0.1.7-rc.0"] {
+            for core in ["0.1.5-rc.1", "0.1.6", "0.1.7-alpha.1", "0.1.7-rc.0", "0.1.7-rc.1"] {
                 assert_eq!(matrix.plugin_req_for_core(Some(core)), None, "{id} {core}");
                 assert!(matrix.unsupported_on(Some(core)), "{id} {core}");
             }
