@@ -33,6 +33,7 @@ const REMOTE_TAB_SYNC = 'sync'
 
 const FULL_SIDEBAR_REVEAL_MS = 15_000
 interface NotificationResult {
+  deliveryKey?: string
   tag?: string
   sessionId?: string
   sourceOrigin?: string
@@ -47,7 +48,7 @@ export function Webview() {
   const pendingNativeNotificationsRef = useRef<({ click: NotificationClickEvent } | { action: NotificationActionEvent })[]>([])
   const notificationSourceRef = useRef('')
   const notificationQueueRef = useRef<NotificationResult[]>([])
-  const pendingActionsRef = useRef(new Map<string, { payload: { tag?: string, action?: string, inputValue?: string }, timer: ReturnType<typeof setTimeout> }>())
+  const pendingActionsRef = useRef(new Map<string, { payload: NotificationResult, timer: ReturnType<typeof setTimeout> }>())
 
   const [dshStyle, setDshStyle] = useDshStyle()
   const openConfigDialog = useOverlay(ConfigDialog)
@@ -208,8 +209,8 @@ export function Webview() {
     const metadata = extra ?? notification?.extra
     if (!await ownsNotification(metadata))
       return
-    const payload = { tag: metadata?.tag, sourceOrigin: metadata?.sourceOrigin, action: actionId, inputValue: typeof inputValue === 'string' ? inputValue : undefined }
-    const key = `${payload.tag ?? ''}|${actionId}`
+    const payload = { tag: metadata?.tag, sessionId: metadata?.sessionId, deliveryKey: metadata?.deliveryKey, sourceOrigin: metadata?.sourceOrigin, action: actionId, inputValue: typeof inputValue === 'string' ? inputValue : undefined }
+    const key = JSON.stringify([payload.tag, payload.deliveryKey, actionId])
     const queued = pendingActionsRef.current.get(key)
     if (queued) {
       clearTimeout(queued.timer)

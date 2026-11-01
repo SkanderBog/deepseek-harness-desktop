@@ -3,6 +3,8 @@ import { getCurrentWindow, invoke, listen } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../../shared/constants'
 
 interface ClickedPayload {
+  sessionId?: string
+  deliveryKey?: string
   sourceOrigin?: string
   tag?: string
   action?: string
@@ -10,6 +12,8 @@ interface ClickedPayload {
 }
 
 interface Handlers {
+  sessionId: string
+  deliveryKey?: string
   onClick?: () => void
   onAction?: (action: string, inputValue: string | null) => void
 }
@@ -29,6 +33,8 @@ function dispatch(payload: ClickedPayload): void {
   if (!entry)
     return
   if (payload.action) {
+    if (!payload.deliveryKey || payload.deliveryKey !== entry.deliveryKey || payload.sessionId !== entry.sessionId)
+      return
     const value = payload.inputValue
     entry.onAction?.(payload.action, typeof value === 'string' && value.length > 0 ? value : null)
     return
@@ -101,7 +107,8 @@ async function registerActions(input: NativeNotificationInput): Promise<string |
 }
 
 export async function showNativeNotification(input: NativeNotificationInput): Promise<boolean> {
-  remember(input.tag, { onClick: input.onClick, onAction: input.onAction })
+  const deliveryKey = input.deliveryKey === undefined ? undefined : JSON.stringify([location.origin, input.deliveryKey])
+  remember(input.tag, { sessionId: input.sessionId, deliveryKey, onClick: input.onClick, onAction: input.onAction })
   ensureSubscription()
   try {
     if (!await ensurePermission())
@@ -114,7 +121,7 @@ export async function showNativeNotification(input: NativeNotificationInput): Pr
         body: input.body,
         silent: input.silent === true ? true : undefined,
         actionTypeId,
-        extra: { sessionId: input.sessionId, title: input.title, tag: input.tag, windowLabel: getCurrentWindow().label, sourceOrigin: location.origin, deliveryKey: input.deliveryKey === undefined ? undefined : JSON.stringify([location.origin, input.deliveryKey]) },
+        extra: { sessionId: input.sessionId, title: input.title, tag: input.tag, windowLabel: getCurrentWindow().label, sourceOrigin: location.origin, deliveryKey },
       },
     })
   }

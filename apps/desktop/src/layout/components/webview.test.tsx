@@ -15,8 +15,8 @@ const mocks = vi.hoisted(() => ({
   emit: vi.fn().mockResolvedValue(undefined),
   getAllWindows: vi.fn(),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
-  action: null as null | ((event: { actionId?: string, inputValue?: string, extra?: { tag?: string, windowLabel?: string, sourceOrigin?: string } }) => Promise<void>),
-  clicked: null as null | ((event: { data?: { tag?: string, sessionId?: string, windowLabel?: string, sourceOrigin?: string } }) => Promise<void>),
+  action: null as null | ((event: { actionId?: string, inputValue?: string, extra?: { tag?: string, sessionId?: string, windowLabel?: string, sourceOrigin?: string, deliveryKey?: string } }) => Promise<void>),
+  clicked: null as null | ((event: { data?: { tag?: string, sessionId?: string, windowLabel?: string, sourceOrigin?: string, deliveryKey?: string } }) => Promise<void>),
   window: {
     label: 'window-2',
     isMinimized: vi.fn().mockResolvedValue(false),
@@ -198,6 +198,21 @@ it('coalesces duplicate notification actions without losing the response text', 
   expect(mocks.window.show).not.toHaveBeenCalled()
 })
 
+it('keeps actions with a reused tag and different interaction identities separate', async () => {
+  render(<Webview />)
+  const extra = { tag: 'reused-tag', sessionId: 'session-1', sourceOrigin: 'http://127.0.0.1:3081', windowLabel: 'window-2' }
+  await act(async () => {
+    await mocks.action!({ actionId: 'reply', inputValue: 'old reply', extra: { ...extra, deliveryKey: 'interaction-old' } })
+    await mocks.action!({ actionId: 'reply', extra: { ...extra, deliveryKey: 'interaction-current' } })
+    await vi.advanceTimersByTimeAsync(250)
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: extra.sourceOrigin } })
+  })
+  expect(mocks.emit.mock.calls.filter(([event]) => event === 'dsh://notification-clicked')).toEqual([
+    ['dsh://notification-clicked', { tag: 'reused-tag', sessionId: 'session-1', sourceOrigin: extra.sourceOrigin, deliveryKey: 'interaction-old', action: 'reply', inputValue: 'old reply' }],
+    ['dsh://notification-clicked', { tag: 'reused-tag', sessionId: 'session-1', sourceOrigin: extra.sourceOrigin, deliveryKey: 'interaction-current', action: 'reply', inputValue: undefined }],
+  ])
+})
+
 it('activates a minimized window before delivering a native notification click', async () => {
   mocks.window.isMinimized.mockResolvedValue(true)
   render(<Webview />)
@@ -248,7 +263,7 @@ it.each(['window-closed', undefined])('elects one live shell for notification ow
 
 it.each(['click', 'action'])('waits for a live notification owner with unknown source before handling its cold %s once', async (kind) => {
   window.localStorage.setItem('dsh-notification-source:window-3', '')
-  const metadata = { tag: 'owner-tag', sessionId: 'owner-session', windowLabel: 'window-3', sourceOrigin: 'http://127.0.0.1:3081' }
+  const metadata = { tag: 'owner-tag', deliveryKey: 'owner-interaction', sessionId: 'owner-session', windowLabel: 'window-3', sourceOrigin: 'http://127.0.0.1:3081' }
   const otherShell = render(<Webview />)
   await act(async () => {
     if (kind === 'click')
@@ -282,7 +297,7 @@ it.each(['click', 'action'])('waits for a live notification owner with unknown s
   })
   const payload = kind === 'click'
     ? { tag: 'owner-tag', sessionId: 'owner-session', sourceOrigin: metadata.sourceOrigin }
-    : { tag: 'owner-tag', action: 'approve', inputValue: undefined, sourceOrigin: metadata.sourceOrigin }
+    : { tag: 'owner-tag', sessionId: 'owner-session', deliveryKey: 'owner-interaction', action: 'approve', inputValue: undefined, sourceOrigin: metadata.sourceOrigin }
   expect(mocks.emit.mock.calls.filter(([event]) => event === 'dsh://notification-clicked')).toEqual([['dsh://notification-clicked', payload]])
   expect(mocks.window.show).toHaveBeenCalledTimes(kind === 'click' ? 1 : 0)
 })
@@ -340,7 +355,7 @@ it.each([
 ])('buffers cold %s until the source becomes %s', async (kind, sourceOrigin) => {
   mocks.harness.webviewSrc = ''
   const view = render(<Webview />)
-  const metadata = { tag: 'cold-tag', sessionId: 'cold-session', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' }
+  const metadata = { tag: 'cold-tag', deliveryKey: 'cold-interaction', sessionId: 'cold-session', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' }
   await act(async () => {
     if (kind === 'click')
       await mocks.clicked!({ data: metadata })
@@ -363,7 +378,7 @@ it.each([
   if (sourceOrigin === 'http://127.0.0.1:3081') {
     expect(deliveries).toEqual([['dsh://notification-clicked', kind === 'click'
       ? { tag: 'cold-tag', sessionId: 'cold-session', sourceOrigin }
-      : { tag: 'cold-tag', action: 'approve', inputValue: undefined, sourceOrigin }]])
+      : { tag: 'cold-tag', sessionId: 'cold-session', deliveryKey: 'cold-interaction', action: 'approve', inputValue: undefined, sourceOrigin }]])
     expect(mocks.window.show).toHaveBeenCalledTimes(kind === 'click' ? 1 : 0)
   }
   else {

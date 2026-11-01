@@ -245,7 +245,8 @@ export function presentFullSidebar(controller: RegisterController): void {
   const cancel = controller.interval(() => {
     ticks += 1
     if (ticks > PRESENT_MAX_TICKS) {
-      settle()
+      cancel()
+      document.body?.style.removeProperty('visibility')
       return
     }
     const expand = document.querySelector<HTMLElement>(EXPAND_SELECTOR)
@@ -263,7 +264,7 @@ export function presentFullSidebar(controller: RegisterController): void {
     }
     settle()
   }, PRESENT_POLL_MS)
-  const unhook = controller.add(settle)
+  const unhook = controller.add(() => document.body?.style.removeProperty('visibility'))
 
   function settle(): void {
     cancel()

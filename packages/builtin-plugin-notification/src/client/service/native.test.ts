@@ -3,7 +3,11 @@ import { showNativeNotification } from './native'
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(async () => true),
-  listen: vi.fn(async () => () => {}),
+  clicked: null as null | ((event: { payload: Record<string, string | undefined> }) => void),
+  listen: vi.fn(async (_event: string, handler: (event: { payload: Record<string, string | undefined> }) => void) => {
+    mocks.clicked = handler
+    return () => {}
+  }),
 }))
 
 vi.mock('dsh-tauri/client', () => ({
@@ -16,6 +20,22 @@ beforeEach(() => vi.stubGlobal('location', { origin: 'http://127.0.0.1:3081' }))
 afterEach(() => {
   vi.clearAllMocks()
   vi.unstubAllGlobals()
+})
+
+it('rejects an old action when the same tag now refers to a different interaction', async () => {
+  const oldAction = vi.fn()
+  const currentAction = vi.fn()
+  const input = { title: 'Approval', body: 'Approve?', tag: 'reused-tag', sessionId: 'session-1' }
+  await showNativeNotification({ ...input, deliveryKey: 'interaction-old', onAction: oldAction })
+  await showNativeNotification({ ...input, deliveryKey: 'interaction-current', onAction: currentAction })
+  const payload = { sessionId: 'session-1', sourceOrigin: 'http://127.0.0.1:3081', tag: 'reused-tag', action: 'approve' }
+  mocks.clicked!({ payload: { ...payload, deliveryKey: JSON.stringify([payload.sourceOrigin, 'interaction-old']) } })
+  mocks.clicked!({ payload })
+  expect(oldAction).not.toHaveBeenCalled()
+  mocks.clicked!({ payload: { ...payload, sessionId: 'other-session', deliveryKey: JSON.stringify([payload.sourceOrigin, 'interaction-current']) } })
+  expect(currentAction).not.toHaveBeenCalled()
+  mocks.clicked!({ payload: { ...payload, deliveryKey: JSON.stringify([payload.sourceOrigin, 'interaction-current']), inputValue: 'current reply' } })
+  expect(currentAction).toHaveBeenCalledExactlyOnceWith('approve', 'current reply')
 })
 
 it('stores the producing window and session in the native activation payload', async () => {
