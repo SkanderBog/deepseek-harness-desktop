@@ -86,7 +86,7 @@ function readCargoPackageVersion(content) {
 
 function readReleaseIdentity(repo = process.cwd()) {
   const packageVersion = readJsonVersion(path.join(repo, 'package.json'), 'package.json')
-  const cargoPath = path.join(repo, 'src-tauri', 'Cargo.toml')
+  const cargoPath = path.join(repo, 'apps/desktop/src-tauri', 'Cargo.toml')
   let cargoVersion
   try {
     cargoVersion = readCargoPackageVersion(readFileSync(cargoPath, 'utf8'))
@@ -97,14 +97,14 @@ function readReleaseIdentity(repo = process.cwd()) {
     throw releaseIdentityError(`cannot read Cargo.toml at ${cargoPath}`, error)
   }
   const tauriVersion = readJsonVersion(
-    path.join(repo, 'src-tauri', 'tauri.conf.json'),
-    'src-tauri/tauri.conf.json',
+    path.join(repo, 'apps/desktop/src-tauri', 'tauri.conf.json'),
+    'apps/desktop/src-tauri/tauri.conf.json',
   )
 
   const versions = {
     'package.json': packageVersion,
-    'src-tauri/Cargo.toml': cargoVersion,
-    'src-tauri/tauri.conf.json': tauriVersion,
+    'apps/desktop/src-tauri/Cargo.toml': cargoVersion,
+    'apps/desktop/src-tauri/tauri.conf.json': tauriVersion,
   }
   if (new Set(Object.values(versions)).size !== 1) {
     const details = Object.entries(versions)

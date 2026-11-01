@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "window-close",
+  "description": "Allows local auxiliary shell windows to close themselves.",
+  "local": true,
+  "windows": [
+    "window-*",
+    "remote-*"
+  ],
+  "permissions": [
+    "core:window:allow-close"
+  ]
+}

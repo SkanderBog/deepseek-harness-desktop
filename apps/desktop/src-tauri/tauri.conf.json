@@ -1,0 +1,73 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DeepSeek Harness",
+  "version": "0.3.0-pre.alpha.2",
+  "identifier": "dsh-tauri",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm -w build:plugins && pnpm build",
+    "beforeBundleCommand": "node ../../crates/tauri-runtime-electron/tools/macos-sign/sign.mjs",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "security": {
+      "assetProtocol": { "enable": true, "scope": [] }
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "dsh"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "resources": {
+      "target/electron": "runtime",
+      "resources": "resources"
+    },
+    "licenseFile": "licenses/INSTALLER-LICENSE.txt",
+    "category": "DeveloperTool",
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "hardenedRuntime": true,
+      "infoPlist": "Info.plist",
+      "entitlements": "Entitlements.plist"
+    },
+    "windows": {
+      "nsis": {
+        "template": "templates/installer.nsi",
+        "languages": [
+          "English",
+          "SimpChinese"
+        ],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      }
+    },
+    "linux": {
+      "deb": {
+        "conflicts": [
+          "deepseek-harness-desktop"
+        ],
+        "replaces": [
+          "deepseek-harness-desktop"
+        ]
+      }
+    }
+  }
+}

@@ -1,7 +1,0 @@
-- id: schedule
-  disabled: true
-- id: ui-schedule
-  disabled: true
-- insert:
-    - id: dsh-tauri-scheduler
-      name: dsh-tauri-scheduler

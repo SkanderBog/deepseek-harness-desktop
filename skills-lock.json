@@ -5,6 +5,30 @@
       "source": "./skills",
       "sourceType": "local",
       "computedHash": "1aed1e212d70ccf22c5cab881cef7cf0ad926dcf50bf82b4aa28173bdc1401fb"
+    },
+    "heroui-native": {
+      "source": "heroui-inc/heroui",
+      "sourceType": "github",
+      "skillPath": "skills/heroui-native/SKILL.md",
+      "computedHash": "0c69432d03bb4ab6ce85158631c3d2b05f2efd5c2ddefecca161d7e697054704"
+    },
+    "heroui-react": {
+      "source": "heroui-inc/heroui",
+      "sourceType": "github",
+      "skillPath": "skills/heroui-react/SKILL.md",
+      "computedHash": "c3633cb324aef2a51a9828c96776897ec2273d8d092cfcfb4dfa754006c7b8df"
+    },
+    "reause-functions": {
+      "source": "hairyf/reause",
+      "sourceType": "github",
+      "skillPath": "skills/reause-functions/SKILL.md",
+      "computedHash": "65ee026f00446062fb890b751c90a1dc30fed1482f6ffd98f77708c016a5f2c0"
+    },
+    "valtio-define": {
+      "source": "hairyf/valtio-define",
+      "sourceType": "github",
+      "skillPath": "skills/valtio-define/SKILL.md",
+      "computedHash": "f6ddb65919ff631433113733ce28ae605655340cefd64059f402a873924d2f40"
     }
   }
 }

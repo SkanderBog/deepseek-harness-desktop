@@ -117,7 +117,7 @@ export function apply(ctx: HostContext): void {
 
 **6. API 生成契约**
 
-* 使用根目录 `genapi.config.ts` 的 `dsh-h3/genapi` 与既有 ofetch preset，输入为 `host/server/index.ts`，输出为客户端 `apis/index.ts` 和 `apis/index.type.ts`；禁止恢复本地 `genapi.pipeline.ts` 或手写同一套生成逻辑。
+* 使用`packages/builtin-plugin-config/genapi.config.ts` 的 `dsh-h3/genapi` 与既有 ofetch preset，输入为 `host/server/index.ts`，输出为客户端 `apis/index.ts` 和 `apis/index.type.ts`；禁止恢复本地 `genapi.pipeline.ts` 或手写同一套生成逻辑。
 * 注册必须使用直接的 `app.get/post/...` 调用与静态完整路径，不能通过动态循环、路径拼接或注册 helper 隐藏。handler 中的 `getQuery<Query>(event)`、`readBody<Body>(event)` 必须位于 handler 本体，不能藏在嵌套回调内；只用 `as Query` 不足以声明生成契约。
 * 响应类型须可 JSON 序列化并由 handler 推导或显式声明。若为 `defineEventHandler` 指定 request 泛型，必须同时保证 response 不退化成 unknown；服务返回值、错误分支与客户端类型须一致。
 

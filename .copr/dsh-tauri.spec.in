@@ -1,11 +1,7 @@
-# 模板：由 .copr/srpm.sh 从 package.json / tauri.conf.json / Cargo.toml / constants.rs 填值后
-# 生成 SRPM。构建需要联网（Node、pnpm、cargo 依赖），Copr 项目须开启 enable_net。
 %global appname @APPNAME@
 %global binname @BINNAME@
-# Tauri 按 productName 在 /usr/lib/<productName> 下查找资源，路径不能改
 %global appdir %{_prefix}/lib/%{appname}
 %global debug_package %{nil}
-# 资源里插件依赖的 shebang 会被自动推导成依赖系统 nodejs，实际由应用自带的 Node 运行
 %global __requires_exclude ^/usr/bin/node$
 
 Name:           @NAME@
@@ -23,7 +19,6 @@ BuildRequires:  gcc
 BuildRequires:  make
 BuildRequires:  git-core
 BuildRequires:  curl
-BuildRequires:  pkgconfig(webkit2gtk-4.1)
 BuildRequires:  pkgconfig(gtk+-3.0)
 BuildRequires:  pkgconfig(openssl)
 BuildRequires:  pkgconfig(x11)
@@ -34,9 +29,10 @@ BuildRequires:  pkgconfig(librsvg-2.0)
 BuildRequires:  libappindicator-gtk3-devel
 
 Requires:       libappindicator-gtk3
-Requires:       gstreamer1-plugins-good
-Recommends:     gstreamer1-plugins-bad-free
-# dsh-tauri 与 dsh-tauri-beta 安装同一组文件，只能二选一；切换渠道用 dnf swap
+Requires:       alsa-lib
+Requires:       nss
+Requires:       mesa-libgbm
+Requires:       libdrm
 Conflicts:      @CONFLICTS@
 
 %description
@@ -47,12 +43,9 @@ Conflicts:      @CONFLICTS@
 
 %build
 export CI=true
-# 关闭应用内自更新：升级交给 dnf（见 src-tauri/src/service/update/version.rs）
 export DSH_DISTRO_MANAGED=copr
 export CARGO_HOME="$PWD/.cargo-home"
 export npm_config_cache="$PWD/.npm-cache"
-# 用 Node.js 官方构建（与上游 CI 的 setup-node 同源）：Fedora 的 libnode（nodejs22 / nodejs24
-# 均复现）在 Copr mock 里于 V8 正则编译与 Intl.Segmenter 处 SIGSEGV，pnpm 必崩
 node_version=@NODE_VERSION@
 %ifarch x86_64
 node_arch=x64
@@ -69,20 +62,21 @@ node --version
 pnpm_version=$(sed -n 's/.*"packageManager": "pnpm@\([^"]*\)".*/\1/p' package.json)
 npm install --no-save --no-audit --no-fund --prefix "$PWD/.pnpm" "pnpm@$pnpm_version"
 export PATH="$PWD/.pnpm/node_modules/.bin:$PATH"
+node -e 'const fs = require("node:fs"); const file = "package.json"; const pkg = JSON.parse(fs.readFileSync(file, "utf8")); delete pkg.scripts.preinstall; fs.writeFileSync(file, JSON.stringify(pkg));'
 pnpm install --frozen-lockfile
 pnpm tauri build --no-bundle
 
 %install
-install -Dpm0755 src-tauri/target/release/%{binname} %{buildroot}%{_bindir}/%{binname}
+install -Dpm0755 apps/desktop/src-tauri/target/release/%{binname} %{buildroot}%{_bindir}/%{binname}
 install -dm0755 "%{buildroot}%{appdir}"
-cp -a src-tauri/resources "%{buildroot}%{appdir}/resources"
-install -Dpm0644 src-tauri/icons/32x32.png "%{buildroot}%{appdir}/icons/32x32.png"
-install -Dpm0644 src-tauri/icons/32x32.png %{buildroot}%{_datadir}/icons/hicolor/32x32/apps/%{binname}.png
-install -Dpm0644 src-tauri/icons/128x128.png %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/%{binname}.png
-install -Dpm0644 src-tauri/icons/128x128@2x.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/%{binname}.png
-install -Dpm0644 src-tauri/icons/icon.png %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/%{binname}.png
-# 与 Tauri 自带 rpm 同名同内容：深链与自启动按这个 desktop 文件注册。
-# Categories 对应 tauri.conf.json 的 category = DeveloperTool
+cp -a apps/desktop/src-tauri/resources "%{buildroot}%{appdir}/resources"
+cp -a apps/desktop/src-tauri/target/electron "%{buildroot}%{appdir}/runtime"
+chmod 4755 "%{buildroot}%{appdir}"/runtime/linux-*/chrome-sandbox
+install -Dpm0644 apps/desktop/src-tauri/icons/32x32.png "%{buildroot}%{appdir}/icons/32x32.png"
+install -Dpm0644 apps/desktop/src-tauri/icons/32x32.png %{buildroot}%{_datadir}/icons/hicolor/32x32/apps/%{binname}.png
+install -Dpm0644 apps/desktop/src-tauri/icons/128x128.png %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/%{binname}.png
+install -Dpm0644 apps/desktop/src-tauri/icons/128x128@2x.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/%{binname}.png
+install -Dpm0644 apps/desktop/src-tauri/icons/icon.png %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/%{binname}.png
 install -dm0755 %{buildroot}%{_datadir}/applications
 cat > "%{buildroot}%{_datadir}/applications/%{appname}.desktop" <<EOF
 [Desktop Entry]

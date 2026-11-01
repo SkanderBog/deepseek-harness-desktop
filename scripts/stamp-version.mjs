@@ -51,13 +51,13 @@ const STAMPED_FILES = [
       replaceOnce(content, /^(\s*"version"\s*:\s*")[^"]*(")/m, `$1${version}$2`, label),
   },
   {
-    label: 'src-tauri/Cargo.toml',
-    segments: ['src-tauri', 'Cargo.toml'],
+    label: 'apps/desktop/src-tauri/Cargo.toml',
+    segments: ['apps/desktop/src-tauri', 'Cargo.toml'],
     stamp: stampCargoToml,
   },
   {
-    label: 'src-tauri/tauri.conf.json',
-    segments: ['src-tauri', 'tauri.conf.json'],
+    label: 'apps/desktop/src-tauri/tauri.conf.json',
+    segments: ['apps/desktop/src-tauri', 'tauri.conf.json'],
     stamp: (content, version, label) =>
       replaceOnce(content, /^(\s*"version"\s*:\s*")[^"]*(")/m, `$1${version}$2`, label),
   },

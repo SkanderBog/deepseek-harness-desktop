@@ -6,7 +6,7 @@ import { readReleaseIdentity } from './release-identity.mjs'
 const repo = process.env.GITHUB_WORKSPACE || process.cwd()
 const { version, semver } = readReleaseIdentity(repo)
 const configFile = semver.prerelease?.split('.')[0] === 'nightly' ? 'tauri.nightly.conf.json' : 'tauri.conf.json'
-const { productName } = JSON.parse(readFileSync(path.join(repo, 'src-tauri', configFile), 'utf8'))
+const { productName } = JSON.parse(readFileSync(path.join(repo, 'apps/desktop/src-tauri', configFile), 'utf8'))
 const sourcePrefix = `${productName}_${version}_`
 const assetPrefix = `Deepseek.Harness.Desktop_${version}_`
 const directories = process.argv.slice(2).map(directory => path.resolve(repo, directory))

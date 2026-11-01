@@ -1,7 +1,7 @@
 name: Prepare offline bundle resources
 description: >-
   Download and unpack the Node.js runtime, the packaged dsh core and pnpm into
-  src-tauri/resources, then rewrite manifest.jsonc so every bundled dependency
+  apps/desktop/src-tauri/resources, then rewrite manifest.jsonc so every bundled dependency
   resolves through `$Resources/...`. The resulting `tauri build` produces an
   installer that needs no download on first launch.
 
@@ -140,7 +140,7 @@ runs:
           "Node.js ${node_name}"
         extract "${workdir}/${node_name}" "${workdir}/node"
         flatten "${workdir}/node"
-        install_tree "${workdir}/node" "src-tauri/resources/node"
+        install_tree "${workdir}/node" "apps/desktop/src-tauri/resources/node"
 
         # dsh 内核：摘要来自同一 release 的 GitHub API，缺失即中止（无法校验完整性的
         # 内容不进离线包）。
@@ -151,14 +151,14 @@ runs:
         verify "${workdir}/${dsh_name}" "$dsh_digest" "dsh core ${dsh_name}"
         extract "${workdir}/${dsh_name}" "${workdir}/dsh"
         flatten "${workdir}/dsh"
-        install_tree "${workdir}/dsh" "src-tauri/resources/dsh"
+        install_tree "${workdir}/dsh" "apps/desktop/src-tauri/resources/dsh"
 
         # pnpm：纯 JS 发行，摘要取自 constants.rs 的固定值。
         fetch "$pnpm_url" "${workdir}/${pnpm_name}"
         verify "${workdir}/${pnpm_name}" "$pnpm_sha" "pnpm ${pnpm_name}"
         extract "${workdir}/${pnpm_name}" "${workdir}/pnpm"
         flatten "${workdir}/pnpm"
-        install_tree "${workdir}/pnpm" "src-tauri/resources/pnpm"
+        install_tree "${workdir}/pnpm" "apps/desktop/src-tauri/resources/pnpm"
 
         # MinGit：默认不随包（`bundle-git: true` 才下载）。启动 dsh 不需要 Git，
         # 只有 git 托管的能力（worktree、`github:` 插件）依赖它。
@@ -167,7 +167,7 @@ runs:
           verify "${workdir}/${git_name}" "$git_sha" "MinGit ${git_name}"
           extract "${workdir}/${git_name}" "${workdir}/git"
           flatten "${workdir}/git"
-          install_tree "${workdir}/git" "src-tauri/resources/git"
+          install_tree "${workdir}/git" "apps/desktop/src-tauri/resources/git"
         fi
 
         node scripts/bundle-metadata.mjs --manifest --platform "$PLATFORM" --arch "$ARCH" $git_flag
@@ -187,20 +187,20 @@ runs:
           entries="node/node.exe $entries"
         fi
         # 清单没有指向 `$Resources/git` 时不能要求它存在（默认就不随包 MinGit）。
-        if grep -q '"managedRoot": "$Resources/git"' src-tauri/resources/manifest.jsonc; then
+        if grep -q '"managedRoot": "$Resources/git"' apps/desktop/src-tauri/resources/manifest.jsonc; then
           entries="$entries git/cmd/git.exe"
         fi
         missing=0
         for entry in $entries; do
-          if [ ! -e "src-tauri/resources/${entry}" ]; then
-            echo "::error::bundled entry is missing: src-tauri/resources/${entry}"
+          if [ ! -e "apps/desktop/src-tauri/resources/${entry}" ]; then
+            echo "::error::bundled entry is missing: apps/desktop/src-tauri/resources/${entry}"
             missing=1
           fi
         done
         [ "$missing" -eq 0 ] || exit 1
 
-        grep -q '"$Resources/' src-tauri/resources/manifest.jsonc
+        grep -q '"$Resources/' apps/desktop/src-tauri/resources/manifest.jsonc
         echo "--- bundled resources ---"
-        du -sh src-tauri/resources/node src-tauri/resources/dsh src-tauri/resources/pnpm 2>/dev/null || true
-        [ -d src-tauri/resources/git ] && du -sh src-tauri/resources/git || true
-        sed -n '/"dependencies"/,/^  }/p' src-tauri/resources/manifest.jsonc
+        du -sh apps/desktop/src-tauri/resources/node apps/desktop/src-tauri/resources/dsh apps/desktop/src-tauri/resources/pnpm 2>/dev/null || true
+        [ -d apps/desktop/src-tauri/resources/git ] && du -sh apps/desktop/src-tauri/resources/git || true
+        sed -n '/"dependencies"/,/^  }/p' apps/desktop/src-tauri/resources/manifest.jsonc

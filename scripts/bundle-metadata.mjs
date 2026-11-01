@@ -87,7 +87,7 @@ export function stripJsonc(raw) {
 }
 
 function manifestPath(repo) {
-  return path.join(repo, 'src-tauri', 'resources', 'manifest.jsonc')
+  return path.join(repo, 'apps/desktop/src-tauri', 'resources', 'manifest.jsonc')
 }
 
 /** 读取并解析资源清单（JSONC）。 */
@@ -173,7 +173,7 @@ export function mingitAssetName(arch, version) {
 
 /** 收集仓库内的构建常量（Node / pnpm / MinGit 与各自的下载前缀）。 */
 export function readBuildConstants(repo = process.cwd()) {
-  const constantsPath = path.join(repo, 'src-tauri', 'src', 'config', 'constants.rs')
+  const constantsPath = path.join(repo, 'apps/desktop/src-tauri', 'src', 'config', 'constants.rs')
   let source
   try {
     source = readFileSync(constantsPath, 'utf8')

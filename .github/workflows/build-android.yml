@@ -54,8 +54,8 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          version="$(node --input-type=commonjs -p "require('./app.json').expo.version")"
-          pkg="$(node --input-type=commonjs -p "require('./package.json').version")"
+          version="$(node --input-type=commonjs -p "require('./apps/native/app.json').expo.version")"
+          pkg="$(node --input-type=commonjs -p "require('./apps/native/package.json').version")"
           if [ "$version" != "$pkg" ]; then
             echo "::error::app.json expo.version ($version) != package.json version ($pkg); 请让 native 版本跟随桌面端版本"
             exit 1
@@ -114,7 +114,7 @@ jobs:
       - name: Build release APK
         env:
           CI: '1'
-        working-directory: android
+        working-directory: apps/native/android
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleRelease --no-daemon --stacktrace
@@ -129,7 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           tools="$ANDROID_HOME/build-tools/36.0.0"
-          source='android/app/build/outputs/apk/release/app-release.apk'
+          source='apps/native/android/app/build/outputs/apk/release/app-release.apk'
           mkdir -p release
           destination="release/Deepseek.Harness.Android_${VERSION}.apk"
           "$tools/zipalign" -c -P 16 4 "$source"

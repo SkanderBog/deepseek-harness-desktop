@@ -2,17 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, next]
   pull_request:
-    branches: [main, native, feat/mobile-sidebar]
+    branches: [main, next]
 
 permissions:
   contents: read
-  # skip-duplicate-actions 要查询 Workflow Runs API（actions 作用域），
-  # 缺它会 403/超时；仅 contents: read 会被 GitHub 解释为无 actions 权限。
   actions: read
 
-# 同一分支/PR 的新提交会取消上次仍在运行的 CI，避免浪费 runner 时间。
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -20,13 +17,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # doc 下的 debug 符号只会膨胀 target 目录、降低缓存命中率，测试不需要。
   CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
-  # 门卫：内容哈希相同且已成功通过（或同一内容正在运行）时跳过，避免重复跑。
-  # push main 与 pull_request main 常常是同一个内容，用 skip_after_successful_duplicate
-  # 加 concurrent_skipping: same_content 精确去重；手动触发/schedule 永不跳过。
   pre_job:
     name: Pre-job (Skip Duplicate Actions)
     runs-on: ubuntu-latest
@@ -40,9 +33,81 @@ jobs:
           skip_after_successful_duplicate: true
           paths_ignore: '["**/docs/**", "**/*.md"]'
 
+  # 按改动选择测试范围（issue #1059）。
+  #
+  # 基线取 PR 目标分支与待测提交的共同祖先，不是最后一个提交：只比 HEAD 会漏掉
+  # 同一 PR 先前的提交。未开启 PR 或基线获取失败时 `full=true`，全量兜底——
+  # 影响范围不确定时永远跑全量，不静默跳过。
+  changes:
+    name: Detect changed scope
+    needs: pre_job
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.scope.outputs.full }}
+      base: ${{ steps.scope.outputs.base }}
+      unit: ${{ steps.scope.outputs.unit }}
+      rust: ${{ steps.scope.outputs.rust }}
+      desktop: ${{ steps.scope.outputs.desktop }}
+      reason: ${{ steps.scope.outputs.reason }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          # --changed 与 merge-base 都要真实历史；depth=1 会让两者退化成「全部」。
+          fetch-depth: 0
+          submodules: false
+
+      - name: Compute scope
+        id: scope
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          full=0; rust=0; unit=0; desktop=0; base=''; reason='classified changed paths'
+          changed_file=''
+          if [ "$EVENT" != 'pull_request' ] || [ -z "$BASE_REF" ]; then
+            full=1; reason='not a pull request; run all groups'
+          elif ! git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"; then
+            full=1; reason='target branch fetch failed; run all groups'
+          elif ! base=$(git merge-base "origin/${BASE_REF}" HEAD); then
+            full=1; reason='merge base unavailable; run all groups'
+          else
+            changed_file=$(mktemp)
+            if ! git diff --name-only -z "$base...HEAD" > "$changed_file"; then
+              full=1; reason='changed paths unavailable; run all groups'
+            else
+              mapfile -d '' changed < "$changed_file"
+              printf 'base=%s\nchanged paths:\n' "$base"
+              for path in "${changed[@]}"; do
+                printf '  %q\n' "$path"
+                file=${path##*/}
+                case "$path" in
+                  .github/*|scripts/*) full=1; reason='shared CI or scripts changed; run all groups' ;;
+                  crates/*|apps/desktop/src-tauri/*) rust=1; desktop=1 ;;
+                  apps/desktop/src/*|packages/*) unit=1; desktop=1 ;;
+                  tests/e2e/*|apps/desktop/tests/e2e/*) desktop=1 ;;
+                  apps/desktop/tests/unit/*|tests/*) unit=1 ;;
+                  apps/desktop/*) desktop=1 ;;
+                  *) full=1; reason='unclassified path; run all groups' ;;
+                esac
+                case "$file" in
+                  package.json|pnpm-lock.yaml|pnpm-workspace.yaml|Cargo.lock|Cargo.toml|tauri.conf.json|rust-toolchain*|tsconfig*|vite.config.*|vitest*|playwright*|eslint*|webpack*|rollup*|*.config.*|*.test.json|*.build.json|build.rs|manifest*)
+                    full=1; reason='shared manifest, build or test configuration changed; run all groups' ;;
+                esac
+              done
+            fi
+            if [ -n "$changed_file" ]; then rm -f "$changed_file"; fi
+          fi
+          if [ "$full" -eq 1 ]; then rust=1; unit=1; desktop=1; base=''; fi
+          printf 'groups=rust:%s,unit:%s,desktop:%s fallback=%s\n' "$rust" "$unit" "$desktop" "$full"
+          for key in full base rust unit desktop reason; do printf '%s=%s\n' "$key" "${!key}" >> "$GITHUB_OUTPUT"; done
+
   native:
     name: Native typecheck and unit tests
-    needs: pre_job
+    needs: [pre_job, changes]
     if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -62,15 +127,22 @@ jobs:
       - name: Native unit test
         run: pnpm run test:native
 
-  # 单元测试（vitest）+ 类型检查 + lint：
   unit:
     name: Unit Tests (vitest)
-    needs: pre_job
+    needs: [pre_job, changes]
     if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Scope
+        run: |
+          echo "baseline=${{ needs.changes.outputs.base }}"
+          echo "full=${{ needs.changes.outputs.full }}"
+          echo "reason=${{ needs.changes.outputs.reason }}"
+
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -78,246 +150,81 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install AppImage regression tools
-        run: sudo apt-get update && sudo apt-get install -y squashfs-tools
-
-      - name: Test AppImage repacking
-        run: |
-          for seed in 1 2 3 4 5; do
-            node node_modules/vitest/vitest.mjs run --project unit test/appimage-host-libs.test.ts --sequence.shuffle --sequence.seed="$seed"
-          done
+      - name: Test workspace release versioning and immutable source guards
+        run: node .github/scripts/check-mobile-release.mjs
 
       - name: Test iOS signing and Beta review guards without credentials
         run: python3 -m unittest discover -s .github/scripts -p 'test_ios_*.py' -v
 
-      - name: Install rc.2 core for desktop admission regression
-        run: npm install --prefix "$RUNNER_TEMP/dsh-cli-admission" --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.4
-
-      - name: Test desktop admission against rc.2 gateway
-        env:
-          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli-admission/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: |
-          for seed in 301 302 303 304 305; do
-            node node_modules/vitest/vitest.mjs run --project unit packages/dsh-tauri/src/host/service/gate.runtime.test.ts --sequence.shuffle --sequence.seed="$seed" || exit $?
-          done
-
       - name: Type check sources before generating declarations
         run: pnpm run typecheck
 
-      # 插件 client 类型经 workspace 包的 exports 指向构建产物（dist/client.d.cts），
-      # typecheck/lint 前先构建两个核心共享包，否则全新检出会报
-      # "Cannot find module 'dsh-tauri/client'"。
       - name: Build core packages
         run: pnpm --filter dsh-tauri build && pnpm --filter dsh-tauri-ui build
-
-      # dsh-tauri-ui 的构建先用压缩产物打包 dist、再用未压缩产物还原该文件，因此工作树里
-      # 留下的应该正是提交进仓库的未压缩形态。若源码新增/删除了 utility 却漏提产物，
-      # 运行时只会静默缺样式；显式检查工作树可在合并前阻断漂移。
-      - name: Verify generated Tailwind CSS is current
-        id: tailwind_check
-        run: git diff --exit-code -- packages/dsh-tauri-ui/src/client/styles/index.ts
-
-      - name: Upload regenerated Tailwind CSS on drift
-        if: failure() && steps.tailwind_check.outcome == 'failure'
-        uses: actions/upload-artifact@v6
-        with:
-          name: generated-tailwind-css
-          path: packages/dsh-tauri-ui/src/client/styles/index.ts
-          if-no-files-found: error
-
-      - name: Type check package exports
-        run: pnpm exec tsc --noEmit
 
       - name: Lint
         run: pnpm run lint
 
-      # test/plugin-resource-closure.test.ts 断言部署产物 src-tauri/resources/node_modules，
-      # 该目录由 build:plugins 生成；不构建则整组用例 skipIf 跳过、在 CI 里从不执行。
-      - name: Build Plugins
-        run: pnpm build:plugins
+      - name: Build renderer
+        run: pnpm --filter dsh-desktop build
 
-      - name: Unit test
-        run: node node_modules/vitest/vitest.mjs run --project unit --sequence.shuffle --sequence.seed=400
-
-  plugins-e2e:
-    name: Plugins E2E (${{ matrix.core }})
-    needs: pre_job
-    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        core: [0.2.1-rc.4]
-    env:
-      DSH_E2E_CORE_VERSION: ${{ matrix.core }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js and pnpm
-        uses: ./.github/actions/setup-node-pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Build Plugins
-        run: pnpm build:plugins
-
-      - name: Install isolated dsh CLI
-        run: npm install --prefix "$RUNNER_TEMP/dsh-cli" --no-audit --no-fund @deepseek-ai/dsh@${{ matrix.core }}
-
-      - name: Plugin L2 full suite
-        env:
-          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed=100
-
-      - name: Host, settings and official plugin composition stability
-        env:
-          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
+      # PR 用 Vitest 原生 --changed 按模块依赖图选测；主分支与兜底全量单轮。
+      # 选择结果由 Vitest 打印，这里只在兜底时显式说明原因。
+      - name: Unit test (full)
+        if: ${{ needs.changes.outputs.full == '1' }}
         run: |
-          for seed in 101 102 103 104 105; do
-            node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" \
-              test/e2e/plugins/dsh-host-and-core-contract.e2e.ts \
-              test/e2e/plugins/dsh-tauri.e2e.ts \
-              test/e2e/plugins/dsh-tauri-ui.e2e.ts \
-              test/e2e/plugins/dsh-tauri-extension-panel.e2e.ts \
-              test/e2e/plugins/dsh-tauri-mobile-settings.e2e.ts \
-              test/e2e/plugins/dsh-tauri-appearance.e2e.ts \
-              test/e2e/plugins/dsh-tauri-appearance-boot.e2e.ts || exit $?
-          done
+          echo "fallback to full suite: ${{ needs.changes.outputs.reason }}"
+          node node_modules/vitest/vitest.mjs run --project unit
 
-      - name: Unified scheduler host and right-sidebar stability
-        env:
-          DSH_E2E_DSH_BIN: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
-          DSH_SCHEDULER_DIAGNOSTICS_DIR: ${{ runner.temp }}/scheduler-diagnostics
+      - name: Unit test (changed)
+        if: ${{ needs.changes.outputs.full != '1' && needs.changes.outputs.unit == '1' }}
+        run: node node_modules/vitest/vitest.mjs run --project unit --changed "${{ needs.changes.outputs.base }}"
+
+      - name: Unit test (not selected)
+        if: ${{ needs.changes.outputs.full != '1' && needs.changes.outputs.unit != '1' }}
         run: |
-          for seed in 987 988 989 990 991; do
-            node node_modules/vitest/vitest.mjs run --project plugin --sequence.shuffle --sequence.seed="$seed" test/e2e/plugins/dsh-tauri-scheduler.e2e.ts test/e2e/plugins/dsh-tauri-scheduler-client.e2e.ts || exit $?
-          done
+          echo "unit tests not selected: ${{ needs.changes.outputs.reason }}"
 
-      - name: Upload scheduler failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v6
-        with:
-          name: scheduler-contract-diagnostics-${{ matrix.core }}
-          path: ${{ runner.temp }}/scheduler-diagnostics
-          if-no-files-found: ignore
-
-  # 桌面端 L3 E2E（vitest + WebdriverIO）：
-  # 驱动真实 Tauri 窗口，只能在 Windows 上跑（embedded WebDriver + WebView2）。
-  # 需要 dist/ 与内嵌前端的 debug 二进制；`tauri build` 会带上 custom-protocol，
-  # 否则应用走 devUrl 而不嵌 dist（页面为空，选择器全找不到）。
-  desktop-e2e:
-    name: Desktop E2E Tests (vitest + webdriverio)
-    needs: pre_job
-    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
-    runs-on: windows-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      # build:plugins 的产物只由 packages/** 与锁文件/构建脚本决定，未变时直接复用，
-      # 省掉整轮（32~55s）。命中即跳过下方 Build Plugins，故新增输入时必须同步扩充 key。
-      # key 取 restore 的 cache-primary-key：save 时 packages/*/dist 已生成，
-      # 在彼处重新 hashFiles 会得到不同的值。
-      - name: Restore bundled plugins
-        id: plugins_cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            src-tauri/resources/node_modules
-            packages/*/dist
-          key: plugins-${{ runner.os }}-${{ hashFiles('packages/**', 'scripts/**', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
-
-      - name: Setup Node.js and pnpm
-        uses: ./.github/actions/setup-node-pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build Plugins
-        if: steps.plugins_cache.outputs.cache-hit != 'true'
-        run: pnpm build:plugins
-
-      - name: Save bundled plugins
-        if: steps.plugins_cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            src-tauri/resources/node_modules
-            packages/*/dist
-          key: ${{ steps.plugins_cache.outputs.cache-primary-key }}
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-          # 只有 main 写缓存：PR 每次生成的条目会挤掉 main 的暖缓存，
-          # 而 10 GB 上限是仓库级共享的（PR 只读、不写）。
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # 根 dist/ 只能由 vite build 产出（build:plugins 仅构建 packages/*，不生成 dist），
-      # 而 frontendDist 指向 ../dist：缺失会让应用走 devUrl、页面为空。
-      - name: Build frontend
-        run: pnpm exec vite build
-
-      # 内联 JSON 经 pwsh → pnpm(.cmd) 转发时引号会被剥掉（实测报
-      # `key must be a string`），改为落一份配置文件再传路径。
-      # 清空 beforeBuildCommand 是为了避免重复触发 `pnpm build`
-      # （它的 prebuild 会再跑一遍 build:plugins）。
-      - name: Build debug binary
-        run: |
-          Set-Content -Path "$env:RUNNER_TEMP\tauri-e2e.json" -Value '{"build":{"beforeBuildCommand":""}}'
-          pnpm tauri build --debug --no-bundle --config "$env:RUNNER_TEMP\tauri-e2e.json"
-
-      - name: Windows WebDriver integration test
-        run: node node_modules/vitest/vitest.mjs run --project webdriver --sequence.shuffle --sequence.seed=501
-
-      - name: Desktop L3 test
-        run: node node_modules/vitest/vitest.mjs run --project desktop --sequence.shuffle --sequence.seed=500
-
-  # Rust 单元测试（应用主体逻辑）：
-  # 这是 CI 此前完全缺失的部分。仓库存在大量平台专属代码，必须在对应 OS 上编译并测试：
-  #   - #[cfg(windows)]：win_spawn / win_inspector / cli shim / path / MSI 版本处理 → Windows
-  #   - #[cfg(target_os = "macos")]：homebrew Node 路径 & macOS 包名/资产名 → macOS
-  #   - Unix/Linux cfg 分支 → ubuntu
-  # 与官方 tauri-apps/tauri 的 test-core 矩阵一致：ubuntu + macos + windows，
-  # "更广泛"地覆盖应用实际发布的三个平台，而不是像前端那样按 Node 版本重复。
   rust-test:
     name: Rust tests
-    needs: pre_job
-    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
+    needs: [pre_job, changes]
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' && (needs.changes.outputs.full == '1' || needs.changes.outputs.rust == '1') }}
     strategy:
       fail-fast: false
       matrix:
-        # Linux 用与 release workflow 相同的 ubuntu-22.04 + 同一套 apt 包，
-        # 保证首次跑 CI 就能编译（tauri 的 webkit/appindicator 原生依赖对齐已知可用环境）。
-        # macOS 用官方矩阵的 macos-14（Apple Silicon）。
-        os: [ubuntu-22.04, macos-14, windows-latest]
+        os: [ubuntu-22.04, macos-15, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Scope
+        run: |
+          echo "full=${{ needs.changes.outputs.full }}"
+          echo "reason=${{ needs.changes.outputs.reason }}"
+
       - name: Checkout repository
         uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          submodules: true
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Cache Electron distribution
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+            ~/AppData/Local/electron/Cache
+          key: electron-45.0.0-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -331,62 +238,130 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> target
-          # 同上：PR 只读缓存，避免每轮生成新条目挤掉 main 的暖缓存。
+          workspaces: apps/desktop/src-tauri -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # 稳定性和 macOS 登录项变体验证需要多轮，按需在本地/手动触发执行，
+      # 不再随每次 PR 固定跑（issue #1059）。准入前仍需本地连跑 5 次无 Flake。
       - name: Run Windows native notification tests
         if: runner.os == 'Windows'
-        run: cargo test -p tauri-plugin-notifications --lib --no-default-features --locked
-        working-directory: src-tauri
+        run: cargo test --manifest-path crates/tauri-plugin-notifications/Cargo.toml --lib --no-default-features
+        working-directory: .
 
       - name: Run tests
         run: cargo test --all-features --locked
-        working-directory: src-tauri
+        working-directory: apps/desktop/src-tauri
 
-      # 与下面的「Check startup regression stability」同形：`for` 必须以 `done` 收尾，
-      # 且必须显式声明 working-directory —— 否则 cargo 会在仓库根目录执行、
-      # 找不到 workspace（Cargo.toml 在 src-tauri/ 下）。
-      - name: Check plugin recovery and update cache stability
-        shell: bash
+  desktop-e2e:
+    name: Desktop E2E (Electron CDP)
+    needs: [pre_job, changes]
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' && (needs.changes.outputs.full == '1' || needs.changes.outputs.desktop == '1') }}
+    strategy:
+      fail-fast: false
+      # Electron 运行时不再受 WebView2 限制，按发布平台各跑一次。
+      matrix:
+        os: [windows-latest, macos-15, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - name: Scope
         run: |
-          for iteration in 1 2 3 4 5; do
-            cargo test --all-features --locked service::plugin::update::tests:: -- --test-threads=1 || exit 1
-            cargo test --all-features --locked service::plugin::internal:: -- --test-threads=1 || exit 1
-            cargo test --all-features --locked service::plugin::install::diagnose:: -- --test-threads=1 || exit 1
-          done
-        working-directory: src-tauri
+          echo "full=${{ needs.changes.outputs.full }}"
+          echo "reason=${{ needs.changes.outputs.reason }}"
 
-      - name: Check startup regression stability
-        shell: bash
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          standalone: 'true'
+
+      - name: Expose pnpm.exe (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          for iteration in 1 2 3 4 5; do
-            cargo test --all-features --locked desktop::startup::tests:: -- --test-threads=1 || exit 1
-          done
-        working-directory: src-tauri
+          $exe = Get-ChildItem "$env:USERPROFILE\setup-pnpm" -Recurse -Filter pnpm.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) {
+            npm install --no-save --prefix "$env:RUNNER_TEMP\pnpm-exe" '@pnpm/exe'
+            $exe = Get-ChildItem "$env:RUNNER_TEMP\pnpm-exe" -Recurse -Filter pnpm.exe | Select-Object -First 1
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $exe.DirectoryName
+          Write-Host "pnpm.exe: $($exe.FullName)"
 
-      - name: Check macOS login startup regression
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libappindicator3-dev librsvg2-dev patchelf libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 xvfb
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Setup Xcode
         if: runner.os == 'macOS'
+        uses: ./.github/actions/setup-xcode
+
+      - name: Cache Electron distribution
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+            ~/AppData/Local/electron/Cache
+          key: electron-45.0.0-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # dist 必须存在：缺失时 debug 构建回落到 devUrl，页面为空、选择器全部落空。
+      - name: Build bundled plugins
+        run: pnpm run build:plugins
+
+      - name: Build renderer
+        run: pnpm --filter dsh-desktop build
+
+      - name: Build debug binary
+        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --features tauri/custom-protocol
+
+      - name: Runtime IPC readiness regression
         shell: bash
         run: |
-          set -euo pipefail
-          trap 'git restore -- src/desktop/autostart.rs' EXIT
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('src/desktop/autostart.rs')
-          source = path.read_text()
-          assert source.count('set_enabled(app, true)') == 1
-          path.write_text(source.replace('set_enabled(app, true)', 'Ok(true)'))
-          PY
-          test_name=desktop::autostart::tests::macos_init_refreshes_only_enabled_login_items
-          if cargo test --lib --all-features --locked "$test_name" -- --exact --nocapture > "$RUNNER_TEMP/autostart-mutant.log" 2>&1; then
-            cat "$RUNNER_TEMP/autostart-mutant.log"
+          root=$(node -p 'process.cwd().split(String.fromCharCode(92)).join(String.fromCharCode(47))')
+          config=(--manifest-path crates/tauri-runtime-electron/Cargo.toml --features tauri
+            --config "patch.crates-io.tauri-runtime.path=\"$root/apps/desktop/src-tauri/vendor/tauri-runtime\""
+            --config "patch.\"https://github.com/hairyf/electron-rs.git\".electron-rs.path=\"$root/crates/electron-rs\"")
+          cp apps/desktop/src-tauri/Cargo.lock crates/tauri-runtime-electron/Cargo.lock
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          cargo metadata "${config[@]}" --offline --filter-platform "$host" --format-version 1 > /dev/null
+          args=(cargo test "${config[@]}" --target-dir apps/desktop/src-tauri/target --locked --offline --lib ipc_readiness_)
+          listing=$("${args[@]}" -- --list)
+          if [[ "$listing" != *"runtime::tests::ipc_readiness_waits_for_manager_across_iterations: test"* ]]; then
+            echo "Runtime IPC readiness regression was not collected"
             exit 1
           fi
-          cat "$RUNNER_TEMP/autostart-mutant.log"
-          grep -F 'enabled login item must target the current executable' "$RUNNER_TEMP/autostart-mutant.log"
-          git restore -- src/desktop/autostart.rs
-          for iteration in 1 2 3 4 5; do
-            cargo test --lib --all-features --locked "$test_name" -- --exact --nocapture
-          done
-        working-directory: src-tauri
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            xvfb-run --auto-servernum "${args[@]}"
+          else
+            "${args[@]}"
+          fi
+
+      - name: Desktop E2E (Linux, headless)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum node node_modules/vitest/vitest.mjs run --project desktop
+        env:
+          DSH_E2E_HEADLESS: '1'
+
+      - name: Desktop E2E
+        if: runner.os != 'Linux'
+        run: node node_modules/vitest/vitest.mjs run --project desktop

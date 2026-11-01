@@ -68,7 +68,7 @@ jobs:
           done
           [ "$apt_ok" = "1" ] || { echo "apt-get update 连续 3 次失败，中止"; exit 1; }
           # squashfs-tools 提供 mksquashfs，供 AppImage 宿主库剔除后重打包使用。
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-plugins-bad squashfs-tools
+          sudo apt-get install -y libappindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-plugins-bad squashfs-tools
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -85,29 +85,24 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --bundles appimage,deb ${{ inputs.version != '' && '--config src-tauri/tauri.nightly.conf.json' || '' }}
 
-      # Tauri 固定的 linuxdeploy 会把构建镜像的 libwayland-*/libxkbcommon/libxcb/
-      # libXau/libXdmcp 一并打进 AppImage，AppRun 又把这些库置于 LD_LIBRARY_PATH 首位；
-      # 较新发行版（Arch/CachyOS、Fedora 44…）的宿主 Mesa 因而加载到旧库，EGL 协商失败，
-      # WebKit 在 eglGetDisplay 失败时直接 abort()——WebKitWebProcess SIGABRT、无窗口无日志
-      # （上游 tauri#15976，本仓 #620）。.deb 用系统库，不受影响。
-      # 必须在签名/上传之前完成：本步会重写 AppImage 字节。
       - name: Drop over-bundled host-interface libs from the AppImage
         shell: bash
         run: |
-          mapfile -d '' appimages < <(find src-tauri/target/release/bundle/appimage -name '*.AppImage' -print0)
+          python3 -B scripts/test_fix_appimage_host_libs.py
+          mapfile -d '' appimages < <(find apps/desktop/src-tauri/target/release/bundle/appimage -name '*.AppImage' -print0)
           [ "${#appimages[@]}" -gt 0 ] || { echo '::error::no AppImage was produced'; exit 1; }
           for appimage in "${appimages[@]}"; do
             bash scripts/fix-appimage-host-libs.sh --require-removal "$appimage"
           done
 
       - name: Normalize release asset names
-        run: node scripts/rename-release-assets.mjs src-tauri/target/release/bundle/appimage src-tauri/target/release/bundle/deb
+        run: node scripts/rename-release-assets.mjs apps/desktop/src-tauri/target/release/bundle/appimage apps/desktop/src-tauri/target/release/bundle/deb
 
       - name: Verify arm64 glibc ABI
         if: matrix.arch == 'arm64'
         shell: bash
         run: |
-          mapfile -d '' artifacts < <(find src-tauri/target/release/bundle/appimage src-tauri/target/release/bundle/deb -type f \( -name '*.AppImage' -o -name '*.deb' \) -print0)
+          mapfile -d '' artifacts < <(find apps/desktop/src-tauri/target/release/bundle/appimage apps/desktop/src-tauri/target/release/bundle/deb -type f \( -name '*.AppImage' -o -name '*.deb' \) -print0)
           [ "${#artifacts[@]}" -gt 0 ] || { echo '::error::no Linux arm64 artifacts were produced'; exit 1; }
           bash scripts/check-linux-glibc-abi.sh --max 2.35 "${artifacts[@]}"
 
@@ -116,7 +111,7 @@ jobs:
         with:
           name: release-linux-${{ matrix.arch }}
           path: |
-            src-tauri/target/release/bundle/appimage/*.AppImage
-            src-tauri/target/release/bundle/deb/*.deb
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
           retention-days: 7

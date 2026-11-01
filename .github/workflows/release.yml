@@ -11,9 +11,9 @@ on:
     types: [closed]
     paths:
       - package.json
-      - src-tauri/Cargo.toml
-      - src-tauri/Cargo.lock
-      - src-tauri/tauri.conf.json
+      - apps/desktop/src-tauri/Cargo.toml
+      - apps/desktop/src-tauri/Cargo.lock
+      - apps/desktop/src-tauri/tauri.conf.json
   # 手动触发：创建预发布测试构建。
   workflow_dispatch:
     inputs:

@@ -48,35 +48,34 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          node --input-type=commonjs <<'NODE'
-          const fs = require('node:fs');
-          const semver = require('semver');
-          const app = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-          const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { parseSemver } from './scripts/release-identity.mjs';
+          const app = JSON.parse(fs.readFileSync('apps/native/app.json', 'utf8'));
+          const version = JSON.parse(fs.readFileSync('apps/native/package.json', 'utf8')).version;
           if (app.expo.version !== version) throw new Error('app.json expo.version must equal package.json version');
-          const parsed = semver.parse(version);
-          if (!parsed || `${parsed.version}${parsed.build.length ? '+' + parsed.build.join('.') : ''}` !== version) throw new Error('package version must be canonical SemVer');
-          const iosVersion = `${parsed.major}.${parsed.minor}.${parsed.patch}`;
+          parseSemver(version);
+          const iosVersion = version.split(/[-+]/)[0];
           const identifier = app.expo.ios?.bundleIdentifier;
           const buildNumber = app.expo.ios?.buildNumber;
           if (typeof identifier !== 'string' || identifier !== identifier.trim() || !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(identifier)) throw new Error('Invalid iOS bundle identifier');
           if (typeof buildNumber !== 'string' || buildNumber !== buildNumber.trim() || !/^\d+(?:\.\d+){0,2}$/.test(buildNumber)) throw new Error('Invalid iOS build number');
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\nios_version=${iosVersion}\nidentifier=${identifier}\nbuild_number=${buildNumber}\n`);
           app.expo.version = iosVersion;
-          fs.writeFileSync('app.json', `${JSON.stringify(app, null, 2)}\n`);
+          fs.writeFileSync('apps/native/app.json', `${JSON.stringify(app, null, 2)}\n`);
           NODE
 
       - name: Generate iOS project
-        run: pnpm exec expo prebuild --platform ios --no-install
+        run: pnpm run prebuild:ios
 
       - name: Install CocoaPods dependencies
-        working-directory: ios
+        working-directory: apps/native/ios
         run: pod install
 
       - name: Build unsigned device Release app
         run: |
           set -euo pipefail
-          workspaces=(ios/*.xcworkspace)
+          workspaces=(apps/native/ios/*.xcworkspace)
           if [[ ${#workspaces[@]} -ne 1 || ! -d "${workspaces[0]}" ]]; then
             echo '::error::Expected one generated iOS workspace'
             exit 1

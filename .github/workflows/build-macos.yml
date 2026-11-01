@@ -122,30 +122,43 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm tauri build ${{ inputs.version != '' && '--config src-tauri/tauri.nightly.conf.json' || '' }} --target ${{ matrix.target }}
+        run: pnpm tauri build ${{ inputs.version != '' && '--config src-tauri/tauri.nightly.conf.json' || '' }} --target ${{ matrix.target }} --config src-tauri/tauri.macos-bundle.conf.json
 
       - name: Verify signature and notarization
         if: steps.check.outputs.should_run == 'true'
         shell: bash
         run: |
-          app_path="$(find "src-tauri/target/${{ matrix.target }}/release/bundle/macos" -type d -name '*.app' -print -quit)"
+          app_path="$(find "apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos" -type d -name '*.app' -print -quit)"
           if [ -z "$app_path" ]; then
             echo '::error::Built macOS app bundle was not found'
             exit 1
           fi
+          inner_apps=("$app_path"/Contents/Resources/runtime/darwin-*/*.app)
+          [ "${#inner_apps[@]}" -eq 1 ]
+          inner_app="${inner_apps[0]}"
+          for framework in "Electron Framework" Mantle ReactiveObjC Squirrel; do
+            for link in "$framework" Resources Versions/Current; do
+              path="$inner_app/Contents/Frameworks/$framework.framework/$link"
+              if [ ! -L "$path" ]; then
+                echo "::error::Framework symlink was not preserved: $path"
+                exit 1
+              fi
+            done
+          done
+          codesign --verify --deep --strict --verbose=2 "$inner_app"
           codesign --verify --deep --strict --verbose=2 "$app_path"
           xcrun stapler validate "$app_path"
           spctl --assess --type execute --verbose=4 "$app_path"
 
       - name: Normalize release asset names
         if: steps.check.outputs.should_run == 'true'
-        run: node scripts/rename-release-assets.mjs src-tauri/target/${{ matrix.target }}/release/bundle/dmg
+        run: node scripts/rename-release-assets.mjs apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg
 
       - name: Upload build output
         if: steps.check.outputs.should_run == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: release-${{ matrix.id }}
-          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          path: apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: 7

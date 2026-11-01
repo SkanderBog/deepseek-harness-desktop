@@ -1,10 +1,5 @@
-#!/bin/sh
-# 生成 Copr 用的 SRPM，只构建发布版。HEAD 须带上游发布 tag `v<package.json 版本>`（Release 1），
-# 或打包修复 tag `copr/<版本>-<N>`（Release N，同一版本补打包时递增）。
-# Version 里不能出现 `-`（dnfdragora 等前端会因此无法启动），预发布的 `-beta.1` 改写成
-# `~beta.1`，排序在正式版之前。同一 Copr 项目里有两个互斥的包：dsh-tauri 只构建正式版，遇到
-# 预发布版直接拒绝；dsh-tauri-beta 正式版与预发布版都构建。
-set -eu
+#!/bin/bash
+set -euo pipefail
 
 outdir=$1
 name=$2
@@ -24,12 +19,10 @@ esac
 command -v git >/dev/null 2>&1 || dnf -y install git-core
 command -v rpmbuild >/dev/null 2>&1 || dnf -y install rpm-build
 
-# Copr 在 mock 里以 root 处理别的用户克隆的仓库，git 会因 safe.directory 拒绝工作
 repo() {
   git -c safe.directory='*' -C "$top" "$@"
 }
 
-# 只读格式固定的单行字段，读不到就报错，避免把空值写进 spec
 field() {
   value=$(sed -n "$2" "$top/$1" | head -n 1)
   [ -n "$value" ] || fail "SRPM_FIELD_MISSING: $3 not found in $1"
@@ -55,22 +48,27 @@ case $raw in
 esac
 
 version=$(printf '%s' "$raw" | tr '-' '~')
-appname=$(field src-tauri/tauri.conf.json 's/^  "productName": "\([^"]*\)",$/\1/p' productName)
-binname=$(field src-tauri/Cargo.toml '2s/^name = "\([^"]*\)"$/\1/p' 'package name')
-summary=$(field src-tauri/tauri.conf.json 's/^    "shortDescription": "\([^"]*\)",$/\1/p' shortDescription)
-description=$(field src-tauri/tauri.conf.json 's/^    "longDescription": "\([^"]*\)"$/\1/p' longDescription)
-scheme=$(field src-tauri/tauri.conf.json 's/^        "schemes": \["\([a-z][a-z0-9+.-]*\)"\]$/\1/p' 'deep-link scheme')
-node_version=$(field src-tauri/src/config/constants.rs 's/^pub const NODE_VERSION: &str = "\(v[0-9.]*\)";$/\1/p' NODE_VERSION)
+appname=$(field apps/desktop/src-tauri/tauri.conf.json 's/^  "productName": "\([^"]*\)",$/\1/p' productName)
+binname=$(field apps/desktop/src-tauri/Cargo.toml '2s/^name = "\([^"]*\)"$/\1/p' 'package name')
+summary=$(field apps/desktop/src-tauri/Cargo.toml 's/^description = "\([^"]*\)"$/\1/p' description)
+description=$summary
+scheme=$(field apps/desktop/src-tauri/tauri.conf.json '/"schemes": \[/,/\]/{s/^[[:space:]]*"\([a-z][a-z0-9+.-]*\)"[,]\{0,1\}$/\1/p;}' 'deep-link scheme')
+node_version=$(field apps/desktop/src-tauri/src/config/constants.rs 's/^pub const NODE_VERSION: &str = "\(v[0-9.]*\)";$/\1/p' NODE_VERSION)
 packager=$(repo log -1 --format='%an <%ae>')
 
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+work=$(mktemp -d "${TMPDIR:-/tmp}/dsh-copr.XXXXXX")
 prefix="$name-$version"
 
-# 打包工作区而非 HEAD：本地验证时未提交的改动也能进 SRPM；Copr 上两者一致
-repo ls-files -z --cached --others --exclude-standard \
-  | tar -C "$top" --null --no-recursion --ignore-failed-read -T - \
-      --transform "flags=r;s|^|$prefix/|" -czf "$work/$prefix.tar.gz"
+modules="crates/tauri-runtime-electron crates/electron-rs crates/tauri-plugin-notifications"
+repo submodule update --init -- $modules
+repo ls-files -z --cached --others --exclude-standard -- . \
+  ':(exclude)archive' ':(exclude)source' ':(exclude)crates' ':(exclude).temp*' > "$work/files"
+for module in $modules; do
+  git -c safe.directory='*' -C "$top/$module" ls-files -z --cached -- . ':(exclude)source' \
+    | while IFS= read -r -d '' file; do printf '%s\0' "$module/$file"; done >> "$work/files"
+done
+tar -C "$top" --null --no-recursion -T "$work/files" \
+  --transform "flags=r;s|^|$prefix/|" -czf "$work/$prefix.tar.gz"
 
 sed -e "s|@NAME@|$name|" \
     -e "s|@CONFLICTS@|$conflicts|" \

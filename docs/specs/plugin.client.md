@@ -108,7 +108,7 @@ $$\text{client/index.ts} \longrightarrow \begin{bmatrix} \text{register/} \\ \te
 ### 5. API 层 (`apis/`)
 
 * **唯一允许发请求的层**。JSON 请求使用 `dsh-tauri/client` 导出的 `ofetch`（与既有 `fetch` 为同一 JSON 实例，不是流式传输）；严禁使用 `axios` 或 `window.fetch`。
-* `apis/index.ts` 与 `apis/index.type.ts` 由根目录 `genapi.config.ts` 使用 `dsh-h3/genapi` 从 `host/server/index.ts` 生成，修改服务契约后运行 `pnpm genapi`，禁止手改生成结果或恢复 `genapi.pipeline.ts`。插件路径统一为 `/api/tauri/<插件短名>`（如 `/api/tauri/remote/machines`），生成类型与消费方按新路径同步，不建立旧 URL 或 DTO 名别名。
+* `apis/index.ts` 与 `apis/index.type.ts` 由`packages/builtin-plugin-config/genapi.config.ts` 使用 `dsh-h3/genapi` 从 `host/server/index.ts` 生成，修改服务契约后运行 `pnpm genapi`，禁止手改生成结果或恢复 `genapi.pipeline.ts`。插件路径统一为 `/api/tauri/<插件短名>`（如 `/api/tauri/remote/machines`），生成类型与消费方按新路径同步，不建立旧 URL 或 DTO 名别名。
 * 请求函数名使用 `HTTP动词 + 路径领域名词`，通过根配置的 transform/patch 保持必要的既有操作名；body/query 必须传入生成函数对应参数，不能误当请求 options。业务类型可从生成响应的成功分支派生，保留真实错误联合，不复制另一套 DTO。
 * 保持现有 JSON 传输：插件生成文件使用 `dsh-tauri/client` 的 `ofetch` 与 type-only `FetchOptions`；桌面壳 SSH 的 `src/apis/remote.ts` 使用 `./http` 的 invoke 适配，不改用浏览器原生 fetch。
 
@@ -120,7 +120,7 @@ $$\text{client/index.ts} \longrightarrow \begin{bmatrix} \text{register/} \\ \te
 * **样式选型按「通用 / 业务」二分**：
   * **通用控件一律用 `tv`（`tailwind-variants`）+ Tailwind 工具类**：变体即类型（`VariantProps` 推导，禁止手写变体/尺寸类型），多部件用 `slots`，条件态用布尔变体与 `compoundSlots`。
   * **业务组件直接写 `className`**：一次性布局与配色不建 variant 层、不抽象 `tv`。
-  * 颜色优先用 `tailwind.plugins.config.js` 已登记的语义 token（`text-primary`、`bg-layer-1`、`border-border-l3`、`shadow-focus-ring`）；未登记的官方变量才回退任意值 `bg-[var(--dsw-*)]`。新增主题键必须同步该配置文件。
+  * 颜色优先用 `packages/builtin-plugin-config/tailwind.config.js` 已登记的语义 token（`text-primary`、`bg-layer-1`、`border-border-l3`、`shadow-focus-ring`）；未登记的官方变量才回退任意值 `bg-[var(--dsw-*)]`。新增主题键必须同步该配置文件。
   * 新写的工具类只有在插件 Tailwind 产物里存在才生效——产物是 `dsh-tauri-ui` 的 `src/client/styles/index.ts`（由 `scripts/taiwindcss.ts` 消费同目录 `index.css`、扫描 `packages/*/src` 生成、lightningcss 压缩后内嵌，并由 `dsh-tauri-ui` 自己 `mountStyle`）；dev 下 watcher 自动重生成，提交前跑 `pnpm build:taiwindcss`；漏生成不会报错，只是静默无样式。
   * **叠加同类工具类必须消歧**：Tailwind 里同属性谁生效由**产物顺序**决定，不由 className 里的先后决定。`bg-transparent font-normal` 这类「基础态」不要与条件类同列叠加（`bg-transparent` 在产物里更靠后，会盖掉条件分支的 `bg-[…]`）；手写 `className` 用 `cn()`（`dsh-tauri/client` 转出的 tailwind-merge）合并，或三元整段互换；`tv` 内部已走 merge，无需额外处理。
   * **禁止用 `font` 简写**：`[font:inherit]` 是 shorthand，会把同列 `text-[13px]` 的 `font-size` 一起重置（产物里 arbitrary property 排在字号工具类之后 → 字号变大）。要继承字体只写 `[font-family:inherit]`。

@@ -1,0 +1,8 @@
+- id: ui-settings-models
+  disabled: true
+
+- insert:
+    - id: dsh-tauri-model
+      name: dsh-tauri-model
+    - id: dsh-taiwind
+      name: dsh-taiwind
