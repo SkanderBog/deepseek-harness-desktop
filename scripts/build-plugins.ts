@@ -174,6 +174,7 @@ interface PackageManifest {
   exports?: unknown
   main?: string
   module?: string
+  dsh?: { taiwind?: string }
 }
 
 interface DeploymentIndex {
@@ -287,6 +288,9 @@ function entryTargets(manifest: PackageManifest): string[] {
     }
   }
   walk(manifest.exports)
+  if (manifest.dsh?.taiwind) {
+    targets.push(manifest.dsh.taiwind)
+  }
   return targets
 }
 

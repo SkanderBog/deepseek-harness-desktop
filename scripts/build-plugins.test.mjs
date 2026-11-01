@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { apply } from 'dsh-taiwind'
 import { afterEach, expect, it } from 'vitest'
 import { pruneDeployment } from './build-plugins.ts'
 
@@ -40,6 +41,70 @@ it('preserves the oxide entry when its unpublished optional WASI fallback is abs
   expect(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))).toEqual({ name: '@tailwindcss/oxide', main: 'index.js' })
   expect(existsSync(join(dir, 'tailwindcss-oxide.wasi.cjs'))).toBe(false)
   expect(existsSync(join(dir, 'README.md'))).toBe(false)
+})
+
+it('compiles declared Tailwind CSS from pruned release resources', async () => {
+  const { root, dir, names } = fixture('styled-plugin', '')
+  mkdirSync(join(dir, 'src'))
+  mkdirSync(join(dir, 'dist'))
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: 'styled-plugin',
+    main: 'index.js',
+    dsh: { taiwind: 'src/main.css' },
+  }))
+  writeFileSync(join(dir, 'src/main.css'), '@import "tailwindcss"; @theme { --color-release-accent: #123456; }')
+  writeFileSync(join(dir, 'src/development.ts'), 'export const unused = true')
+  writeFileSync(join(dir, 'dist/client.cjs'), 'module.exports = "flex bg-release-accent"')
+  pruneDeployment(root, names)
+  const cleanups = []
+  const warnings = []
+  let route
+  try {
+    await apply({
+      clientModules: {
+        graph: () => ({ entries: [{ id: 'styled-plugin' }] }),
+        clientPath: () => join(dir, 'dist/client.cjs'),
+        onGraphChanged: () => () => {},
+        onRebuilt: () => () => {},
+      },
+      connection: { requestRejection: () => undefined },
+      webServer: {
+        register: (value) => {
+          route = value
+          return () => {}
+        },
+      },
+      logger: { warn: message => warnings.push(message) },
+      effect: (callback) => { cleanups.push(callback()) },
+      on: () => {},
+    })
+    let status
+    let css
+    route.handler({ method: 'GET', headers: {} }, {
+      setHeader() {},
+      writeHead: (value) => { status = value },
+      end: (value) => { css = value },
+    })
+    expect(warnings).toEqual([])
+    expect(status).toBe(200)
+    expect(css).toContain('.bg-release-accent')
+    expect(css).toContain('#123456')
+    expect(css).toContain('.flex')
+    expect(existsSync(join(dir, 'src/development.ts'))).toBe(false)
+  }
+  finally {
+    for (const cleanup of cleanups.reverse()) cleanup()
+  }
+})
+
+it('rejects deployment when a declared Tailwind stylesheet is missing', () => {
+  const { root, dir, names } = fixture('styled-plugin', '')
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: 'styled-plugin',
+    main: 'index.js',
+    dsh: { taiwind: 'src/main.css' },
+  }))
+  expect(() => pruneDeployment(root, names)).toThrow('PLUGIN_DEPLOY_ENTRY_MISSING:')
 })
 
 it('preserves relative runtime targets under prunable directories', () => {
