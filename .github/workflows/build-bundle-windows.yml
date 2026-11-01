@@ -55,17 +55,24 @@ jobs:
           dsh-tag: ${{ inputs.dsh_tag }}
           bundle-git: ${{ inputs.bundle_git }}
 
-      # 不内置 WebView2：`offlineInstaller` 会把 212 MB 的完整离线运行时安装器打进
-      # exe，离线包体积因此从约 63 MB 涨到约 275 MB。用 Tauri 默认的
-      # downloadBootstrapper：只在目标机缺 WebView2 时才于安装阶段去微软拉约 2 MB
-      # 引导器，Win11 与已更新的 Win10 默认自带运行时。离线包只背 Node/dsh/pnpm。
-      #
-      # 只出 NSIS：离线包资源有数万个文件，WiX/MSI 既慢又受 2 GB cab 上限约束。
       - name: Build offline installer
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --bundles nsis
+        shell: pwsh
+        run: |
+          if (Test-Path S:\) { throw "S: is already in use" }
+          subst S: "$env:GITHUB_WORKSPACE"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to map the build workspace" }
+          Push-Location S:\apps\desktop
+          try {
+            # NSIS cannot open long resource paths; pnpm --filter resolves the short drive back to the long path.
+            node ../../node_modules/@tauri-apps/cli/tauri.js build --bundles nsis
+            if ($LASTEXITCODE -ne 0) { throw "Offline installer build failed" }
+          } finally {
+            Pop-Location
+            subst S: /D
+          }
 
       - name: Upload build outputs
         uses: actions/upload-artifact@v6
