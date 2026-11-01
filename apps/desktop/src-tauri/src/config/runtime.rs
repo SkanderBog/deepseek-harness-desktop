@@ -650,8 +650,11 @@ pub fn is_runtime_compatible(app_handle: &crate::AppHandle) -> bool {
 
 /// 从打包的 Harness 清单读取 dsh 版本（界面展示用）
 pub fn get_dsh_version<R: Runtime>(app_handle: &AppHandle<R>) -> Option<String> {
-    let manifest_path = get_dsh_package_json_path(app_handle);
-    let content = fs::read_to_string(&manifest_path).ok()?;
+    dsh_version_at(&get_dsh_package_json_path(app_handle))
+}
+
+pub(crate) fn dsh_version_at(manifest_path: &Path) -> Option<String> {
+    let content = fs::read_to_string(manifest_path).ok()?;
     let manifest: serde_json::Value = serde_json::from_str(&content).ok()?;
     manifest
         .get("dependencies")

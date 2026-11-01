@@ -190,6 +190,11 @@ pub(super) fn prepare(
     let Some(version) = exact_core_version(&inputs, &core_dir) else {
         return Ok(None);
     };
+    core::ensure_app_core_supported(
+        &core_dir,
+        None,
+        Some(inputs.manifest.engines.dsh.minimum.trim()),
+    )?;
     let node_root = inputs.root(deps::DEP_NODE);
     let node_entry = deps::entry_relative_from(Some(&inputs.manifest), deps::DEP_NODE);
     let pinned = matches!(inputs.mapping.get(deps::DEP_NODE), Some(Some(_)));

@@ -105,6 +105,23 @@ pub(super) fn core_supports_bundled_plugins(version: &str, baseline: Option<&str
     }
 }
 
+pub(crate) fn ensure_app_core_supported(
+    core_dir: &std::path::Path,
+    tag: Option<&str>,
+    baseline: Option<&str>,
+) -> Result<(), String> {
+    let version = config::dsh_version_at(&core_dir.join(config::DSH_MANIFEST_RELATIVE))
+        .or_else(|| tag.and_then(parse_version_from_tag));
+    if !core_supports_bundled_plugins(version.as_deref().unwrap_or_default(), baseline) {
+        return Err(format!(
+            "CORE_APP_UNSUPPORTED: app dsh {} is below the minimum supported core {}; download and select a newer core in Settings > Core, or update the desktop app for a newer bundled core",
+            version.as_deref().unwrap_or_default(),
+            baseline.unwrap_or_default(),
+        ));
+    }
+    Ok(())
+}
+
 fn warn_unsupported_local_core(version: &str, baseline: Option<&str>) {
     if UNSUPPORTED_LOCAL_WARNED.set(()).is_err() {
         return;
@@ -213,6 +230,36 @@ pub fn active_version(app_handle: &AppHandle) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_core_baseline_checks_disk_and_tag_without_blocking_unknown_versions() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = root.path().join(config::DSH_MANIFEST_RELATIVE);
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        let baseline = Some("0.2.1-rc.1");
+        assert!(ensure_app_core_supported(root.path(), None, baseline).is_ok());
+        assert!(ensure_app_core_supported(root.path(), Some("dsh-0.2.0-123"), baseline).is_err());
+        for package in [
+            serde_json::json!({"dependencies": {"@deepseek-ai/dsh": "^0.2.0"}}),
+            serde_json::json!({"name": "@deepseek-ai/dsh", "version": "0.2.0"}),
+        ] {
+            std::fs::write(&manifest, package.to_string()).unwrap();
+            let error = ensure_app_core_supported(
+                root.path(), Some("dsh-0.2.1-rc.1-123"), baseline,
+            ).unwrap_err();
+            assert!(error.starts_with("CORE_APP_UNSUPPORTED:"));
+            assert!(error.contains("0.2.0"));
+            assert!(error.contains("0.2.1-rc.1"));
+            assert!(error.contains("download and select a newer core"));
+            assert!(ensure_app_core_supported(root.path(), None, None).is_ok());
+        }
+        for version in ["0.2.1-rc.1", "0.2.1", "unknown", ""] {
+            std::fs::write(&manifest, serde_json::json!({
+                "name": "@deepseek-ai/dsh", "version": version,
+            }).to_string()).unwrap();
+            assert!(ensure_app_core_supported(root.path(), None, baseline).is_ok());
+        }
+    }
 
     #[test]
     fn core_source_round_trips() {

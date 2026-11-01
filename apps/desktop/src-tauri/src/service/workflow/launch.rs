@@ -523,6 +523,17 @@ pub async fn launch(app_handle: crate::AppHandle) -> Result<(), String> {
         log::error!("Harness not installed");
         return Err("HARNESS_NOT_FOUND: Harness not installed".to_string());
     }
+    if dsh_binary_path == config::get_dsh_binary_path(&app_handle) {
+        let core_dir = config::get_dsh_install_path(&app_handle);
+        let tag = (config::dependencies::bundled_core_dir(&app_handle).as_ref() != Some(&core_dir))
+            .then(|| config::get_dsh_pkg_tag(&app_handle))
+            .flatten();
+        crate::service::core::ensure_app_core_supported(
+            &core_dir,
+            tag.as_deref(),
+            config::manifest::minimum_dsh_version(&app_handle).as_deref(),
+        )?;
+    }
     mark_phase("resolve", &mut phase_started);
 
     // 从这里开始持有与核心切换共用的互斥锁：最终状态检查、启动守卫、残留清扫
