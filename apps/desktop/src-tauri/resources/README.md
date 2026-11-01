@@ -2,8 +2,8 @@
 
 This directory is bundled into the installer as `resources/**`.
 
-The current recommended Harness core is `0.2.1-rc.1`; the minimum supported core
-is `0.1.7-rc.1`. Earlier core versions are unsupported. Legacy data-location notes
+The current recommended Harness core is `0.2.1-rc.5`; the minimum supported core
+is `0.2.1-rc.1`. Earlier core versions are unsupported. Legacy data-location notes
 below describe migration history, not support for earlier Harness versions.
 
 At runtime, the application downloads everything it needs into the OS user-data
@@ -50,7 +50,7 @@ mapping entry**.
 
 ```jsonc
 {
-  "engines": { "dsh": { "recommend": "0.2.1-rc.1", "minimum": "0.1.7-rc.1" } },
+  "engines": { "dsh": { "recommend": "0.2.1-rc.5", "minimum": "0.2.1-rc.1" } },
   "dependencies": {
     "node": {
       "engine": ">=22.22.0",
@@ -79,7 +79,7 @@ relative path).
 | Section | Purpose |
 | ------- | ------- |
 | `engines.dsh.recommend` | Recommended core version (update hints, "above recommended" marks) |
-| `engines.dsh.minimum` | Lowest supported core (`0.1.7-rc.1`); earlier cores are unsupported |
+| `engines.dsh.minimum` | Lowest supported core (`0.2.1-rc.1`); earlier cores are unsupported |
 | `dependencies` | Dependency mapping spec: entry path per platform, default managed root, whether arbitrary overrides are allowed |
 | `plugins.preset` | Community preset list shown by the first-run wizard / sidebar |
 | `plugins.built-in` | Plugins shipped *with* the installer (auto-installed and auto-healed at startup) |

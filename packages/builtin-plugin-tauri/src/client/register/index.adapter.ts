@@ -106,18 +106,6 @@ function resolveProvideInfo(
   sessionId: string,
   probe: AdapterProbe,
 ): unknown {
-  const native = sessions.provideInfo
-  if (typeof native === 'function') {
-    let value: unknown
-    try {
-      value = native.call(sessions, sessionId)
-    }
-    catch {
-      value = undefined
-    }
-    if (value !== undefined)
-      return value
-  }
   try {
     const bindingFn = sessions.binding
     const binding = typeof bindingFn === 'function' ? bindingFn.call(sessions, sessionId) : undefined
@@ -148,31 +136,6 @@ const SERVICES_AUTO_BIND_MIGRATION: DshMigration = {
       surface.sessions = adaptService(surface.sessions)
     if (surface.workspaces !== undefined)
       surface.workspaces = adaptService(surface.workspaces)
-  },
-}
-
-const SESSIONS_LIST_PROJECTION_MIGRATION: DshMigration = {
-  id: 'sessions:list-projection',
-  description: 'sessions.list 投影 → sessions.getSnapshot / subscribe 顶层别名',
-  detect: (_probe, surface) =>
-    surface.sessions?.list !== undefined && typeof surface.sessions.getSnapshot !== 'function',
-  apply(surface) {
-    const sessions = surface.sessions
-    const list = sessions?.list as AdapterListProjection | undefined
-    if (sessions === undefined || list === undefined)
-      return
-    surface.sessions = new Proxy(sessions as object, {
-      get(target, prop) {
-        if (prop === 'list')
-          return list
-        if (prop === 'getSnapshot')
-          return () => list.getSnapshot()
-        if (prop === 'subscribe')
-          return (listener: () => void) => list.subscribe(listener)
-        const member = Reflect.get(target, prop)
-        return typeof member === 'function' ? member.bind(target) : member
-      },
-    }) as AdapterSessions
   },
 }
 
@@ -391,7 +354,6 @@ const WORKSPACE_ADD_MIGRATION: DshMigration = {
 
 export const DEFAULT_DSH_MIGRATIONS: readonly DshMigration[] = [
   SERVICES_AUTO_BIND_MIGRATION,
-  SESSIONS_LIST_PROJECTION_MIGRATION,
   SESSIONS_CURRENT_PROJECTION_MIGRATION,
   SESSIONS_PROVIDE_INFO_MIGRATION,
   WORKSPACES_NAVIGATION_MIGRATION,

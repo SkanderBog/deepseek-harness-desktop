@@ -23,13 +23,13 @@ it('reads bundle metadata and rewrites bundled roots in the desktop workspace', 
     mkdirSync(path.join(desktop, 'src/config'), { recursive: true })
     const file = path.join(desktop, 'resources/manifest.jsonc')
     writeFileSync(file, JSON.stringify({
-      engines: { dsh: { recommend: '0.2.1-rc.4' } },
+      engines: { dsh: { recommend: '0.2.1-rc.5' } },
       dependencies: { node: {}, pnpm: {}, dsh: {}, git: { managedRoot: 'unchanged' } },
     }))
     const constants = ['NODE_VERSION', 'NODE_BASE_URL', 'PNPM_VERSION', 'PNPM_BASE_URL', 'PNPM_SHA256', 'MINGIT_VERSION', 'MINGIT_BASE_URL', 'MINGIT_X64_SHA256', 'MINGIT_ARM64_SHA256', 'DSH_CORE_URL']
     writeFileSync(path.join(desktop, 'src/config/constants.rs'), constants.map(name => `pub const ${name}: &str = "${name}";`).join('\n'))
 
-    expect(readRecommendedDshVersion(repo)).toBe('0.2.1-rc.4')
+    expect(readRecommendedDshVersion(repo)).toBe('0.2.1-rc.5')
     expect(readBuildConstants(repo)).toMatchObject({ nodeVersion: 'NODE_VERSION', pnpmSha256: 'PNPM_SHA256', dshCoreUrl: 'DSH_CORE_URL' })
     expect(applyBundleManifest({ repo, platform: 'windows' }).file).toBe(file)
     expect(JSON.parse(readFileSync(file, 'utf8')).dependencies).toEqual({

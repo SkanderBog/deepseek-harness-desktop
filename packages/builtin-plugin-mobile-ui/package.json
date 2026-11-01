@@ -24,7 +24,7 @@
     "src/main.css"
   ],
   "engines": {
-    "dsh": ">=0.1.7-rc.1"
+    "dsh": ">=0.2.1-rc.1"
   },
   "dsh": {
     "client": {

@@ -225,23 +225,23 @@ mod tests {
 
     #[test]
     fn baseline_gate_accepts_equal_or_newer_versions() {
-        let baseline = "0.1.7-rc.1";
-        for version in ["0.1.7-rc.1", "0.1.7-rc.2", "0.1.7", "0.2.1-rc.1"] {
+        let baseline = "0.2.1-rc.1";
+        for version in ["0.2.1-rc.1", "0.2.1-rc.2", "0.2.1", "0.3.0"] {
             assert!(meets_baseline(version, baseline), "version={version}");
         }
     }
 
     #[test]
     fn baseline_gate_rejects_older_versions() {
-        let baseline = "0.1.7-rc.1";
+        let baseline = "0.2.1-rc.1";
         for version in [
             "0.1.0-rc.7",
-            "0.1.5-rc.1",
-            "0.1.6-alpha.2",
-            "0.1.6",
-            "0.1.7-alpha.1",
-            "0.1.7-beta.1",
-            "0.1.7-rc.0",
+            "0.1.7-rc.1",
+            "0.2.0-alpha.2",
+            "0.2.0",
+            "0.2.1-alpha.1",
+            "0.2.1-beta.1",
+            "0.2.1-rc.0",
         ] {
             assert!(!meets_baseline(version, baseline), "version={version}");
         }
@@ -249,14 +249,14 @@ mod tests {
 
     #[test]
     fn baseline_gate_passes_unparsable_versions() {
-        assert!(meets_baseline("", "0.1.7-rc.1"));
-        assert!(meets_baseline("not-a-version", "0.1.7-rc.1"));
-        assert!(meets_baseline("0.1.7-rc.1", ""));
+        assert!(meets_baseline("", "0.2.1-rc.1"));
+        assert!(meets_baseline("not-a-version", "0.2.1-rc.1"));
+        assert!(meets_baseline("0.2.1-rc.1", ""));
     }
 
     #[test]
     fn missing_baseline_keeps_local_core_usable() {
         assert!(core_supports_bundled_plugins("0.1.6", None));
-        assert!(!core_supports_bundled_plugins("0.1.6", Some("0.1.7-rc.1")));
+        assert!(!core_supports_bundled_plugins("0.2.0", Some("0.2.1-rc.1")));
     }
 }

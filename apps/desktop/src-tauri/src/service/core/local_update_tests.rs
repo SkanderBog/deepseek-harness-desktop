@@ -187,7 +187,7 @@ fn local_update_isolation_child() {
         case.as_str(),
         "active-local" | "automatic-local" | "managed-success"
     ) {
-        "0.2.1-rc.4"
+        "0.2.1-rc.5"
     } else if matches!(
         case.as_str(),
         "unchanged-version" | "missing-version" | "pnpm-success"
@@ -214,7 +214,7 @@ fn local_update_isolation_child() {
     } else if case == "unreadable-app" {
         b"not json".as_slice()
     } else {
-        br#"{"dependencies":{"@deepseek-ai/dsh":"0.2.1-rc.4"}}"#.as_slice()
+        br#"{"dependencies":{"@deepseek-ai/dsh":"0.2.1-rc.5"}}"#.as_slice()
     };
     std::fs::write(managed.join("package.json"), managed_manifest).unwrap();
     let profile = config::get_dsh_data_path(app.handle()).join("profiles/keep-profile");
@@ -252,7 +252,7 @@ fn local_update_isolation_child() {
             );
             std::fs::write(
                 package.join("package.json"),
-                br#"{"name":"@deepseek-ai/dsh","version":"0.2.1-rc.4"}"#,
+                br#"{"name":"@deepseek-ai/dsh","version":"0.2.1-rc.5"}"#,
             )
             .unwrap();
             config::update_store_dat_setting(app.handle(), |setting| {

@@ -247,10 +247,6 @@ pub(super) fn prepare(
         ),
         ("composer workspace-less patch", patch::composer::apply_at),
         (
-            "conversation draft compatibility patch",
-            patch::conversation_draft::apply_at,
-        ),
-        (
             "scroll follow reduced-motion patch",
             patch::scroll_follow::apply_at,
         ),
