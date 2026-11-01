@@ -10,12 +10,13 @@ const mocks = vi.hoisted(() => ({
   setShortcuts: vi.fn(),
   dshStyle: { frame: { background: 'rgb(10, 20, 30)' }, sidebar: { background: 'rgb(40, 50, 60)' } },
   setDshStyle: vi.fn(),
-  harness: { status: 'ready', serviceHealthy: true, serviceRunning: true, webviewKey: 0, webviewLoaded: false, webviewAlive: false, webviewError: false, startupPhase: 'process-boot', busyAction: null },
+  harness: { status: 'ready', serviceHealthy: true, serviceRunning: true, webviewKey: 0, webviewLoaded: false, webviewAlive: false, webviewError: false, webviewSrc: 'http://127.0.0.1:3081', startupPhase: 'process-boot', busyAction: null },
   recovery: { recovery: { required: false } },
   emit: vi.fn().mockResolvedValue(undefined),
+  getAllWindows: vi.fn(),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
-  action: null as null | ((event: { actionId?: string, inputValue?: string, extra?: { tag?: string } }) => void),
-  clicked: null as null | ((event: { data?: { tag?: string } }) => Promise<void>),
+  action: null as null | ((event: { actionId?: string, inputValue?: string, extra?: { tag?: string, windowLabel?: string, sourceOrigin?: string } }) => Promise<void>),
+  clicked: null as null | ((event: { data?: { tag?: string, sessionId?: string, windowLabel?: string, sourceOrigin?: string } }) => Promise<void>),
   window: {
     label: 'window-2',
     isMinimized: vi.fn().mockResolvedValue(false),
@@ -29,8 +30,12 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => mocks.window }))
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => mocks.window, getAllWindows: mocks.getAllWindows }))
 vi.mock('@tauri-apps/api/event', () => ({
+  listen: async (event: string, handler: (event: { payload: unknown }) => void) => {
+    mocks.listeners.set(event, handler)
+    return () => mocks.listeners.delete(event)
+  },
   emitTo: (target: unknown, event: string, payload?: unknown) => {
     expect(target).toEqual({ kind: 'Window', label: 'window-2' })
     return mocks.emit(event, payload)
@@ -113,13 +118,18 @@ function navbar() {
 beforeEach(() => {
   vi.useFakeTimers()
   window.location.hash = ''
-  Object.assign(mocks.harness, { status: 'ready', serviceHealthy: true })
+  window.localStorage.clear()
+  window.localStorage.setItem('dsh-notification-source:window-3', 'http://127.0.0.1:3081')
+  window.localStorage.setItem('dsh-notification-source:window-1', 'http://127.0.0.1:3081')
+  Object.assign(mocks.harness, { status: 'ready', serviceHealthy: true, webviewSrc: 'http://127.0.0.1:3081' })
   mocks.recovery.recovery.required = false
   vi.spyOn(console, 'warn').mockImplementation(() => {})
   mocks.navbar.mockClear()
   mocks.setShortcuts.mockClear()
   vi.clearAllMocks()
   mocks.listeners.clear()
+  mocks.emit.mockResolvedValue(undefined)
+  mocks.getAllWindows.mockResolvedValue([{ label: 'window-3' }, mocks.window])
   mocks.window.isMinimized.mockResolvedValue(false)
   mocks.window.isVisible.mockResolvedValue(true)
   mocks.window.isFocused.mockResolvedValue(true)
@@ -173,15 +183,16 @@ it('returns to local content before opening remote settings after plugin readine
   expect(mocks.emit).toHaveBeenCalledWith('dsh://settings:open', { section: 'dsh-tauri-remote', tab: 'machines' })
 })
 
-it('coalesces duplicate notification actions without losing the response text', () => {
+it('coalesces duplicate notification actions without losing the response text', async () => {
   render(<Webview />)
-  act(() => {
-    mocks.action!({ actionId: 'reply', inputValue: 'answer', extra: { tag: 'session-tag' } })
-    mocks.action!({ actionId: 'reply', extra: { tag: 'session-tag' } })
+  await act(async () => {
+    await mocks.action!({ actionId: 'reply', inputValue: 'answer', extra: { tag: 'session-tag', sourceOrigin: 'http://127.0.0.1:3081' } })
+    await mocks.action!({ actionId: 'reply', extra: { tag: 'session-tag', sourceOrigin: 'http://127.0.0.1:3081' } })
     vi.advanceTimersByTime(250)
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
   })
   expect(mocks.emit.mock.calls.filter(([event]) => event === 'dsh://notification-clicked')).toEqual([
-    ['dsh://notification-clicked', { tag: 'session-tag', action: 'reply', inputValue: 'answer' }],
+    ['dsh://notification-clicked', { tag: 'session-tag', sourceOrigin: 'http://127.0.0.1:3081', action: 'reply', inputValue: 'answer' }],
   ])
   expect(mocks.window.show).not.toHaveBeenCalled()
 })
@@ -190,10 +201,157 @@ it('activates a minimized window before delivering a native notification click',
   mocks.window.isMinimized.mockResolvedValue(true)
   render(<Webview />)
   await act(async () => {
-    await mocks.clicked!({ data: { tag: 'session-tag' } })
+    await mocks.clicked!({ data: { tag: 'session-tag', sessionId: 'session-1', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' } })
+    expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
   })
   expect(mocks.window.unminimize).toHaveBeenCalledOnce()
   expect(mocks.window.show).toHaveBeenCalledOnce()
   expect(mocks.window.setFocus).toHaveBeenCalledOnce()
-  expect(mocks.emit).toHaveBeenCalledWith('dsh://notification-clicked', { tag: 'session-tag' })
+  expect(mocks.emit.mock.calls.filter(([event]) => event === 'dsh://notification-clicked')).toEqual([
+    ['dsh://notification-clicked', { tag: 'session-tag', sessionId: 'session-1', sourceOrigin: 'http://127.0.0.1:3081' }],
+  ])
+})
+
+it('ignores native notification clicks and actions owned by another live window', async () => {
+  render(<Webview />)
+  await act(async () => {
+    await mocks.clicked!({ data: { tag: 'session-tag', sessionId: 'session-1', windowLabel: 'window-3', sourceOrigin: 'http://127.0.0.1:3081' } })
+    await mocks.action!({ actionId: 'approve', extra: { tag: 'session-tag', windowLabel: 'window-3', sourceOrigin: 'http://127.0.0.1:3081' } })
+    vi.advanceTimersByTime(250)
+  })
+  expect(mocks.window.show).not.toHaveBeenCalled()
+  expect(mocks.window.setFocus).not.toHaveBeenCalled()
+  expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
+})
+
+it.each(['window-closed', undefined])('elects one live shell for notification owner %s', async (windowLabel) => {
+  mocks.getAllWindows.mockResolvedValue([{ label: 'pet' }, { label: 'window-3' }, mocks.window])
+  render(<Webview />)
+  await act(async () => {
+    await mocks.clicked!({ data: { tag: 'historical', sessionId: 'session-old', windowLabel, sourceOrigin: 'http://127.0.0.1:3081' } })
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
+  })
+  expect(mocks.window.show).toHaveBeenCalledOnce()
+  expect(mocks.emit).toHaveBeenCalledWith('dsh://notification-clicked', { tag: 'historical', sessionId: 'session-old', sourceOrigin: 'http://127.0.0.1:3081' })
+  mocks.window.show.mockClear()
+  mocks.emit.mockClear()
+  mocks.getAllWindows.mockResolvedValue([mocks.window, { label: 'window-1' }, { label: 'pet' }])
+  await act(async () => {
+    await mocks.clicked!({ data: { sessionId: 'session-old', windowLabel, sourceOrigin: 'http://127.0.0.1:3081' } })
+  })
+  expect(mocks.window.show).not.toHaveBeenCalled()
+  expect(mocks.emit).not.toHaveBeenCalled()
+})
+
+it.each(['http://127.0.0.1:4000', undefined])('rejects a notification from incompatible or unknown source %s even for its owner', async (sourceOrigin) => {
+  render(<Webview />)
+  await act(async () => {
+    await mocks.clicked!({ data: { sessionId: 'wrong-host', windowLabel: 'window-2', sourceOrigin } })
+    await mocks.action!({ actionId: 'approve', extra: { tag: 'wrong-host', windowLabel: 'window-2', sourceOrigin } })
+    vi.advanceTimersByTime(250)
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
+  })
+  expect(mocks.window.show).not.toHaveBeenCalled()
+  expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
+})
+
+it('takes over only matching origins when other profile and remote shells sort first', async () => {
+  mocks.getAllWindows.mockResolvedValue([{ label: 'main' }, { label: 'remote-1' }, { label: 'window-3' }, mocks.window])
+  window.localStorage.setItem('dsh-notification-source:main', 'http://127.0.0.1:4000')
+  window.localStorage.setItem('dsh-notification-source:remote-1', 'https://remote.test')
+  window.localStorage.setItem('dsh-notification-source:window-3', 'http://127.0.0.1:4000')
+  render(<Webview />)
+  await act(async () => {
+    await mocks.clicked!({ data: { sessionId: 'same-profile', windowLabel: 'window-3', sourceOrigin: 'http://127.0.0.1:3081' } })
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
+  })
+  expect(mocks.window.show).toHaveBeenCalledOnce()
+  expect(mocks.emit).toHaveBeenCalledWith('dsh://notification-clicked', { tag: undefined, sessionId: 'same-profile', sourceOrigin: 'http://127.0.0.1:3081' })
+})
+
+it('retains queued local clicks while the owning shell displays a remote host', async () => {
+  render(<Webview />)
+  await act(async () => {
+    await mocks.clicked!({ data: { sessionId: 'local-session', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' } })
+  })
+  act(() => navbar().onRemoteChange('https://remote.test/?token=secret', null))
+  await act(async () => {
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'https://remote.test' } })
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
+  })
+  expect(window.localStorage.getItem('dsh-notification-source:window-2')).toBe('https://remote.test')
+  expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
+  act(() => navbar().onRemoteChange('', null))
+  await act(async () => {
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
+  })
+  expect(mocks.emit).toHaveBeenCalledWith('dsh://notification-clicked', { tag: undefined, sessionId: 'local-session', sourceOrigin: 'http://127.0.0.1:3081' })
+})
+
+it.each([
+  ['click', 'http://127.0.0.1:3081'],
+  ['action', 'http://127.0.0.1:3081'],
+  ['click', 'https://other.test'],
+  ['action', 'https://other.test'],
+])('buffers cold %s until the source becomes %s', async (kind, sourceOrigin) => {
+  mocks.harness.webviewSrc = ''
+  const view = render(<Webview />)
+  const metadata = { tag: 'cold-tag', sessionId: 'cold-session', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' }
+  await act(async () => {
+    if (kind === 'click')
+      await mocks.clicked!({ data: metadata })
+    else
+      await mocks.action!({ actionId: 'approve', extra: metadata })
+    await vi.advanceTimersByTimeAsync(250)
+  })
+  expect(mocks.window.show).not.toHaveBeenCalled()
+  expect(mocks.emit).not.toHaveBeenCalledWith('dsh://notification-clicked', expect.anything())
+  await act(async () => {
+    mocks.harness.webviewSrc = sourceOrigin
+    view.rerender(<Webview />)
+  })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(250)
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin } })
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin } })
+  })
+  const deliveries = mocks.emit.mock.calls.filter(([event]) => event === 'dsh://notification-clicked')
+  if (sourceOrigin === 'http://127.0.0.1:3081') {
+    expect(deliveries).toEqual([['dsh://notification-clicked', kind === 'click'
+      ? { tag: 'cold-tag', sessionId: 'cold-session', sourceOrigin }
+      : { tag: 'cold-tag', action: 'approve', inputValue: undefined, sourceOrigin }]])
+    expect(mocks.window.show).toHaveBeenCalledTimes(kind === 'click' ? 1 : 0)
+  }
+  else {
+    expect(deliveries).toEqual([])
+    expect(mocks.window.show).not.toHaveBeenCalled()
+  }
+})
+
+it('retains a notification when delivery fails and retries on the next ready event', async () => {
+  const error = new Error('guest unavailable')
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  render(<Webview />)
+  await act(async () => {
+    await mocks.clicked!({ data: { sessionId: 'session-1', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' } })
+  })
+  mocks.emit.mockRejectedValueOnce(error)
+  await act(async () => {
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
+  })
+  expect(console.error).toHaveBeenCalledWith('[notification] delivery failed:', error)
+  await act(async () => {
+    await mocks.clicked!({ data: { sessionId: 'session-2', windowLabel: 'window-2', sourceOrigin: 'http://127.0.0.1:3081' } })
+  })
+  await act(async () => {
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
+    mocks.listeners.get('dsh://notification-ready')!({ payload: { sourceOrigin: 'http://127.0.0.1:3081' } })
+  })
+  expect(mocks.emit.mock.calls.filter(([event]) => event === 'dsh://notification-clicked')).toEqual([
+    ['dsh://notification-clicked', { tag: undefined, sessionId: 'session-1', sourceOrigin: 'http://127.0.0.1:3081' }],
+    ['dsh://notification-clicked', { tag: undefined, sessionId: 'session-1', sourceOrigin: 'http://127.0.0.1:3081' }],
+    ['dsh://notification-clicked', { tag: undefined, sessionId: 'session-2', sourceOrigin: 'http://127.0.0.1:3081' }],
+  ])
 })

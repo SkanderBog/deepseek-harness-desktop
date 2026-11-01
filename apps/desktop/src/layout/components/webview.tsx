@@ -4,8 +4,8 @@ import type { NotificationClickEvent } from '@/hooks/use-notification-clicked'
 import { useOverlay } from '@overlastic/react'
 import { useWatch } from '@reause/core'
 import { invoke } from '@tauri-apps/api/core'
-import { emitTo } from '@tauri-apps/api/event'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { emitTo, listen } from '@tauri-apps/api/event'
+import { getAllWindows, getCurrentWindow } from '@tauri-apps/api/window'
 import { type } from '@tauri-apps/plugin-os'
 import { useEffect, useRef, useState } from 'react'
 import { If } from 'react-if-lite'
@@ -32,11 +32,21 @@ const REMOTE_TAB_ACCESS = 'access'
 const REMOTE_TAB_SYNC = 'sync'
 
 const FULL_SIDEBAR_REVEAL_MS = 15_000
+interface NotificationResult {
+  tag?: string
+  sessionId?: string
+  sourceOrigin?: string
+  action?: string
+  inputValue?: string
+}
 
 export function Webview() {
   const [fullSidebarRevealed, setFullSidebarRevealed] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const pendingSettingsTabRef = useRef<string | null>(null)
+  const pendingNativeNotificationsRef = useRef<({ click: NotificationClickEvent } | { action: NotificationActionEvent })[]>([])
+  const notificationSourceRef = useRef('')
+  const notificationQueueRef = useRef<NotificationResult[]>([])
   const pendingActionsRef = useRef(new Map<string, { payload: { tag?: string, action?: string, inputValue?: string }, timer: ReturnType<typeof setTimeout> }>())
 
   const [dshStyle, setDshStyle] = useDshStyle()
@@ -47,7 +57,7 @@ export function Webview() {
   })
   const [{ rows: shortcutRows }, setDshShortcuts] = useDshShortcuts()
 
-  const { status, serviceHealthy, serviceRunning, webviewKey, webviewLoaded, webviewAlive, webviewError, startupPhase, busyAction } = useStore(store.harness)
+  const { status, serviceHealthy, serviceRunning, webviewKey, webviewLoaded, webviewAlive, webviewError, webviewSrc, startupPhase, busyAction } = useStore(store.harness)
   const { recovery } = useStore(store.recovery)
   const [remoteView, setRemoteView] = useState({ url: '', tint: null as string | null })
   const activeTunnelUrl = remoteView.url
@@ -56,11 +66,66 @@ export function Webview() {
   const live = status === 'ready' && (remoteMode || serviceHealthy)
   const appearanceCss = useAppearance()
 
+  useWatch([activeTunnelUrl, webviewSrc], () => {
+    const src = activeTunnelUrl || webviewSrc
+    const origin = URL.canParse(src) ? new URL(src).origin : ''
+    notificationSourceRef.current = origin
+    window.localStorage.setItem(`dsh-notification-source:${getCurrentWindow().label}`, origin)
+    if (origin) {
+      for (const pending of pendingNativeNotificationsRef.current.splice(0)) {
+        if ('click' in pending)
+          void handleNotificationClick(pending.click)
+        else
+          void handleNotificationAction(pending.action)
+      }
+    }
+  }, { immediate: true })
+
   useEffect(() => {
     const pending = pendingActionsRef.current
     return () => {
       pending.forEach(({ timer }) => clearTimeout(timer))
       pending.clear()
+    }
+  }, [])
+  // keep:effect ready-request 必须在 ready 监听注册完成后发送，避免 guest 已就绪时漏掉握手。
+  useEffect(() => {
+    let disposed = false
+    let flushing = false
+    let unlisten: (() => void) | undefined
+    const target = { kind: 'Window' as const, label: getCurrentWindow().label }
+    void listen<{ sourceOrigin?: string }>('dsh://notification-ready', async ({ payload }) => {
+      if (disposed || flushing || !payload?.sourceOrigin || payload.sourceOrigin !== notificationSourceRef.current)
+        return
+      flushing = true
+      try {
+        const queue = notificationQueueRef.current
+        while (queue.length > 0) {
+          const index = queue.findIndex(item => item.sourceOrigin === payload.sourceOrigin)
+          if (disposed || index < 0 || payload.sourceOrigin !== notificationSourceRef.current)
+            break
+          await emitTo(target, 'dsh://notification-clicked', queue[index])
+          queue.splice(index, 1)
+        }
+      }
+      catch (error) {
+        console.error('[notification] delivery failed:', error)
+      }
+      finally {
+        flushing = false
+      }
+    }, { target }).then((off) => {
+      if (disposed) {
+        off()
+      }
+      else {
+        unlisten = off
+        void emitTo(target, 'dsh://notification-ready-request').catch(error => console.error('[notification] ready request failed:', error))
+      }
+    }).catch(error => console.error('[notification] ready listener failed:', error))
+    return () => {
+      disposed = true
+      unlisten?.()
     }
   }, [])
   useNotificationAction(handleNotificationAction)
@@ -107,15 +172,40 @@ export function Webview() {
     setRemoteView({ url, tint })
   }
 
-  function deliverNotificationResult(payload: { tag?: string, action?: string, inputValue?: string }) {
-    void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://notification-clicked', payload)
+  function deliverNotificationResult(payload: NotificationResult) {
+    notificationQueueRef.current.push(payload)
+    void emitTo({ kind: 'Window', label: getCurrentWindow().label }, 'dsh://notification-ready-request').catch(error => console.error('[notification] ready request failed:', error))
   }
 
-  function handleNotificationAction({ actionId, inputValue, notification, extra }: NotificationActionEvent) {
+  async function ownsNotification(metadata?: { windowLabel?: string, sourceOrigin?: string } | null): Promise<boolean> {
+    const { windowLabel, sourceOrigin } = metadata ?? {}
+    const currentLabel = getCurrentWindow().label
+    if (!sourceOrigin || sourceOrigin !== notificationSourceRef.current)
+      return false
+    if (windowLabel === currentLabel)
+      return true
+    try {
+      const labels = (await getAllWindows()).map(window => window.label).filter(label => (label === 'main' || label.startsWith('window-') || label.startsWith('remote-')) && window.localStorage.getItem(`dsh-notification-source:${label}`) === sourceOrigin).sort()
+      return (labels.includes(windowLabel ?? '') ? windowLabel : labels[0]) === currentLabel
+    }
+    catch (error) {
+      console.error('[notification] window lookup failed:', error)
+      return false
+    }
+  }
+
+  async function handleNotificationAction(event: NotificationActionEvent) {
+    if (!notificationSourceRef.current) {
+      pendingNativeNotificationsRef.current.push({ action: event })
+      return
+    }
+    const { actionId, inputValue, notification, extra } = event
     if (typeof actionId !== 'string' || actionId === '' || actionId === 'tap')
       return
     const metadata = extra ?? notification?.extra
-    const payload = { tag: metadata?.tag, action: actionId, inputValue: typeof inputValue === 'string' ? inputValue : undefined }
+    if (!await ownsNotification(metadata))
+      return
+    const payload = { tag: metadata?.tag, sourceOrigin: metadata?.sourceOrigin, action: actionId, inputValue: typeof inputValue === 'string' ? inputValue : undefined }
     const key = `${payload.tag ?? ''}|${actionId}`
     const queued = pendingActionsRef.current.get(key)
     if (queued) {
@@ -131,7 +221,14 @@ export function Webview() {
     pendingActionsRef.current.set(key, { payload, timer })
   }
 
-  async function handleNotificationClick({ data }: NotificationClickEvent) {
+  async function handleNotificationClick(event: NotificationClickEvent) {
+    if (!notificationSourceRef.current) {
+      pendingNativeNotificationsRef.current.push({ click: event })
+      return
+    }
+    const { data } = event
+    if (!await ownsNotification(data))
+      return
     try {
       const appWindow = getCurrentWindow()
       if (await appWindow.isMinimized())
@@ -142,7 +239,7 @@ export function Webview() {
     catch (error) {
       console.error('[notification] focus window failed:', error)
     }
-    deliverNotificationResult({ tag: data?.tag })
+    deliverNotificationResult({ tag: data?.tag, sessionId: data?.sessionId, sourceOrigin: data?.sourceOrigin })
   }
 
   function openSettingsTab(tab: string) {
