@@ -26,6 +26,7 @@
   "preinstall.title": "Установить рекомендуемые плагины",
   "preinstall.subtitle": "Выберите плагины для установки перед запуском. Управлять ими можно позже в Настройки → Магазин плагинов.",
   "preinstall.recommend": "Рекомендуемые",
+  "preinstall.transfer": "Ретранслятор",
   "preinstall.fix": "Исправить",
   "preinstall.installed": "Установлено",
   "preinstall.to_uninstall": "К удалению",

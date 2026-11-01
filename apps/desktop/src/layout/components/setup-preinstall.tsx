@@ -48,6 +48,8 @@ function initialCheckedSet(plugins: readonly PreinstallPlugin[], isFirstTime: bo
   }).map(p => p.id))
 }
 
+const TRANSFER_PLUGINS = new Set(['dsh-neartoken'])
+
 /** 预设插件标识 → 图标；清单新增预设时回落通用图标，不因缺映射而空白 */
 const PLUGIN_ICONS: Record<string, IconComponent | undefined> = {
   'dshmarket': ShoppingCart,
@@ -73,6 +75,7 @@ function PluginCard({ plugin, checked, toUninstall, disabled, onToggle, onOpenRe
 }) {
   const { t } = useTranslation()
   const PluginIcon = PLUGIN_ICONS[plugin.id] ?? PlugConnection
+  const transfer = TRANSFER_PLUGINS.has(plugin.id)
 
   return (
     <Card
@@ -84,6 +87,11 @@ function PluginCard({ plugin, checked, toUninstall, disabled, onToggle, onOpenRe
           {plugin.name}
         </span>
         <If cond={plugin.recommended && !plugin.installed && !toUninstall && !plugin.unsupported}>
+          <If cond={transfer}>
+            <Chip size="sm" variant="soft" color="warning" className="shrink-0 font-medium">
+              {t('preinstall.transfer')}
+            </Chip>
+          </If>
           <Chip size="sm" variant="soft" color="success" className="shrink-0 font-medium">
             {t('preinstall.recommend')}
           </Chip>

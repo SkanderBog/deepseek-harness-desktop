@@ -26,6 +26,7 @@
   "preinstall.title": "安装推荐插件",
   "preinstall.subtitle": "选择要在启动前安装的插件，之后也可以在设置中的插件市场里管理。",
   "preinstall.recommend": "推荐",
+  "preinstall.transfer": "中转",
   "preinstall.fix": "修复",
   "preinstall.installed": "已安装",
   "preinstall.to_uninstall": "待卸载",

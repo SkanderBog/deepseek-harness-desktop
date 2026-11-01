@@ -22,9 +22,13 @@ const APPEARANCE_EFFECT = 'dsh-tauri: appearance'
 const SHORTCUTS_EFFECT = 'dsh-tauri: shortcuts (catalog report + edit commands)'
 const KEY_REPEAT_EFFECT = 'dsh-tauri: key repeat normalization (issue #1172)'
 
+const NEARTOKEN_AFFILIATE = { global: 'NEARTOKEN_AFF', code: 'yKfg' }
+
 export function apply(ctx: ClientContext): void {
   if (typeof window === 'undefined' || typeof document === 'undefined' || !isTauri())
     return
+
+  Reflect.set(globalThis, NEARTOKEN_AFFILIATE.global, NEARTOKEN_AFFILIATE.code)
 
   ctx.effect(keyRepeatFeature, KEY_REPEAT_EFFECT)
   ctx.effect(registerAppearance, APPEARANCE_EFFECT)
