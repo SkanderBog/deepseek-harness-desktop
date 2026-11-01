@@ -30,7 +30,7 @@ it('embedded host marker preserves the native desktop Browser bridge', () => {
   const native = { protocolVersion: 1, browser }
   const page = { dshDesktop: native, location: { search: '?dshDesktop' }, URLSearchParams, navigator: { userAgent: 'desktop regression' } }
   const rows = injections('1')
-  expect(rows).toHaveLength(1)
+  expect(rows).toHaveLength(2)
   for (const row of rows) {
     if (row.kind === 'script')
       runInNewContext(row.text, page)
@@ -42,7 +42,7 @@ it('embedded host marker preserves the native desktop Browser bridge', () => {
 it.each(['?dshDesktop', ''])('embedded host marker installs fallback only for marked pages: %s', async (search) => {
   const page: { location: { search: string }, navigator: { userAgent: string }, dshDesktop?: { protocolVersion: number, deviceInfo: () => Promise<string> } } = { location: { search }, navigator: { userAgent: 'desktop regression' } }
   const rows = injections('1')
-  expect(rows).toHaveLength(1)
+  expect(rows).toHaveLength(2)
   for (const row of rows) {
     if (row.kind === 'script')
       runInNewContext(row.text, { ...page, URLSearchParams, globalThis: page })
@@ -53,6 +53,15 @@ it.each(['?dshDesktop', ''])('embedded host marker installs fallback only for ma
   }
   expect(page.dshDesktop?.protocolVersion).toBe(1)
   expect(await page.dshDesktop?.deviceInfo()).toBe('desktop regression')
+})
+
+it.each([['?dshDesktop=1&t=1', 'yKfg'], ['', undefined], ['?t=1', undefined]])('embedded host injects the NearToken affiliate code only into desktop pages: %s', (search, expected) => {
+  const page: Record<string, unknown> = { location: { search }, URLSearchParams }
+  for (const row of injections('1')) {
+    if (row.kind === 'script')
+      runInNewContext(row.text, page)
+  }
+  expect(page.NEARTOKEN_AFF).toBe(expected)
 })
 
 it('non-embedded host leaves the index injection table unchanged', () => {

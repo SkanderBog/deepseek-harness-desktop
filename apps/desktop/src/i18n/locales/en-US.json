@@ -26,6 +26,7 @@
   "preinstall.title": "Install recommended plugins",
   "preinstall.subtitle": "Choose which plugins to install before starting. You can manage them later from Settings → Plugin Market.",
   "preinstall.recommend": "Recommended",
+  "preinstall.transfer": "Relay",
   "preinstall.fix": "Fix",
   "preinstall.installed": "Installed",
   "preinstall.to_uninstall": "To be uninstalled",

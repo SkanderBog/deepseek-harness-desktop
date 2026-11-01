@@ -594,6 +594,21 @@ mod tests {
     }
 
     #[test]
+    fn neartoken_leads_the_preset_list_and_stays_unchecked() {
+        let presets = load_presets_for_test();
+        let first = presets.first().expect("preset list should not be empty");
+        assert_eq!(first.id, "dsh-neartoken");
+        assert!(first.recommended);
+        assert!(first.default_unchecked);
+        assert_eq!(
+            first.repo_url,
+            "https://github.com/HuanLinOTO/dsh-neartoken"
+        );
+        assert!(!first.unsupported_on(Some("0.2.1-rc.4")));
+        assert!(first.unsupported_on(Some("0.1.7-rc.1")));
+    }
+
+    #[test]
     fn preset_list_contains_dshmarket() {
         let presets = load_presets_for_test();
         assert!(presets.iter().any(|p| p.id == "dshmarket"));
