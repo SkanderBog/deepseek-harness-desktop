@@ -2,12 +2,12 @@ import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import type { HostContext } from '../types'
 import { SESSION_SCHEDULE_ORIGIN_PROJECTION } from '../../shared/constants'
 
-export async function registerSessionOrigin(ctx: HostContext): Promise<() => void> {
+export async function registerSessionOrigin(ctx: HostContext): Promise<() => void | Promise<void>> {
   try {
     const module = await ctx.loader.import('zod')
     const z = module.z ?? ctx.loader.unwrapExports(module).z
     const stateSchema = z.object({ inheritedEventCount: z.number().int().nonnegative(), created: z.boolean() })
-    return ctx.sessionProjections.register({
+    const handle = await ctx.sessionProjections.register({
       key: SESSION_SCHEDULE_ORIGIN_PROJECTION,
       stateVersion: 1,
       stateSchema,
@@ -19,6 +19,7 @@ export async function registerSessionOrigin(ctx: HostContext): Promise<() => voi
       },
       wire: { viewSchema: z.boolean(), view: (state: { created: boolean }) => state.created },
     })
+    return typeof handle === 'function' ? handle : () => handle.dispose()
   }
   catch (error) {
     console.warn('[scheduler origin] Public session projection unavailable; source marks disabled.', error)
