@@ -124,6 +124,7 @@ export interface NativeNotificationInput {
   readonly body: string
   readonly tag: string
   readonly sessionId: string
+  readonly deliveryKey?: string
   readonly requireInteraction?: boolean
   /**
    * 让系统通知保持静音：提示音由插件自己播放，避免系统默认音再响一次（双声）。

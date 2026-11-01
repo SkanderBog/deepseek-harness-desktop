@@ -2,7 +2,7 @@ import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controlle
 import type { AdapterListProjection, ClientContext } from 'dsh-tauri/client'
 import type { FocusGateInput } from '../service/decision'
 import type { NativeNotificationAction, NotificationKind, PendingInteractionFace, SessionsFace, UiSessionFace } from '../types'
-import { defineRegister } from 'dsh-tauri/client'
+import { defineRegister, emit, listen } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../../shared/constants'
 import { APPROVE_ACTION_ID, REJECT_ACTION_ID, REPLY_ACTION_ID } from '../constants'
 import { locale } from '../locales'
@@ -11,7 +11,7 @@ import { allowPendingNotification, allowTurnNotification, boundText, notificatio
 import { showNativeNotification } from '../service/native'
 import { advanceQuestionWizard, canDriveQuestions, questionWizardStep, syncQuestionWizard } from '../service/question-wizard'
 import { createSoundPlayer } from '../service/sound'
-import { turnEndedByUser } from '../service/turn-end'
+import { readTurnEnd } from '../service/turn-end'
 import { notificationSettings } from '../store'
 
 /** 状态抖动合并窗口：running 可能连续翻转几次，等它稳定后再判断是否提醒。 */
@@ -84,26 +84,46 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
     }, FOCUS_RETRY_MS)
   }
 
-  const notify = (sessionId: string, kind: NotificationKind, title: string, body: string, requireInteraction: boolean, actions?: NativeNotificationAction[], onAction?: (action: string, inputValue: string | null) => void): void => {
+  void (async () => {
+    const clicked = await listen<{ sessionId?: string, action?: string, sourceOrigin?: string }>('dsh://notification-clicked', ({ payload }) => {
+      if (!controller.isDisposed() && payload.sourceOrigin === location.origin && !payload.action && typeof payload.sessionId === 'string' && payload.sessionId !== '')
+        focusSession(payload.sessionId)
+    })
+    if (controller.isDisposed()) {
+      clicked()
+      return
+    }
+    controller.add(clicked)
+    const ready = await listen('dsh://notification-ready-request', () => {
+      if (!controller.isDisposed())
+        void emit('dsh://notification-ready', { sourceOrigin: location.origin })
+    })
+    if (controller.isDisposed()) {
+      ready()
+      return
+    }
+    controller.add(ready)
+    await emit('dsh://notification-ready', { sourceOrigin: location.origin })
+  })().catch(error => console.error(`[${PLUGIN_ID}] notification listener failed`, error))
+
+  const notify = (sessionId: string, kind: NotificationKind, title: string, body: string, requireInteraction: boolean, actions?: NativeNotificationAction[], onAction?: (action: string, inputValue: string | null) => void, deliveryKey?: string): void => {
     if (controller.isDisposed() || isArchived(sessionId))
       return
     const settings = notificationSettings.$state
-    sound.play(settings.sound, settings.customSound)
     sequence += 1
-    showNativeNotification({
+    void showNativeNotification({
       title,
       body: boundText(body, MAX_BODY_CHARS),
       tag: notificationTag(sessionId, kind, sequence),
       sessionId,
+      deliveryKey,
       requireInteraction,
-      // 提示音已在上面按设置播过（`none` 时就是静音），因此原生通知自己必须静音；
-      // 未打包的 Windows 应用也没法用 toast 播放仓库里的 wav，只能由帧内发声。
       silent: true,
       actions,
       onAction,
-      onClick: () => {
-        focusSession(sessionId)
-      },
+    }).then((delivered) => {
+      if (delivered && !controller.isDisposed())
+        sound.play(settings.sound, settings.customSound)
     })
   }
 
@@ -154,7 +174,7 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
     const label = locale.text('labelQuestion')
     const detail = step.question.question?.trim() || step.question.header?.trim() || locale.text('bodyQuestion')
     const body = step.total > 1 ? `${label} ${step.index + 1}/${step.total} · ${detail}` : `${label} · ${detail}`
-    notify(sessionId, 'question', sessionTitle(sessionId), body, true, questionActions(), questionOnAction(sessionId, step.identity))
+    notify(sessionId, 'question', sessionTitle(sessionId), body, true, questionActions(), questionOnAction(sessionId, step.identity), JSON.stringify([sessionId, 'question', step.identity, step.index]))
     return true
   }
 
@@ -249,6 +269,7 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
         true,
         actions,
         onAction,
+        JSON.stringify([sessionId, kind, identity]),
       )
     })
   }
@@ -270,7 +291,8 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
       // 「用户手动中断」和「跑完了」在客户端看到的是同一个 `running: false`：结束原因只在宿主
       // 的 `turn/end` 里，所以弹之前问一次宿主；是中断就什么都不做（用户自己掐断的，不需要提醒）。
       void (async () => {
-        if (await turnEndedByUser(sessionId))
+        const fact = await readTurnEnd(sessionId)
+        if (fact.interrupted)
           return
         if (controller.isDisposed() || isArchived(sessionId) || observationTokens.get(sessionId) !== token)
           return
@@ -279,7 +301,18 @@ export const notifyFeature = defineRegister<ClientContext>((controller, ctx, ada
         const currentSummary = readSessions()?.list.getSnapshot().byId[sessionId]
         if (currentStatus ? currentStatus.running === true : currentSummary?.running === true)
           return
-        notify(sessionId, 'turn', sessionTitle(sessionId), locale.text('labelTurn'), false)
+        // ponytail: hosts without a turn identity use updatedAt; upgrade the host for exact turn deduplication.
+        const identity = fact.turn ?? currentSummary?.updatedAt
+        notify(
+          sessionId,
+          'turn',
+          sessionTitle(sessionId),
+          locale.text('labelTurn'),
+          false,
+          undefined,
+          undefined,
+          identity === undefined ? undefined : JSON.stringify([sessionId, 'turn', identity]),
+        )
       })()
     })
   }

@@ -8,6 +8,7 @@ export { invoke, isTauri } from '@tauri-apps/api/core'
 export type { InvokeArgs, InvokeOptions } from '@tauri-apps/api/core'
 export { emitTo } from '@tauri-apps/api/event'
 export type { EventCallback, EventName, EventTarget, Options, Event as TauriEvent, UnlistenFn } from '@tauri-apps/api/event'
+export { getCurrentWindow } from '@tauri-apps/api/window'
 
 function eventOptions(event: EventName, options?: Options): Options | undefined {
   return event.startsWith('dsh://') && options?.target === undefined

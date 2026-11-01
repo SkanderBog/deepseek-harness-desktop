@@ -26,8 +26,19 @@ function paintedLayer(own: CSSStyleDeclaration, after: CSSStyleDeclaration): CSS
   return isTransparent(own.backgroundColor) ? after : own
 }
 
+function isVisible(element: Element): boolean {
+  const { visibility } = getComputedStyle(element)
+  if (visibility === 'hidden' || visibility === 'collapse')
+    return false
+  for (let ancestor: Element | null = element; ancestor !== null; ancestor = ancestor.parentElement) {
+    if (ancestor.hasAttribute('hidden') || getComputedStyle(ancestor).display === 'none')
+      return false
+  }
+  return true
+}
+
 function overlayElement(): Element | null {
-  const candidates = [...document.querySelectorAll(OVERLAY_SELECTORS)]
+  const candidates = [...document.querySelectorAll(OVERLAY_SELECTORS)].filter(isVisible)
   const fixed = candidates.filter(isInsideFixed)
   const pool = fixed.length > 0 ? fixed : candidates
   return pool.find((element) => {

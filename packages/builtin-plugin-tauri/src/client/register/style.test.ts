@@ -16,6 +16,56 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+it.each([
+  ['mask', 'hidden', ''],
+  ['mask', 'style', 'display: none'],
+  ['mask', 'style', 'visibility: hidden'],
+  ['ancestor', 'hidden', ''],
+  ['ancestor', 'style', 'display: none'],
+  ['ancestor', 'style', 'visibility: hidden'],
+])('ignores a %s hidden with %s="%s" and reports visibility changes', async (target, attribute, value) => {
+  vi.useFakeTimers()
+  document.body.innerHTML = '<section><div style="position: fixed"><div class="_mask_fixed" style="background: rgba(0, 0, 0, 0.5); inset: 0px"></div></div></section><div class="_mask_visible" style="background: rgba(0, 0, 0, 0.3); inset: 0px"></div>'
+  const mask = document.querySelector<HTMLElement>('._mask_fixed')!
+  const hidden = target === 'mask' ? mask : mask.parentElement!.parentElement!
+  const visible = document.querySelector<HTMLElement>('._mask_visible')!
+  const original = hidden.getAttribute(attribute)
+  hidden.setAttribute(attribute, attribute === 'style' ? [original, value].filter(Boolean).join('; ') : value)
+  const computed = globalThis.getComputedStyle
+  vi.spyOn(globalThis, 'getComputedStyle').mockImplementation(element => computed(element))
+  dispose = registerStyle.call({})
+  vi.advanceTimersByTime(20)
+  expect(emit).toHaveBeenCalledTimes(1)
+  expect(emit.mock.lastCall).toEqual(['dsh://style', expect.objectContaining({
+    marked: expect.objectContaining({ background: 'rgba(0, 0, 0, 0.3)' }),
+  })])
+
+  visible.hidden = true
+  await Promise.resolve()
+  vi.advanceTimersByTime(20)
+  expect(emit).toHaveBeenCalledTimes(2)
+  expect(emit.mock.lastCall).toEqual(['dsh://style', expect.objectContaining({ marked: null })])
+
+  visible.hidden = false
+  await Promise.resolve()
+  vi.advanceTimersByTime(20)
+  expect(emit).toHaveBeenCalledTimes(3)
+  expect(emit.mock.lastCall).toEqual(['dsh://style', expect.objectContaining({
+    marked: expect.objectContaining({ background: 'rgba(0, 0, 0, 0.3)' }),
+  })])
+
+  if (original === null)
+    hidden.removeAttribute(attribute)
+  else
+    hidden.setAttribute(attribute, original)
+  await Promise.resolve()
+  vi.advanceTimersByTime(20)
+  expect(emit).toHaveBeenCalledTimes(4)
+  expect(emit.mock.lastCall).toEqual(['dsh://style', expect.objectContaining({
+    marked: expect.objectContaining({ background: 'rgba(0, 0, 0, 0.5)' }),
+  })])
+})
+
 it('reports theme and painted layers, coalesces relevant changes, and cancels reports on disposal', async () => {
   vi.useFakeTimers()
   document.documentElement.style.colorScheme = 'light'

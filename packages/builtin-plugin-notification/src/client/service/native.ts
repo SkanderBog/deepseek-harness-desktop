@@ -1,8 +1,9 @@
 import type { NativeNotificationInput } from '../types'
-import { invoke, listen } from 'dsh-tauri/client'
+import { getCurrentWindow, invoke, listen } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../../shared/constants'
 
 interface ClickedPayload {
+  sourceOrigin?: string
   tag?: string
   action?: string
   inputValue?: string
@@ -22,6 +23,8 @@ const actionTypes = new Map<string, { id: string, actions: unknown[] }>()
 let subscription: Promise<unknown> | undefined
 
 function dispatch(payload: ClickedPayload): void {
+  if (payload.sourceOrigin !== location.origin)
+    return
   const entry = handlers.get(payload.tag ?? '')
   if (!entry)
     return
@@ -97,27 +100,26 @@ async function registerActions(input: NativeNotificationInput): Promise<string |
   }
 }
 
-export function showNativeNotification(input: NativeNotificationInput): void {
+export async function showNativeNotification(input: NativeNotificationInput): Promise<boolean> {
   remember(input.tag, { onClick: input.onClick, onAction: input.onAction })
   ensureSubscription()
-  void (async () => {
-    try {
-      if (!await ensurePermission())
-        return
-      const actionTypeId = await registerActions(input)
-      await invoke('plugin:notifications|notify', {
-        options: {
-          id: notificationId(input.tag),
-          title: input.title,
-          body: input.body,
-          silent: input.silent === true ? true : undefined,
-          actionTypeId,
-          extra: { sessionId: input.sessionId, title: input.title, tag: input.tag },
-        },
-      })
-    }
-    catch (error) {
-      console.error(`[${PLUGIN_ID}] sendNotification failed`, error)
-    }
-  })()
+  try {
+    if (!await ensurePermission())
+      return false
+    const actionTypeId = await registerActions(input)
+    return await invoke<boolean>('plugin:notifications|notify', {
+      options: {
+        id: notificationId(`${location.origin}:${input.tag}`),
+        title: input.title,
+        body: input.body,
+        silent: input.silent === true ? true : undefined,
+        actionTypeId,
+        extra: { sessionId: input.sessionId, title: input.title, tag: input.tag, windowLabel: getCurrentWindow().label, sourceOrigin: location.origin, deliveryKey: input.deliveryKey === undefined ? undefined : JSON.stringify([location.origin, input.deliveryKey]) },
+      },
+    })
+  }
+  catch (error) {
+    console.error(`[${PLUGIN_ID}] sendNotification failed`, error)
+    return false
+  }
 }
