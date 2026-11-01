@@ -38,7 +38,7 @@ import {
   WEBVIEW_RELOAD_MAX_ATTEMPTS,
 } from './constants'
 import { BoundedReloadGate, SingleFlight, waitForActivityTask } from './readiness'
-import { runtimeExitMessageKey, shouldAcceptRuntimeExit } from './runtime'
+import { isNativeCrashCode, runtimeExitMessageKey, shouldAcceptRuntimeExit } from './runtime'
 import {
   attachStartupDiagnostics,
   checkHealthViaProxy,
@@ -253,12 +253,18 @@ export const harness = defineStore({
       }
 
       this.fail(message)
-      await recovery.reviewStartupRecovery(
-        error.logLines ?? error.logs ?? [],
-        () => exitToken === bootToken,
-      )
-      if (exitToken !== bootToken)
-        return
+      if (isNativeCrashCode(payload.exitCode)) {
+        // ponytail: 原生访问冲突不写日志，服务端日志尾无法指认插件；保留既有弹窗只会误伤健康插件（#279）
+        recovery.clear()
+      }
+      else {
+        await recovery.reviewStartupRecovery(
+          error.logLines ?? error.logs ?? [],
+          () => exitToken === bootToken,
+        )
+        if (exitToken !== bootToken)
+          return
+      }
       this.fail(
         error.message,
         error.logs,

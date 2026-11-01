@@ -103,6 +103,7 @@ minimumReleaseAgeExclude:
   - lucide-react-native@1.50.0
   - '@deepseek-ai/dsh-user-questions@0.2.1-rc.2'
   - '@deepseek-ai/dsh-working-directory@0.2.1-rc.2'
+  - dsh-taiwind@0.3.2
 shellEmulator: true
 
 trustPolicy: no-downgrade
@@ -131,7 +132,7 @@ catalog:
   '@tauri-apps/plugin-os': ^2.3.2
   '@tauri-apps/plugin-store': ^2.4.4
   dsh-h3: 0.2.1
-  dsh-taiwind: ^0.3.0
+  dsh-taiwind: ^0.3.2
   fake-indexeddb: ^6.2.6
   h3: 2.0.1
   react-native-lucide: npm:lucide-react-native@1.50.0

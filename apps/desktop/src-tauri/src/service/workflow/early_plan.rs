@@ -79,17 +79,12 @@ fn resolve(app_data: &Path, resources: &Path) -> Option<Inputs> {
         return None;
     }
     let profiles = dsh_home.join("profiles");
-    if profiles.join("tauri").try_exists().ok()? {
-        return None;
-    }
     let package = read_json(
         &profiles
             .join(profiles::DESKTOP_PROFILE)
             .join("package.json"),
     )?;
-    if !package.is_object()
-        || package.get("name").and_then(|value| value.as_str()) == Some("dsh-profile-tauri")
-    {
+    if !package.is_object() {
         return None;
     }
     for root in [resources.to_path_buf(), resources.join("resources")] {

@@ -41,14 +41,9 @@ pub struct Setting {
     /// 内容有变更 → 重新进入预设引导。`None` = 老用户升级（无基线）→ 弹一次建立基线。
     #[serde(default)]
     pub preset_hash: Option<String>,
-    /// 当前档案 id（`$DSH_HOME/profiles/<id>`），旧 tauri 档案无冲突时迁移至 desktop。
+    /// 当前档案 id（`$DSH_HOME/profiles/<id>`），默认即桌面端内置的 `desktop`。
     #[serde(default = "default_active_profile")]
     pub active_profile: String,
-    /// 首装档案引导是否已完成：桌面端首次安装时自动新建引导档案（`desktop`）并
-    /// 切换为当前档案（见 service::profile::migrate_desktop_profile_name），成功
-    /// 后置位，之后启动不再重做（一次性幂等标记）。
-    #[serde(default)]
-    pub desktop_profile_ready: bool,
     /// 活动核心的显式选择：`Some("local")` = 用户 CLI 安装的本地核心，
     /// `Some("app")` = 桌面端预打包核心；`None` = 自动（本地核心存在时优先）。
     #[serde(default)]
@@ -213,7 +208,6 @@ impl Default for Setting {
             preinstall_done: false,
             preset_hash: None,
             active_profile: default_active_profile(),
-            desktop_profile_ready: false,
             active_core: None,
             manual_port: None,
             zoom_factor: default_zoom_factor(),
@@ -560,7 +554,6 @@ mod tests {
                 "dsh_pkg_commit": "saved-core",
                 "dsh_pkg_tag": "saved-release",
                 "preinstall_done": true,
-                "desktop_profile_ready": true,
                 "cli_link_enabled": false,
                 "harness_max_heap_mb": 2048,
                 "zoom_factor": 1.2,
