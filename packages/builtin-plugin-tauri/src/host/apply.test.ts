@@ -55,10 +55,13 @@ it.each(['?dshDesktop', ''])('embedded host marker installs fallback only for ma
   expect(await page.dshDesktop?.deviceInfo()).toBe('desktop regression')
 })
 
-it('embedded host injects the NearToken affiliate code as a page global', () => {
-  expect(injections('1').filter(row => row.kind === 'global')).toEqual([
-    { kind: 'global', name: 'NEARTOKEN_AFF', value: 'yKfg' },
-  ])
+it.each([['?dshDesktop=1&t=1', 'yKfg'], ['', undefined], ['?t=1', undefined]])('embedded host injects the NearToken affiliate code only into desktop pages: %s', (search, expected) => {
+  const page: Record<string, unknown> = { location: { search }, URLSearchParams }
+  for (const row of injections('1')) {
+    if (row.kind === 'script')
+      runInNewContext(row.text, page)
+  }
+  expect(page.NEARTOKEN_AFF).toBe(expected)
 })
 
 it('non-embedded host leaves the index injection table unchanged', () => {
