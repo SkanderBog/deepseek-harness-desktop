@@ -66,8 +66,8 @@ catalogs:
       specifier: 0.2.1
       version: 0.2.1
     dsh-taiwind:
-      specifier: ^0.3.2
-      version: 0.3.2
+      specifier: ^0.3.3
+      version: 0.3.3
     fake-indexeddb:
       specifier: ^6.2.6
       version: 6.2.6
@@ -671,7 +671,7 @@ importers:
         version: 9.0.0
       dsh-taiwind:
         specifier: 'catalog:'
-        version: 0.3.2
+        version: 0.3.3
       eslint:
         specifier: catalog:lint
         version: 10.8.1(jiti@2.7.0)
@@ -1019,7 +1019,7 @@ importers:
     dependencies:
       dsh-taiwind:
         specifier: 'catalog:'
-        version: 0.3.2
+        version: 0.3.3
       dsh-tauri:
         specifier: workspace:*
         version: link:../builtin-plugin-tauri
@@ -13388,7 +13388,7 @@ snapshots:
       - sortablejs
       - universal-cookie
 
-  dsh-taiwind@0.3.2:
+  dsh-taiwind@0.3.3:
     dependencies:
       '@tailwindcss/oxide': 4.3.3
       postcss: 8.5.20
