@@ -259,6 +259,28 @@ mod tests {
             }).to_string()).unwrap();
             assert!(ensure_app_core_supported(root.path(), None, baseline).is_ok());
         }
+        let installed = root.path().join("node_modules/@deepseek-ai/dsh/package.json");
+        std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        for (declared, actual, supported) in [
+            ("0.2.1-rc.5", "0.2.0", false),
+            ("0.2.0", "0.2.1-rc.5", true),
+            ("0.2.1-rc.5", "0.2.1-rc.1", true),
+            ("0.2.1-rc.5", "unknown", true),
+        ] {
+            std::fs::write(&manifest, serde_json::json!({
+                "dependencies": {"@deepseek-ai/dsh": declared},
+            }).to_string()).unwrap();
+            std::fs::write(&installed, serde_json::json!({
+                "name": "@deepseek-ai/dsh", "version": actual,
+            }).to_string()).unwrap();
+            assert_eq!(ensure_app_core_supported(root.path(), None, baseline).is_ok(), supported,
+                "declared={declared}, actual={actual}");
+        }
+        std::fs::remove_file(&manifest).unwrap();
+        std::fs::write(&installed, r#"{"name":"@deepseek-ai/dsh","version":"0.2.0"}"#).unwrap();
+        assert!(ensure_app_core_supported(root.path(), None, baseline).is_err());
+        std::fs::write(&manifest, r#"{"name":"@deepseek-ai/dsh","version":"0.2.1-rc.5"}"#).unwrap();
+        assert!(ensure_app_core_supported(root.path(), None, baseline).is_ok());
     }
 
     #[test]

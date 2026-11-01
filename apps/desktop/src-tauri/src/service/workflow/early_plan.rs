@@ -160,6 +160,12 @@ fn exact_core_version(inputs: &Inputs, core_root: &Path) -> Option<String> {
     {
         return None;
     }
+    core::ensure_app_core_supported(
+        core_root,
+        None,
+        Some(inputs.manifest.engines.dsh.minimum.trim()),
+    )
+    .ok()?;
     Some(version.to_string())
 }
 
@@ -190,11 +196,6 @@ pub(super) fn prepare(
     let Some(version) = exact_core_version(&inputs, &core_dir) else {
         return Ok(None);
     };
-    core::ensure_app_core_supported(
-        &core_dir,
-        None,
-        Some(inputs.manifest.engines.dsh.minimum.trim()),
-    )?;
     let node_root = inputs.root(deps::DEP_NODE);
     let node_entry = deps::entry_relative_from(Some(&inputs.manifest), deps::DEP_NODE);
     let pinned = matches!(inputs.mapping.get(deps::DEP_NODE), Some(Some(_)));
@@ -353,6 +354,29 @@ pub(super) fn prepare(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn old_core_defers_early_preparation_and_upgrade_restores_eligibility() {
+        let root = tempfile::tempdir().unwrap();
+        let mut inputs = Inputs {
+            setting: config::Setting::default(),
+            base: root.path().join("base"),
+            resource_root: root.path().join("resources"),
+            manifest: manifest::Manifest::default(),
+            mapping: deps::DependencyMapping::default(),
+            dsh_home: root.path().join("home"),
+        };
+        inputs.manifest.engines.dsh.minimum = "0.2.1-rc.1".into();
+        let core_dir = inputs.root(deps::DEP_DSH);
+        fs::create_dir_all(&core_dir).unwrap();
+        for (version, expected) in [("0.2.0", None), ("0.2.1-rc.5", Some("0.2.1-rc.5"))] {
+            inputs.setting.dsh_pkg_tag = Some(format!("dsh-{version}-123"));
+            fs::write(core_dir.join("package.json"), json!({
+                "name": "@deepseek-ai/dsh", "version": version,
+            }).to_string()).unwrap();
+            assert_eq!(exact_core_version(&inputs, &core_dir).as_deref(), expected);
+        }
+    }
 
     #[test]
     fn original_store_is_read_only_and_defaults_never_become_ready() {

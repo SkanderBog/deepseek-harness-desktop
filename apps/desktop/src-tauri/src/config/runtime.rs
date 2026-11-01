@@ -654,25 +654,28 @@ pub fn get_dsh_version<R: Runtime>(app_handle: &AppHandle<R>) -> Option<String> 
 }
 
 pub(crate) fn dsh_version_at(manifest_path: &Path) -> Option<String> {
-    let content = fs::read_to_string(manifest_path).ok()?;
-    let manifest: serde_json::Value = serde_json::from_str(&content).ok()?;
-    manifest
-        .get("dependencies")
-        .and_then(|deps| deps.get("@deepseek-ai/dsh"))
-        .and_then(|value| value.as_str())
-        .map(|value| {
-            value
-                .trim_start_matches(['^', '~', '=', '>', '<'])
-                .to_string()
+    let read = |path: &Path| {
+        serde_json::from_slice::<serde_json::Value>(&fs::read(path).ok()?).ok()
+    };
+    let manifest = read(manifest_path);
+    if let Some(package) = manifest.as_ref().filter(|package| {
+        package.get("name").and_then(|value| value.as_str()) == Some("@deepseek-ai/dsh")
+    }) {
+        return package.get("version")?.as_str().map(str::to_string);
+    }
+    manifest_path
+        .parent()
+        .and_then(|dir| read(&dir.join("node_modules/@deepseek-ai/dsh/package.json")))
+        .filter(|package| {
+            package.get("name").and_then(|value| value.as_str()) == Some("@deepseek-ai/dsh")
         })
+        .and_then(|package| package.get("version")?.as_str().map(str::to_string))
         .or_else(|| {
-            manifest
-                .get("name")
-                .and_then(|value| value.as_str())
-                .filter(|name| *name == "@deepseek-ai/dsh")
-                .and_then(|_| manifest.get("version"))
-                .and_then(|value| value.as_str())
-                .map(str::to_string)
+            manifest?
+                .get("dependencies")?
+                .get("@deepseek-ai/dsh")?
+                .as_str()
+                .map(|value| value.trim_start_matches(['^', '~', '=', '>', '<']).to_string())
         })
 }
 
