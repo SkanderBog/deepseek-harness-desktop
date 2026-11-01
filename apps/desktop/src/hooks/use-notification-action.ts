@@ -4,6 +4,9 @@ import { useEffect, useRef } from 'react'
 
 export interface NotificationExtra {
   sessionId?: string
+  deliveryKey?: string
+  windowLabel?: string
+  sourceOrigin?: string
   title?: string
   tag?: string
 }

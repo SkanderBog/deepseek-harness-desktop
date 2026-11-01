@@ -1,14 +1,19 @@
 import type { NativeNotificationInput } from '../types'
-import { invoke, listen } from 'dsh-tauri/client'
+import { getCurrentWindow, invoke, listen } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../../shared/constants'
 
 interface ClickedPayload {
+  sessionId?: string
+  deliveryKey?: string
+  sourceOrigin?: string
   tag?: string
   action?: string
   inputValue?: string
 }
 
 interface Handlers {
+  sessionId: string
+  deliveryKey?: string
   onClick?: () => void
   onAction?: (action: string, inputValue: string | null) => void
 }
@@ -22,10 +27,14 @@ const actionTypes = new Map<string, { id: string, actions: unknown[] }>()
 let subscription: Promise<unknown> | undefined
 
 function dispatch(payload: ClickedPayload): void {
+  if (payload.sourceOrigin !== location.origin)
+    return
   const entry = handlers.get(payload.tag ?? '')
   if (!entry)
     return
   if (payload.action) {
+    if (!payload.deliveryKey || payload.deliveryKey !== entry.deliveryKey || payload.sessionId !== entry.sessionId)
+      return
     const value = payload.inputValue
     entry.onAction?.(payload.action, typeof value === 'string' && value.length > 0 ? value : null)
     return
@@ -97,27 +106,27 @@ async function registerActions(input: NativeNotificationInput): Promise<string |
   }
 }
 
-export function showNativeNotification(input: NativeNotificationInput): void {
-  remember(input.tag, { onClick: input.onClick, onAction: input.onAction })
+export async function showNativeNotification(input: NativeNotificationInput): Promise<boolean> {
+  const deliveryKey = input.deliveryKey === undefined ? undefined : JSON.stringify([location.origin, input.deliveryKey])
+  remember(input.tag, { sessionId: input.sessionId, deliveryKey, onClick: input.onClick, onAction: input.onAction })
   ensureSubscription()
-  void (async () => {
-    try {
-      if (!await ensurePermission())
-        return
-      const actionTypeId = await registerActions(input)
-      await invoke('plugin:notifications|notify', {
-        options: {
-          id: notificationId(input.tag),
-          title: input.title,
-          body: input.body,
-          silent: input.silent === true ? true : undefined,
-          actionTypeId,
-          extra: { sessionId: input.sessionId, title: input.title, tag: input.tag },
-        },
-      })
-    }
-    catch (error) {
-      console.error(`[${PLUGIN_ID}] sendNotification failed`, error)
-    }
-  })()
+  try {
+    if (!await ensurePermission())
+      return false
+    const actionTypeId = await registerActions(input)
+    return await invoke<boolean>('plugin:notifications|notify', {
+      options: {
+        id: notificationId(`${location.origin}:${input.tag}`),
+        title: input.title,
+        body: input.body,
+        silent: input.silent === true ? true : undefined,
+        actionTypeId,
+        extra: { sessionId: input.sessionId, title: input.title, tag: input.tag, windowLabel: getCurrentWindow().label, sourceOrigin: location.origin, deliveryKey },
+      },
+    })
+  }
+  catch (error) {
+    console.error(`[${PLUGIN_ID}] sendNotification failed`, error)
+    return false
+  }
 }

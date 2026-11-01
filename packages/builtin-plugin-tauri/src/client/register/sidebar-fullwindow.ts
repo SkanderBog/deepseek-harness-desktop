@@ -244,32 +244,36 @@ export function presentFullSidebar(controller: RegisterController): void {
   let expandClicked = false
   const cancel = controller.interval(() => {
     ticks += 1
-    const settle = () => {
-      cancel()
-      document.documentElement.setAttribute(FULL_SIDEBAR_ATTRIBUTE, FULL_SIDEBAR_READY)
-      document.body?.style.removeProperty('visibility')
-      console.warn('[dsh-tauri] present: ready', { ticks })
-      void emit(FULL_SIDEBAR_READY_MESSAGE)
-    }
     if (ticks > PRESENT_MAX_TICKS) {
-      settle()
+      cancel()
+      document.body?.style.removeProperty('visibility')
+      return
+    }
+    const expand = document.querySelector<HTMLElement>(EXPAND_SELECTOR)
+    if (!expandClicked && expand !== null) {
+      expandClicked = true
+      expand.click()
       return
     }
     const mode = document.querySelector<HTMLElement>(FULLSCREEN_SELECTOR)
-    if (mode == null) {
-      const expand = document.querySelector<HTMLElement>(EXPAND_SELECTOR)
-      if (!expandClicked && expand !== null) {
-        expandClicked = true
-        expand.click()
-      }
+    if (mode == null)
       return
-    }
     if (mode.getAttribute('data-sidebar-right-mode') === 'fullscreen') {
       mode.click()
       return
     }
     settle()
   }, PRESENT_POLL_MS)
+  const unhook = controller.add(() => document.body?.style.removeProperty('visibility'))
+
+  function settle(): void {
+    cancel()
+    unhook()
+    document.documentElement.setAttribute(FULL_SIDEBAR_ATTRIBUTE, FULL_SIDEBAR_READY)
+    document.body?.style.removeProperty('visibility')
+    console.warn('[dsh-tauri] present: ready', { ticks })
+    void emit(FULL_SIDEBAR_READY_MESSAGE)
+  }
 }
 
 function blockLastTabMenu(event: MouseEvent): void {

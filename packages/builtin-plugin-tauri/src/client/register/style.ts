@@ -65,7 +65,7 @@ export const registerStyle = defineRegister<ClientContext>((controller) => {
     characterData: true,
     attributes: true,
     attributeOldValue: true,
-    attributeFilter: ['style', 'class', 'data-theme', 'data-slot', 'href', 'rel', 'media', 'disabled'],
+    attributeFilter: ['style', 'class', 'hidden', 'data-theme', 'data-slot', 'href', 'rel', 'media', 'disabled'],
   })
   controller.listen('load', (event) => {
     if (event.target instanceof HTMLLinkElement && event.target.matches(STYLE_INPUT_SELECTOR))

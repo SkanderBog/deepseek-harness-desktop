@@ -2,7 +2,7 @@ import type { ClientContext } from '../types'
 import type { ClientAdapter, RegisterController } from './index'
 import { reportPluginError } from '../utils/error'
 import { defineRegister } from './index'
-import { closeWhenArchived, isolateSidebarLayout, PRESENTATION_FULL_SIDEBAR, presentFullSidebar } from './sidebar-fullwindow'
+import { closeWhenArchived, FULL_SIDEBAR_ATTRIBUTE, isolateSidebarLayout, PRESENTATION_FULL_SIDEBAR, presentFullSidebar } from './sidebar-fullwindow'
 
 const CMD_NEW_SESSION = 'dsh://session:new'
 
@@ -101,6 +101,15 @@ export const navigationFeature = defineRegister<ClientContext>((controller, _ctx
 
   const { sessionId, presentation, consumed } = takeInjectedNavigation()
   console.warn('[dsh-tauri] navigation: injected', { sessionId, presentation, consumed })
+  controller.add(() => {
+    const pendingSession = sessionId !== undefined && !injectedSessionConsumed(sessionId)
+    const pendingPresentation = presentation === PRESENTATION_FULL_SIDEBAR
+      && document.documentElement.getAttribute(FULL_SIDEBAR_ATTRIBUTE) !== 'ready'
+    if (pendingSession || pendingPresentation) {
+      const host = window as unknown as Record<string, unknown>
+      host[NAVIGATION_GLOBAL] ??= { sessionId, presentation }
+    }
+  })
   if (presentation === PRESENTATION_FULL_SIDEBAR) {
     if (sessionId !== undefined) {
       isolateSidebarLayout(sessionId)
