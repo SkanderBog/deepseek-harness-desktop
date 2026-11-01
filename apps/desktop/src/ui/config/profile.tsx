@@ -381,7 +381,7 @@ export function ConfigProfile() {
                   <Label className="min-w-0 truncate text-sm font-medium text-ink">
                     {profile.name}
                   </Label>
-                  <If cond={profile.default}>
+                  <If cond={profile.builtin}>
                     <Description className="min-w-0 text-xs text-muted">
                       <Ellipsis>{t('profiles.default_desc')}</Ellipsis>
                     </Description>
