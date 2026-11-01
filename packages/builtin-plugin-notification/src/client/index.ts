@@ -1,4 +1,5 @@
 import type { ClientContext } from 'dsh-tauri/client'
+import { isTauri } from 'dsh-tauri/client'
 import { PLUGIN_ID } from '../shared/constants'
 import { LOCALE_EFFECT, NOTIFY_EFFECT, SETTINGS_EFFECT } from './constants'
 import { locale } from './locales'
@@ -14,6 +15,8 @@ export const name = PLUGIN_ID
 export const inject = ['slots', 'locale', 'sessions']
 
 export function apply(ctx: ClientContext): void {
+  if (!isTauri())
+    return
   ctx.effect(locale.registerLocale, LOCALE_EFFECT)
   ctx.effect(settingsFeature, SETTINGS_EFFECT)
   ctx.effect(notifyFeature, NOTIFY_EFFECT)

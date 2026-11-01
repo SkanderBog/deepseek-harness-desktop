@@ -414,7 +414,7 @@ it('never mutates local health or hides a remote guest because of local errors',
   expect(mocks.harness.markWebviewAlive).not.toHaveBeenCalled()
   expect(mocks.harness.markWebviewLeaving).not.toHaveBeenCalled()
   expect(mocks.harness.markWebviewError).not.toHaveBeenCalled()
-  expect(updates().at(-1)).toMatchObject({ visible: true })
+  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: true }))
 })
 
 it('serializes pending native updates before hiding overlays and releasing the view', async () => {

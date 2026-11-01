@@ -9,6 +9,7 @@ import { sidebarFullwindowFeature } from './register/sidebar-fullwindow'
 import { sidebarTweaksFeature } from './register/sidebar-tweaks'
 import { registerStyle } from './register/style'
 import { zoomShortcutFeature } from './register/zoom-shortcut'
+import { isTauri } from './service/tauri'
 
 const SIDEBAR_TOGGLE_EFFECT = 'dsh-tauri: sidebar (toggle command + collapsed report)'
 const NAVIGATION_EFFECT = 'dsh-tauri: navigation (session target, new session, add workspace)'
@@ -22,7 +23,7 @@ const SHORTCUTS_EFFECT = 'dsh-tauri: shortcuts (catalog report + edit commands)'
 const KEY_REPEAT_EFFECT = 'dsh-tauri: key repeat normalization (issue #1172)'
 
 export function apply(ctx: ClientContext): void {
-  if (typeof window === 'undefined' || typeof document === 'undefined')
+  if (typeof window === 'undefined' || typeof document === 'undefined' || !isTauri())
     return
 
   ctx.effect(keyRepeatFeature, KEY_REPEAT_EFFECT)
