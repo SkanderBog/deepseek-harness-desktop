@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [next]
+    branches: [main, next]
   pull_request:
-    branches: [next]
+    branches: [main, next]
 
 permissions:
   contents: read
@@ -239,7 +239,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri -> target
-          save-if: ${{ github.ref == 'refs/heads/next' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # 稳定性和 macOS 登录项变体验证需要多轮，按需在本地/手动触发执行，
       # 不再随每次 PR 固定跑（issue #1059）。准入前仍需本地连跑 5 次无 Flake。
@@ -322,7 +322,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri -> target
-          save-if: ${{ github.ref == 'refs/heads/next' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # dist 必须存在：缺失时 debug 构建回落到 devUrl，页面为空、选择器全部落空。
       - name: Build bundled plugins

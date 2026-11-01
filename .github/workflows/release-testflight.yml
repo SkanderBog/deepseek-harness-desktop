@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       source_ref:
-        description: Immutable upstream next-ancestor commit SHA to release
+        description: Immutable upstream main-ancestor commit SHA to release
         required: true
         type: string
     secrets:
@@ -35,7 +35,7 @@ jobs:
   release:
     if: >-
       github.repository == 'dsh-tauri/deepseek-harness-desktop' &&
-      (inputs.source_ref != '' || github.ref == 'refs/heads/next')
+      (inputs.source_ref != '' || github.ref == 'refs/heads/main')
     name: Sign and upload iOS TestFlight
     runs-on: macos-26
     timeout-minutes: 120
@@ -47,11 +47,11 @@ jobs:
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
     steps:
-      - name: Checkout trusted upstream next
+      - name: Checkout trusted upstream main
         uses: actions/checkout@v7
         with:
           repository: dsh-tauri/deepseek-harness-desktop
-          ref: next
+          ref: main
           fetch-depth: 0
           persist-credentials: false
 
@@ -68,7 +68,7 @@ jobs:
           fi
           [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::source_ref must be a full immutable commit SHA'; exit 1; }
           [[ "$(git cat-file -t "$SOURCE_REF")" == commit ]]
-          git merge-base --is-ancestor "$SOURCE_REF" refs/remotes/origin/next
+          git merge-base --is-ancestor "$SOURCE_REF" refs/remotes/origin/main
           git checkout --detach "$SOURCE_REF"
           [[ "$(git rev-parse HEAD)" == "$SOURCE_REF" ]]
           echo "SOURCE_SHA=$SOURCE_REF" >> "$GITHUB_ENV"
@@ -205,7 +205,7 @@ jobs:
             --apiKey "$APP_STORE_CONNECT_KEY_ID" --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
           {
             echo "Uploaded signed IPA for $VERSION ($BUILD_NUMBER), commit $SOURCE_SHA."
-            echo 'Upload accepted; optional external Beta review automation runs next.'
+            echo 'Upload accepted; optional external Beta review automation runs main.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Submit external Beta review and enable automatic tester notifications
