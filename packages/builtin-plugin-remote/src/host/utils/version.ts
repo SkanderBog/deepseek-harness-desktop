@@ -21,7 +21,7 @@ export const RECOMMENDED_DSH_VERSION = __REMOTE_DSH_RECOMMEND__
 
 export const MINIMUM_DSH_VERSION = __REMOTE_DSH_MINIMUM__
 
-export const FALLBACK_DSH_TAG = 'dsh-0.2.1-rc.4-40372188763'
+export const FALLBACK_DSH_TAG = 'dsh-0.2.1-rc.5-41234040595'
 
 export function assertSupportedDshVersion(version: string): void {
   if (!semver.satisfies(version, `>=${MINIMUM_DSH_VERSION}`, { includePrerelease: true }))

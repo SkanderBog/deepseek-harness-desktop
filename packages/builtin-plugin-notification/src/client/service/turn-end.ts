@@ -8,20 +8,17 @@ import { getTurnEnd } from '../apis'
  */
 const USER_INTERRUPT_REASONS: ReadonlySet<string> = new Set(['aborted', 'interrupted', 'archived'])
 
-/**
- * 这个会话最近一次回合是不是被用户手动中断的。
- *
- * 宿主没应答时返回 `false`：路由缺席（旧宿主）、连接失败都只该退化成「照常通知」，
- * 漏一条通知比吞掉一条通知更糟。因此只有宿主明确给出中断原因才算数。
- */
-export async function turnEndedByUser(sessionId: string): Promise<boolean> {
+export async function readTurnEnd(sessionId: string): Promise<{ interrupted: boolean, turn?: number }> {
   if (sessionId.length === 0)
-    return false
+    return { interrupted: false }
   try {
     const fact = await getTurnEnd({ sessionId })
-    return typeof fact?.reason === 'string' && USER_INTERRUPT_REASONS.has(fact.reason)
+    return {
+      interrupted: typeof fact?.reason === 'string' && USER_INTERRUPT_REASONS.has(fact.reason),
+      turn: typeof fact?.turn === 'number' && fact.turn >= 0 ? fact.turn : undefined,
+    }
   }
   catch {
-    return false
+    return { interrupted: false }
   }
 }

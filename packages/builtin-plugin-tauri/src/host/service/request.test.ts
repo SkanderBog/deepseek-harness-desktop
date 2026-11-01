@@ -24,8 +24,14 @@ beforeEach(async () => {
   }
 
   const connection = {
+    browserPeer: { signal: new AbortController().signal },
+    disposed: false,
+    admit(request: IncomingMessage): { rejection: 401 | 403 } | { peer: { signal: AbortSignal } } {
+      return { rejection: request.method === 'POST' ? 401 : request.headers.origin === 'https://untrusted.example' ? 403 : 401 }
+    },
     requestRejection(request: IncomingMessage): 401 | 403 | undefined {
-      return request.method === 'POST' ? 401 : request.headers.origin === 'https://untrusted.example' ? 403 : 401
+      const admission = this.admit(request)
+      return 'rejection' in admission ? admission.rejection : undefined
     },
   }
   const context = { connection }

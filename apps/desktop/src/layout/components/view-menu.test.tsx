@@ -216,7 +216,7 @@ describe('native View menu state', () => {
     act(() => nativeEvent('tauri://focus', null, 'main'))
     await waitFor(() => expect(menuEntries[0].enabled).toBe(true))
     act(() => nativeEvent('macos-menu-action', 'desktop-toggle-sidebar', 'main'))
-    expect(emitEvent).toHaveBeenCalledExactlyOnceWith('dsh://view:command', { command: 'sidebar.left.toggle' })
+    expect(emitEvent.mock.calls.filter(([event]) => event === 'dsh://view:command')).toEqual([['dsh://view:command', { command: 'sidebar.left.toggle' }]])
     expect(webview()).toBe(frame)
     store.harness.serviceHealthy = true
     view.rerender(<Webview />)

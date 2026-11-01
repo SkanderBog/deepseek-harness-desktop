@@ -16,7 +16,8 @@ use crate::AppHandle;
 
 use super::local::{find_user_dsh_bin, local_core};
 use super::source::{
-    active_is_bundled, active_source, core_supports_bundled_plugins, CoreSource, HarnessCore,
+    active_is_bundled, active_source, core_supports_bundled_plugins, ensure_app_core_supported,
+    CoreSource, HarnessCore,
 };
 
 /// 随包内核的行 id：面板据此置顶并标记「本地」，[`set_active`] 据此切回随包内核。
@@ -479,6 +480,11 @@ pub async fn set_active(app_handle: &AppHandle, id: &str) -> Result<HarnessCore,
         if !bundled.join(entry).is_file() {
             return Err("CORE_BUNDLED_NOT_FOUND: bundled core files are missing".to_string());
         }
+        ensure_app_core_supported(
+            &bundled,
+            None,
+            config::manifest::minimum_dsh_version(app_handle).as_deref(),
+        )?;
         stop_harness_for_core_switch(app_handle).await?;
         config::update_store_dat_setting(app_handle, |setting| {
             setting.active_core = Some(CoreSource::App.as_str().to_string());
@@ -487,6 +493,11 @@ pub async fn set_active(app_handle: &AppHandle, id: &str) -> Result<HarnessCore,
         });
         config::dependencies::record(app_handle, config::dependencies::DEP_DSH, Some(bundled));
     } else if id == "app" {
+        ensure_app_core_supported(
+            &config::dependencies::managed_root(app_handle, config::dependencies::DEP_DSH),
+            None,
+            config::manifest::minimum_dsh_version(app_handle).as_deref(),
+        )?;
         if !config::get_dsh_binary_path(app_handle).exists() {
             return Err("CORE_APP_NOT_FOUND: bundled core is not installed".to_string());
         }
@@ -532,17 +543,28 @@ async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), Str
     let active_dir = config::dependencies::managed_root(app_handle, config::dependencies::DEP_DSH);
     fs_guard::validate_id(tag)?;
     let cur_tag = config::get_dsh_pkg_tag(app_handle);
+    let current = cur_tag.as_deref() == Some(tag)
+        && config::get_dsh_binary_path(app_handle).is_file();
+    let target_dir = if current {
+        config::get_dsh_install_path(app_handle)
+    } else {
+        existing_slot_dir(app_handle, tag)
+            .ok_or_else(|| format!("CORE_VERSION_NOT_DOWNLOADED: {tag}"))?
+    };
+    ensure_app_core_supported(
+        &target_dir,
+        Some(tag),
+        config::manifest::minimum_dsh_version(app_handle).as_deref(),
+    )?;
 
     // 激活目录已是目标版本（tag 相同）→ 仅切来源标记（如 local → app 同版本）
-    if cur_tag.as_deref() == Some(tag) && config::get_dsh_binary_path(app_handle).is_file() {
+    if current {
         stop_harness_for_core_switch(app_handle).await?;
         config::update_store_dat_setting(app_handle, |setting| {
             setting.active_core = Some(CoreSource::App.as_str().to_string());
         });
         return Ok(());
     }
-    let target_dir = existing_slot_dir(app_handle, tag)
-        .ok_or_else(|| format!("CORE_VERSION_NOT_DOWNLOADED: {tag}"))?;
 
     // 随包资源构建：随包内核必须留在安装目录（`$Resources/dsh`），不能像普通安装那样
     // 把「激活目录 ↔ 槽位目录」互换——那会把安装包资源搬进 AppData，也会让应用升级

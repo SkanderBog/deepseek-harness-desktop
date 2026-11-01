@@ -48,9 +48,10 @@ Copyright 2026 MichengAI contributors
 - Refork version (historical source): `dsh-v0.2.1-alpha.1`
 - Refork revision: `ec48669f48ac81bac353fc646e7cf9c57241242f`
 - Reference: the refork used the source at the revision above; that provenance is independent of the current compatibility reference.
-- Compatibility reference: `dsh-v0.2.1-rc.2` (`687f282e8625c6b8d11ff58211a90524be2e4317`).
-- Support policy: minimum core `0.1.7-rc.1`; earlier cores are unsupported. See the [current compatibility record](<../dsh-tauri/docs/compatibility-0.2.1-rc.2.md>) for verification scope; this does not imply a fresh refork or source equality.
-- Catalog pin: `dsh:` → `0.2.1-rc.2` ([`pnpm-workspace.yaml`](<../../pnpm-workspace.yaml>))
+- Reference version: `dsh-v0.2.1-rc.5`
+- Reference revision: `b830ec950faba0a46dda564be3e2d854afed94f1`
+- Support policy: recommended core `0.2.1-rc.5`, minimum core `0.2.1-rc.1`; earlier cores are unsupported. See the [current compatibility record](<../builtin-plugin-tauri/docs/compatibility-0.2.1-rc.5.md>) for verification scope; this does not imply a fresh refork or source equality.
+- Catalog pin: `dsh:` → `0.2.1-rc.5` ([`pnpm-workspace.yaml`](<../../pnpm-workspace.yaml>))
 - License: MIT — Copyright (c) 2026 DeepSeek
 
 Reforked contracts and local destinations:

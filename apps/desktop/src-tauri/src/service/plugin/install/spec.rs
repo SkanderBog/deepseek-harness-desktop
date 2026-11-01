@@ -203,12 +203,7 @@ pub(super) fn preset_spec_for_install(
     Ok(bundled_dep_spec(&dir))
 }
 
-/// 非内置插件按「当前核心那一代」的推荐区间钉版本。
-///
-/// 清单矩阵里的 `version` 是发布侧给出的该代推荐插件版本区间，而裸包名会让 pnpm 装
-/// `latest`（未必属于这一代：核心 `^0.1.7-rc.1` 该装 `dsh-better-sidebar@^0.21.1`，
-/// 但 registry 的 `latest` 仍解析到 0.19.x）。没有命中区间（字符串声明、核心超出全部
-/// 区间、版本不可解析）时退回裸 spec，交由 pnpm 自行解析。
+/// 按清单中的核心兼容区间固定非内置插件版本；无匹配时保留原 spec。
 fn pinned_spec(preset: &PreinstallPluginInfo, core_version: Option<&str>) -> String {
     let Some(req) = preset
         .version
@@ -318,18 +313,10 @@ mod tests {
         let mut p = preset("dsh-better-sidebar", "dsh-better-sidebar", false);
         p.version = Some(PluginVersion::Matrix(vec![
             VersionPair {
-                version: "^0.21.1".into(),
-                dsh: "^0.1.7-rc.1".into(),
-            },
-            VersionPair {
                 version: "^0.22.0".into(),
                 dsh: "^0.2.1-rc.1".into(),
             },
         ]));
-        assert_eq!(
-            preset_spec_for_install(&p, None, Some("0.1.7-rc.1")).unwrap(),
-            "dsh-better-sidebar@^0.21.1"
-        );
         assert_eq!(
             preset_spec_for_install(&p, None, Some("0.2.1-rc.1")).unwrap(),
             "dsh-better-sidebar@^0.22.0"
@@ -338,8 +325,8 @@ mod tests {
         let mut scoped = preset("@xmanrui/dsh-im", "@xmanrui/dsh-im", false);
         scoped.version = p.version.clone();
         assert_eq!(
-            preset_spec_for_install(&scoped, None, Some("0.1.7-rc.2")).unwrap(),
-            "@xmanrui/dsh-im@^0.21.1"
+            preset_spec_for_install(&scoped, None, Some("0.2.1-rc.1")).unwrap(),
+            "@xmanrui/dsh-im@^0.22.0"
         );
         assert_eq!(
             preset_spec_for_install(&p, None, Some("0.2.0")).unwrap(),
@@ -354,8 +341,6 @@ mod tests {
         // 报 ERR_PNPM_SPEC_NOT_SUPPORTED_BY_ANY_RESOLVER，而预设插件共用同一条 `add`
         // 调用，一个坏 spec 就让整批预设都装不上（应用卡在加载中，见 issue #716）。
         for core in [
-            "0.1.7-rc.1",
-            "0.1.7-rc.2",
             "0.2.1-rc.1",
             "0.3.0",
         ] {
@@ -370,24 +355,24 @@ mod tests {
         let mut git = preset("probe", "git+https://github.com/o/r.git", false);
         git.version = Some(PluginVersion::Matrix(vec![VersionPair {
             version: "^1.2.0".into(),
-            dsh: "^0.1.7-rc.1".into(),
+            dsh: "^0.2.1-rc.1".into(),
         }]));
         assert_eq!(
-            preset_spec_for_install(&git, None, Some("0.1.7-rc.1")).unwrap(),
+            preset_spec_for_install(&git, None, Some("0.2.1-rc.1")).unwrap(),
             "git+https://github.com/o/r.git"
         );
 
         let mut versioned = preset("probe", "probe@1.0.0", false);
         versioned.version = git.version.clone();
         assert_eq!(
-            preset_spec_for_install(&versioned, None, Some("0.1.7-rc.1")).unwrap(),
+            preset_spec_for_install(&versioned, None, Some("0.2.1-rc.1")).unwrap(),
             "probe@1.0.0"
         );
 
         let mut link = preset("probe", "link:C:/deps/probe", false);
         link.version = git.version.clone();
         assert_eq!(
-            preset_spec_for_install(&link, None, Some("0.1.7-rc.1")).unwrap(),
+            preset_spec_for_install(&link, None, Some("0.2.1-rc.1")).unwrap(),
             "link:C:/deps/probe"
         );
     }
@@ -425,11 +410,7 @@ mod tests {
     #[test]
     fn install_spec_keeps_space_paths_bare_for_supported_cores() {
         let preset = preset("dsh-tauri", "dsh-tauri", true);
-        for core in [
-            Some("0.1.7-rc.1"),
-            Some("0.2.1-rc.1"),
-            None,
-        ] {
+        for core in [Some("0.2.1-rc.1"), Some("0.2.2-rc.1"), None] {
             for (path, expected) in [
                 (
                     "C:/Program Files/DeepSeek Harness Desktop/resources/node_modules/dsh-tauri",
