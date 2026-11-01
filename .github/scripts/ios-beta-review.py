@@ -202,7 +202,18 @@ def submit(client, group_id, marketing, number, source_sha, check=False):
     group_builds = client.collection(f'/v1/betaGroups/{resource_id(group_id)}/relationships/builds?limit=200')
     require(all(item.get('type') == 'builds' for item in group_builds), 'Expected build identifiers in the Beta group relationship')
     if check:
-        return f'Preflight passed for {marketing} ({number}); no Apple resources changed'
+        status = {
+            'externalBuildState': state,
+            'reviewSubmitted': submitted,
+            'groupLinked': any(item['id'] == build_id for item in group_builds),
+            'autoNotifyEnabled': detail['attributes'].get('autoNotifyEnabled'),
+            'localizations': [{
+                'locale': item['attributes'].get('locale'),
+                'descriptionPresent': isinstance(item['attributes'].get('description'), str) and bool(item['attributes']['description'].strip()),
+                'feedbackEmailPresent': isinstance(item['attributes'].get('feedbackEmail'), str) and bool(item['attributes']['feedbackEmail'].strip()),
+            } for item in client.collection(query('betaAppLocalizations', **{'filter[app]': app_id, 'limit': 200}))],
+        }
+        return f'Preflight passed for {marketing} ({number}); no Apple resources changed\n' + json.dumps(status)
     if state == 'READY_FOR_BETA_SUBMISSION' and not submitted:
         whats_new = f'请测试主机发现、扫码连接、会话交互及 iPad 横竖屏\n版本：{marketing} ({number})\nhttps://github.com/dsh-tauri/deepseek-harness-desktop/commit/{source_sha}'
         locales = client.collection(query('betaBuildLocalizations', **{'filter[build]': build_id, 'limit': 200}))

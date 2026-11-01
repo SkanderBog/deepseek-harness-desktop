@@ -15,6 +15,10 @@ on:
         description: Original uploaded build source commit on official main
         required: true
         type: string
+      check_only:
+        description: Read current Apple state without changing any resources
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -73,12 +77,12 @@ jobs:
           (root / 'private_keys' / f'AuthKey_{key_id}.p8').write_text(key)
           PY
 
-      - name: Resume external Beta review without uploading another build
+      - name: Check or resume external Beta review without another upload
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           TESTFLIGHT_BETA_GROUP_ID: ${{ vars.TESTFLIGHT_BETA_GROUP_ID }}
-        run: python3 .github/scripts/ios-beta-review.py
+        run: python3 .github/scripts/ios-beta-review.py ${{ inputs.check_only && '--check' || '' }}
 
       - name: Always remove temporary API key
         if: always()

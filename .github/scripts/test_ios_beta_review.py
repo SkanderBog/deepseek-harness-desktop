@@ -153,7 +153,16 @@ class SubmitTests(unittest.TestCase):
         self.assertEqual(self.api.writes, [])
 
     def test_check_verifies_group_build_read_access_without_linking(self):
-        self.submit(check=True)
+        self.api.state = 'IN_BETA_TESTING'
+        self.api.auto_notify = True
+        self.api.groups = [{'id': 'group1'}]
+        self.api.submissions = [{'attributes': {'betaReviewState': 'APPROVED'}}]
+        result = self.submit(check=True)
+        status = json.loads(result.split('\n', 1)[1])
+        self.assertEqual(status['externalBuildState'], 'IN_BETA_TESTING')
+        self.assertTrue(status['autoNotifyEnabled'])
+        self.assertTrue(status['groupLinked'])
+        self.assertTrue(status['reviewSubmitted'])
         self.assertIn('/v1/betaGroups/group1/relationships/builds', self.api.reads)
         self.assertFalse(self.api.writes)
 
@@ -242,7 +251,18 @@ class SubmitTests(unittest.TestCase):
         self.assertFalse(self.api.writes)
 
     def test_read_only_check_never_changes_apple_state(self):
-        self.assertIn('no Apple resources changed', self.submit(check=True))
+        result = self.submit(check=True)
+        self.assertIn('no Apple resources changed', result)
+        status = json.loads(result.split('\n', 1)[1])
+        self.assertEqual(status, {
+            'externalBuildState': 'READY_FOR_BETA_SUBMISSION',
+            'reviewSubmitted': False,
+            'groupLinked': False,
+            'autoNotifyEnabled': False,
+            'localizations': [{'locale': 'zh-Hans', 'descriptionPresent': True, 'feedbackEmailPresent': True}],
+        })
+        self.assertNotIn('fixture@example.invalid', result)
+        self.assertNotIn('Fixture description', result)
         self.assertFalse(self.api.writes)
         self.assertFalse(self.api.pauses)
 
