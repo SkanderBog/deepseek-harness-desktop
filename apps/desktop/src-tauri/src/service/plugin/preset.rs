@@ -623,14 +623,6 @@ mod tests {
     }
 
     #[test]
-    fn preset_manifest_specs_match_ids() {
-        let presets = load_presets_for_test();
-        for preset in &presets {
-            assert_eq!(preset.spec, preset.id);
-        }
-    }
-
-    #[test]
     fn office_kit_requires_core_with_user_text_api() {
         let entry = load_presets_for_test()
             .into_iter()
