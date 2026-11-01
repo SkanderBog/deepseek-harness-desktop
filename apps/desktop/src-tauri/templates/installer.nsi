@@ -3,7 +3,7 @@
 ;
 ; Keep it in sync with upstream tauri-bundler upgrades, but preserve the
 ; Deepseek Harness Desktop customizations (marked with "Deepseek Harness Desktop:").
-; The single customization so far is in PageReinstall: a cross-version UPGRADE is
+; In PageReinstall, a cross-version UPGRADE is
 ; applied in place — the redundant "uninstall / don't uninstall" prompt is skipped
 ; entirely (no uninstall, keep user data). The standalone "add/remove programs"
 ; uninstall path is untouched.
@@ -79,6 +79,23 @@ ${StrLoc}
 !define UNINSTALLERSIGNCOMMAND "{{uninstaller_sign_cmd}}"
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
+
+; 同一次关闭确认也登记 Electron 的私有 DLL，兼容尚未支持进程组回收的旧版。
+!macroundef RestartManager_RegisterFile
+!macro RestartManager_RegisterFile handle path
+  System::Call 'RSTRTMGR::RmRegisterResources(i${handle},i1,*ws,i0,p0,i0,p0)i.r0' "${path}"
+  ${If} $0 = 0
+    !if "${ARCH}" == "x86"
+      !define ELECTRONARCH "ia32"
+    !else
+      !define ELECTRONARCH "${ARCH}"
+    !endif
+    ${If} ${FileExists} "$INSTDIR\runtime\win32-${ELECTRONARCH}\chrome_elf.dll"
+      System::Call 'RSTRTMGR::RmRegisterResources(i${handle},i1,*ws,i0,p0,i0,p0)i.r0' "$INSTDIR\runtime\win32-${ELECTRONARCH}\chrome_elf.dll"
+    ${EndIf}
+    !undef ELECTRONARCH
+  ${EndIf}
+!macroend
 
 Var PassiveMode
 Var UpdateMode

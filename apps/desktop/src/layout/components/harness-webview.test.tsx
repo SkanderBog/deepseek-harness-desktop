@@ -378,6 +378,25 @@ it('ignores hidden shell overlays and tooltips, and hides a zero-size native vie
   tooltip.remove()
 })
 
+it('keeps the page behind a shell toast clickable, unlike a real alert dialog', async () => {
+  render(<HarnessWebview />)
+  await screen.findByTitle('Harness')
+  state()
+  const toastItem = document.createElement('div')
+  toastItem.setAttribute('role', 'alertdialog')
+  toastItem.dataset.slot = 'toast'
+  document.body.append(toastItem)
+  await act(async () => {})
+  expect(updates().at(-1)).toMatchObject({ visible: true })
+  expect(screen.getByTitle('Harness').querySelector('img')).toBeNull()
+  const alert = document.createElement('div')
+  alert.setAttribute('role', 'alertdialog')
+  document.body.append(alert)
+  await waitFor(() => expect(updates().at(-1)).toMatchObject({ visible: false }))
+  alert.remove()
+  toastItem.remove()
+})
+
 it('subscribes to window-targeted native state, keeping boot readiness separate', async () => {
   render(<HarnessWebview />)
   await screen.findByTitle('Harness')
