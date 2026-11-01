@@ -1,0 +1,104 @@
+%global appname @APPNAME@
+%global binname @BINNAME@
+%global appdir %{_prefix}/lib/%{appname}
+%global debug_package %{nil}
+%global __requires_exclude ^/usr/bin/node$
+
+Name:           @NAME@
+Version:        @VERSION@
+Release:        @RELEASE@%{?dist}
+Summary:        @SUMMARY@
+License:        MIT
+URL:            https://github.com/dsh-tauri/deepseek-harness-desktop
+Source0:        %{name}-%{version}.tar.gz
+ExclusiveArch:  x86_64 aarch64
+
+BuildRequires:  cargo
+BuildRequires:  rust
+BuildRequires:  gcc
+BuildRequires:  make
+BuildRequires:  git-core
+BuildRequires:  curl
+BuildRequires:  pkgconfig(gtk+-3.0)
+BuildRequires:  pkgconfig(openssl)
+BuildRequires:  pkgconfig(x11)
+BuildRequires:  pkgconfig(xtst)
+BuildRequires:  pkgconfig(dbus-1)
+BuildRequires:  pkgconfig(bzip2)
+BuildRequires:  pkgconfig(librsvg-2.0)
+BuildRequires:  libappindicator-gtk3-devel
+
+Requires:       libappindicator-gtk3
+Requires:       alsa-lib
+Requires:       nss
+Requires:       mesa-libgbm
+Requires:       libdrm
+Conflicts:      @CONFLICTS@
+
+%description
+@DESCRIPTION@
+
+%prep
+%autosetup -n %{name}-%{version}
+
+%build
+export CI=true
+export DSH_DISTRO_MANAGED=copr
+export CARGO_HOME="$PWD/.cargo-home"
+export npm_config_cache="$PWD/.npm-cache"
+node_version=@NODE_VERSION@
+%ifarch x86_64
+node_arch=x64
+%else
+node_arch=arm64
+%endif
+node_dist="node-$node_version-linux-$node_arch"
+curl -fsSL --retry 3 -o "$node_dist.tar.gz" "https://nodejs.org/dist/$node_version/$node_dist.tar.gz"
+curl -fsSL --retry 3 -o SHASUMS256.txt "https://nodejs.org/dist/$node_version/SHASUMS256.txt"
+grep " $node_dist.tar.gz\$" SHASUMS256.txt | sha256sum -c -
+tar -xzf "$node_dist.tar.gz"
+export PATH="$PWD/$node_dist/bin:$PATH"
+node --version
+pnpm_version=$(sed -n 's/.*"packageManager": "pnpm@\([^"]*\)".*/\1/p' package.json)
+npm install --no-save --no-audit --no-fund --prefix "$PWD/.pnpm" "pnpm@$pnpm_version"
+export PATH="$PWD/.pnpm/node_modules/.bin:$PATH"
+node -e 'const fs = require("node:fs"); const file = "package.json"; const pkg = JSON.parse(fs.readFileSync(file, "utf8")); delete pkg.scripts.preinstall; fs.writeFileSync(file, JSON.stringify(pkg));'
+pnpm install --frozen-lockfile
+pnpm tauri build --no-bundle
+
+%install
+install -Dpm0755 apps/desktop/src-tauri/target/release/%{binname} %{buildroot}%{_bindir}/%{binname}
+install -dm0755 "%{buildroot}%{appdir}"
+cp -a apps/desktop/src-tauri/resources "%{buildroot}%{appdir}/resources"
+cp -a apps/desktop/src-tauri/target/electron "%{buildroot}%{appdir}/runtime"
+chmod 4755 "%{buildroot}%{appdir}"/runtime/linux-*/chrome-sandbox
+install -Dpm0644 apps/desktop/src-tauri/icons/32x32.png "%{buildroot}%{appdir}/icons/32x32.png"
+install -Dpm0644 apps/desktop/src-tauri/icons/32x32.png %{buildroot}%{_datadir}/icons/hicolor/32x32/apps/%{binname}.png
+install -Dpm0644 apps/desktop/src-tauri/icons/128x128.png %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/%{binname}.png
+install -Dpm0644 apps/desktop/src-tauri/icons/128x128@2x.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/%{binname}.png
+install -Dpm0644 apps/desktop/src-tauri/icons/icon.png %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/%{binname}.png
+install -dm0755 %{buildroot}%{_datadir}/applications
+cat > "%{buildroot}%{_datadir}/applications/%{appname}.desktop" <<EOF
+[Desktop Entry]
+Categories=Development;
+Comment=%{summary}
+Exec=%{binname}
+StartupWMClass=%{binname}
+Icon=%{binname}
+Name=%{appname}
+Terminal=false
+Type=Application
+MimeType=x-scheme-handler/@SCHEME@
+EOF
+
+%files
+%license LICENSE
+%doc README.md
+%{_bindir}/%{binname}
+"%{appdir}"
+"%{_datadir}/applications/%{appname}.desktop"
+%{_datadir}/icons/hicolor/*/apps/%{binname}.png
+
+%changelog
+* @DATE@ @PACKAGER@ - %{version}-%{release}
+- Copr release build
