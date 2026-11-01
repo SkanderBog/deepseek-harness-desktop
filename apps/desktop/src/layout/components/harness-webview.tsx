@@ -25,7 +25,7 @@ const BLOCKING_OVERLAY_SELECTOR = [
   '[data-testid="dsh-full-sidebar-cover"]',
   '[data-slot="modal-backdrop"]',
   '[role="dialog"]',
-  '[role="alertdialog"]',
+  '[role="alertdialog"]:not([data-slot="toast"])',
   '[role="menu"]',
   '[role="listbox"]',
   '[data-slot$="-popover"]',
