@@ -207,6 +207,12 @@ pub async fn remote_open_window(
     url: String,
 ) -> Result<(), String> {
     let (_, _validated_url) = open_window_args(&machine_id, &url)?;
+    let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
+    let label = profile_window_label(&profile, &machine_id);
+    if let Some(existing) = app_handle.get_window(&label) {
+        let _ = existing.set_focus();
+        return Ok(());
+    }
     let _transition = crate::service::workflow::acquire_core_transition().await?;
     let profile = crate::service::workflow::instances::window_profile(&app_handle, window.label());
     let label = profile_window_label(&profile, &machine_id);

@@ -2,10 +2,10 @@ import type { ShellWindow } from '../setup/shell'
 import { describe, expect, it } from 'vitest'
 import { collectPageErrors, installErrorCollector, invoke, pageErrors, SHELL_ROOT, shellAppScope, WINDOW_TIMEOUT_MS } from '../setup/shell'
 
-const app = shellAppScope()
+describe.each(['', 'http://127.0.0.1:4001'])('desktop remote window lifecycle (url=%s)', (url) => {
+  const app = shellAppScope()
 
-describe('desktop window lifecycle', () => {
-  it.each(['', 'http://127.0.0.1:4001'])('opens a remote shell with its machine target (url=%s)', async (url) => {
+  it('opens a remote shell with its machine target', async () => {
     const shell = app.get()
     const main = shell.window.page
     await main.context().addInitScript(collectPageErrors)
@@ -33,6 +33,10 @@ describe('desktop window lifecycle', () => {
         await shell.closeWindow(opened.label)
     }
   })
+})
+
+describe('desktop window lifecycle', () => {
+  const app = shellAppScope()
 
   it('creates and destroys a real secondary Electron window through Tauri IPC', async () => {
     const shell = app.get()
