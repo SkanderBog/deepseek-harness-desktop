@@ -45,7 +45,7 @@
 
 ## 기능
 
-- 🪶 **네이티브 데스크톱** — Tauri 2 + React 19 + HeroUI 3 기반으로 로컬 Harness UI를 내장합니다.
+- 🪶 **네이티브 데스크톱** — Tauri 2(Electron Runtime) + React 19 + HeroUI 3 기반으로 로컬 Harness UI를 내장합니다.
 - 📱 **원격 연결** — Android / iOS 앱에서 QR 코드를 스캔하여 LAN 또는 Cloudflare 공개 터널을 통해 컴퓨터의 DSH에 연결합니다.
 - 🔄 **런타임 관리** — 의존성을 설치하고 코어 버전을 선택하며, 데스크톱과 코어 업데이트 기능을 이용할 수 있습니다.
 - 🧩 **플러그인 관리** — 12개의 내장 플러그인을 제공하며, 로컬 디렉터리에서 설치, 내장 플러그인 비활성화, 커뮤니티 플러그인 설치, 업그레이드, 제거, 오류 상세 정보 확인을 지원합니다.
@@ -183,6 +183,7 @@ Windows에서 시작에 실패하면 네이티브 대화 상자에 원인 오류
 
 - [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) — 업스트림 `dsh` 에이전트 플랫폼
 - [deepseek-harness-pkg](https://github.com/dsh-tauri/deepseek-harness-pkg) — 사전 빌드된 Harness 배포판과 다운로드 소스
+- [electron-rs](https://github.com/hairyf/electron-rs) · [tauri-runtime-electron](https://github.com/hairyf/tauri-runtime-electron) — Electron Rust 및 Tauri 2용 Electron 런타임
 - [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) · [dsh-pet-mov](https://github.com/dsh-tauri/dsh-pet-mov) · [dsh-pet-component](https://github.com/dsh-tauri/dsh-pet-component) — 펫 리소스와 렌더러
 - [dsh-plugin-codex-pets](https://github.com/Skylarking/dsh-plugin-codex-pets) · [BongoCat](https://github.com/ayangweb/BongoCat) · [dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu) · [codex-to-dsh-pet](https://github.com/Signalight/codex-to-dsh-pet) — 펫 참고 프로젝트
 

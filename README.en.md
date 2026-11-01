@@ -45,7 +45,7 @@
 
 ## Features
 
-- 🪶 **Native desktop** — Tauri 2 + React 19 + HeroUI 3, embedding the local Harness UI.
+- 🪶 **Native desktop** — Tauri 2(Electron Runtime) + React 19 + HeroUI 3, embedding the local Harness UI.
 - 📱 **Remote connection** — Scan a QR code in the Android / iOS app to connect to your computer's DSH over LAN or a Cloudflare public tunnel.
 - 🔄 **Runtime management** — Install dependencies, select core versions, and access desktop/core updates.
 - 🧩 **Plugin management** — 12 built-in plugins, plus local-directory installs, built-in disabling, community plugin installation, upgrades, removal, and error details.
@@ -183,6 +183,7 @@ See the [English development guide](<./docs/DEVELOPMENT.md>) or [Chinese develop
 
 - [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) — upstream `dsh` agent platform
 - [deepseek-harness-pkg](https://github.com/dsh-tauri/deepseek-harness-pkg) — prebuilt Harness distributions and download source
+- [electron-rs](https://github.com/hairyf/electron-rs) · [tauri-runtime-electron](https://github.com/hairyf/tauri-runtime-electron) — Electron Rust and the Electron runtime for Tauri 2
 - [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) · [dsh-pet-mov](https://github.com/dsh-tauri/dsh-pet-mov) · [dsh-pet-component](https://github.com/dsh-tauri/dsh-pet-component) — pet assets and renderer
 - [dsh-plugin-codex-pets](https://github.com/Skylarking/dsh-plugin-codex-pets) · [BongoCat](https://github.com/ayangweb/BongoCat) · [dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu) · [codex-to-dsh-pet](https://github.com/Signalight/codex-to-dsh-pet) — pet reference projects
 

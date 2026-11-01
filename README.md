@@ -182,6 +182,7 @@ Windows 启动失败时会通过原生对话框显示具体错误。若出现 `S
 
 - [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) — 上游 `dsh` agent 平台
 - [deepseek-harness-pkg](https://github.com/dsh-tauri/deepseek-harness-pkg) — 预打包 Harness 发行版与下载源
+- [electron-rs](https://github.com/hairyf/electron-rs) · [tauri-runtime-electron](https://github.com/hairyf/tauri-runtime-electron) — Electron Rust 与 Tauri 2 的 Electron 运行时
 - [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) · [dsh-pet-mov](https://github.com/dsh-tauri/dsh-pet-mov) · [dsh-pet-component](https://github.com/dsh-tauri/dsh-pet-component) — 桌宠素材与渲染组件
 - [dsh-plugin-codex-pets](https://github.com/Skylarking/dsh-plugin-codex-pets) · [BongoCat](https://github.com/ayangweb/BongoCat) · [dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu) · [codex-to-dsh-pet](https://github.com/Signalight/codex-to-dsh-pet) · [dsh-pet-sticker](https://github.com/PC2005-cloud/dsh-pet-sticker) — 桌宠参考项目
 

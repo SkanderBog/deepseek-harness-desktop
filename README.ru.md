@@ -45,7 +45,7 @@
 
 ## Возможности
 
-- 🪶 **Нативный десктоп** — Tauri 2 + React 19 + HeroUI 3, встраивание локального интерфейса Harness.
+- 🪶 **Нативный десктоп** — Tauri 2(Electron Runtime) + React 19 + HeroUI 3, встраивание локального интерфейса Harness.
 - 📱 **Дистанционное подключение** — отсканируйте QR-код в приложении Android / iOS, чтобы подключиться к DSH на вашем компьютере через LAN или публичный туннель Cloudflare.
 - 🔄 **Управление средой выполнения** — установка зависимостей, выбор версий ядра и доступ к обновлениям десктопа/ядра.
 - 🧩 **Управление плагинами** — 12 встроенных плагинов, а также установка из локального каталога, отключение встроенных, установка плагинов сообщества, обновления, удаление и детали ошибок.
@@ -176,6 +176,7 @@ brew install dsh-tauri/desktop/deepseek-harness
 
 - [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) — upstream-платформа агента `dsh`
 - [deepseek-harness-pkg](https://github.com/dsh-tauri/deepseek-harness-pkg) — предварительно собранные дистрибутивы Harness и источник загрузок
+- [electron-rs](https://github.com/hairyf/electron-rs) · [tauri-runtime-electron](https://github.com/hairyf/tauri-runtime-electron) — Electron Rust и Electron-рантайм для Tauri 2
 - [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) · [dsh-pet-mov](https://github.com/dsh-tauri/dsh-pet-mov) · [dsh-pet-component](https://github.com/dsh-tauri/dsh-pet-component) — ассеты питомцев и рендерер
 - [dsh-plugin-codex-pets](https://github.com/Skylarking/dsh-plugin-codex-pets) · [BongoCat](https://github.com/ayangweb/BongoCat) · [dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu) · [codex-to-dsh-pet](https://github.com/Signalight/codex-to-dsh-pet) — референсные проекты питомцев
 
