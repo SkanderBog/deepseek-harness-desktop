@@ -5576,6 +5576,10 @@ packages:
     resolution: {integrity: sha512-mD85oz1VMNudfSOL+WKE1LrbMcO4fXT7hAIhpMfl1vUUaZvsGn9ZnHbhuiQRVxRwbH3Tqo6vf82jdwN8G/rquw==}
     engines: {dsh: '>=0.2.1-alpha.1', node: '>=22.18.0'}
 
+  dsh-taiwind@0.3.3:
+    resolution: {integrity: sha512-3JzKo+4w174OF7pdxS7xVKc9eakG0h0ev+aQ2iCDlF6E9fgu/pGNXnzdJtIbWQWr9mnuZkXh6/iQHCgr7j4m/w==}
+    engines: {dsh: '>=0.2.1-alpha.1', node: '>=22.18.0'}
+
   dts-resolver@2.1.3:
     resolution: {integrity: sha512-bihc7jPC90VrosXNzK0LTE2cuLP6jr0Ro8jk+kMugHReJVLIpHz/xadeq3MhuwyO4TD4OA3L1Q8pBBFRc08Tsw==}
     engines: {node: '>=20.19.0'}
