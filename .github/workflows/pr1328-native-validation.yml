@@ -1,0 +1,166 @@
+name: PR 1328 native stability validation
+
+on:
+  push:
+    branches: [validation/pr1328-native-five-20261102]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr1328-native-validation-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_BUILD_JOBS: 2
+
+jobs:
+  native-five:
+    name: Exact PR native regression x5 (Linux)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact PR source
+        uses: actions/checkout@v7
+        with:
+          repository: SkanderBog/deepseek-harness-desktop
+          ref: 303c8417968e5c8aac88b6d1e08412ce27b5c2eb
+          submodules: true
+          persist-credentials: false
+
+      - name: Record source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 303c8417968e5c8aac88b6d1e08412ce27b5c2eb
+          mkdir -p "$RUNNER_TEMP/pr1328-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/pr1328-evidence/source-head.txt"
+          git submodule status > "$RUNNER_TEMP/pr1328-evidence/submodules.txt"
+          sha256sum apps/desktop/src-tauri/Cargo.lock pnpm-lock.yaml tests/e2e/desktop/guest-transparency.e2e.ts > "$RUNNER_TEMP/pr1328-evidence/source-sha256.txt"
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          standalone: 'true'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libappindicator3-dev librsvg2-dev patchelf libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 xvfb
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Electron distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-45.0.0-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          save-if: false
+
+      - name: Build bundled plugins
+        run: pnpm run build:plugins
+
+      - name: Build renderer
+        run: pnpm --filter dsh-desktop build
+
+      - name: Build exact debug binary
+        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --features tauri/custom-protocol --locked
+
+      - name: Run five independent shuffled native regressions
+        shell: bash
+        env:
+          DSH_E2E_HEADLESS: '1'
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/pr1328-evidence"
+          sha256sum apps/desktop/src-tauri/target/debug/deepseek-harness-desktop > "$evidence/binary-sha256.txt"
+          rustc --version > "$evidence/rust-version.txt"
+          node --version > "$evidence/node-version.txt"
+          for seed in 2500 2501 2502 2503 2504; do
+            xvfb-run --auto-servernum node node_modules/vitest/vitest.mjs run \
+              --project desktop \
+              tests/e2e/desktop/guest-transparency.e2e.ts \
+              tests/e2e/desktop/profile-window.e2e.ts \
+              --sequence.shuffle --sequence.seed="$seed" \
+              --reporter=default --reporter=json --outputFile="$evidence/run-$seed.json" \
+              2>&1 | tee "$evidence/run-$seed.log"
+          done
+          node --input-type=module <<'JS'
+          import { readFileSync, writeFileSync } from 'node:fs'
+          import path from 'node:path'
+          const root = path.join(process.env.RUNNER_TEMP, 'pr1328-evidence')
+          const name = 'preserves native Harness guest alpha while retaining opaque content'
+          const runs = []
+          for (const seed of [2500, 2501, 2502, 2503, 2504]) {
+            const report = JSON.parse(readFileSync(path.join(root, `run-${seed}.json`), 'utf8'))
+            const tests = report.testResults.flatMap(file => file.assertionResults)
+            const regression = tests.filter(test => test.title === name)
+            if (!report.success || regression.length !== 1 || regression[0].status !== 'passed' || tests.some(test => test.status !== 'passed'))
+              throw new Error(`Seed ${seed}: required native regression or neighboring lifecycle test did not pass`)
+            runs.push({ seed, passed: tests.length, regression: regression[0].fullName, durationMs: regression[0].duration })
+          }
+          const result = { sourceHead: '303c8417968e5c8aac88b6d1e08412ce27b5c2eb', independentProcesses: 5, runs }
+          writeFileSync(path.join(root, 'five-run-summary.json'), JSON.stringify(result, null, 2) + '\n')
+          console.log(JSON.stringify(result, null, 2))
+          JS
+
+      - name: Archive exact native binary, runtime and renderer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import tarfile
+          root = Path(os.environ['RUNNER_TEMP']) / 'pr1328-evidence'
+          target = Path('apps/desktop/src-tauri/target')
+          runtime = target / 'debug/runtime'
+          if not runtime.is_dir():
+              runtime = target / 'electron'
+          assert runtime.is_dir(), 'Built Electron runtime is missing'
+          entries = [(target / 'debug/deepseek-harness-desktop', 'deepseek-harness-desktop'), (runtime, 'runtime'), (Path('apps/desktop/dist'), 'renderer')]
+          archive = Path(os.environ['RUNNER_TEMP']) / 'pr1328-native-linux.tar.gz'
+          with tarfile.open(archive, 'w:gz', compresslevel=3, dereference=True) as output:
+              for source, name in entries:
+                  output.add(source, arcname=name)
+          digest = hashlib.sha256()
+          with archive.open('rb') as stream:
+              for block in iter(lambda: stream.read(1024 * 1024), b''):
+                  digest.update(block)
+          (root / 'native-artifact.json').write_text(json.dumps({'sourceHead': '303c8417968e5c8aac88b6d1e08412ce27b5c2eb', 'filename': archive.name, 'size': archive.stat().st_size, 'sha256': digest.hexdigest(), 'contents': [name for _, name in entries], 'limitation': 'Debug native runtime and renderer only; not an installer or offline Harness bundle.'}, indent=2) + '\n')
+          PY
+
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: pr1328-native-five-logs
+          path: ${{ runner.temp }}/pr1328-evidence/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload exact native runtime
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: pr1328-native-linux-303c8417
+          path: ${{ runner.temp }}/pr1328-native-linux.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
