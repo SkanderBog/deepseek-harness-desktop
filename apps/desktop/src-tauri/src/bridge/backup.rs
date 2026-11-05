@@ -106,9 +106,7 @@ pub fn list_backups(
         instances::window_profile(&app_handle, window.label()),
         profile_id,
     )?;
-    instances::scope_sync(profile, || {
-        backup::list_backups(&app_handle)
-    })
+    instances::scope_sync(profile, || backup::list_backups(&app_handle))
 }
 
 #[tauri::command]
